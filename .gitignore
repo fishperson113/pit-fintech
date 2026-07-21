@@ -1,0 +1,46 @@
+# Python and tooling
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.venv/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+.kaggle/
+kaggle.json
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Raw and derived data. Synthetic fixtures remain versioned.
+data/raw/**
+!data/raw/.gitkeep
+data/lakehouse/**
+!data/lakehouse/bronze/.gitkeep
+!data/lakehouse/silver/.gitkeep
+!data/lakehouse/gold/.gitkeep
+
+# Runtime artifacts and local service state
+artifacts/**
+!artifacts/.gitkeep
+# Milestone governance is durable project history, not disposable runtime output.
+!artifacts/changelog/
+!artifacts/changelog/**
+mlruns/
+mlartifacts/
+*.db
+*.sqlite
+*.sqlite3
+
+# Notebook runtime files
+.ipynb_checkpoints/

@@ -1,0 +1,78 @@
+name: pit-fintech
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mlflow:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        UV_GROUPS: tracking
+    command:
+      - uv
+      - run
+      - --no-sync
+      - mlflow
+      - server
+      - --host=0.0.0.0
+      - --port=5000
+      - --backend-store-uri=sqlite:////runtime/mlflow.db
+      - --artifacts-destination=/runtime/artifacts
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - mlflow-data:/runtime
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  jupyter:
+    profiles: ["lab"]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        UV_GROUPS: dev
+    working_dir: /app
+    command:
+      - uv
+      - run
+      - --no-sync
+      - jupyter
+      - lab
+      - --ip=0.0.0.0
+      - --port=8888
+      - --no-browser
+      - --allow-root
+      - --ServerApp.token=${PIT_JUPYTER_TOKEN:-pit-local}
+    ports:
+      - "127.0.0.1:${PIT_JUPYTER_PORT:-8888}:8888"
+    volumes:
+      - ./notebooks:/app/notebooks
+      - ./src:/app/src:ro
+      - ./data/fixtures:/app/data/fixtures:ro
+      - ./docs/reports:/app/docs/reports
+
+volumes:
+  redis-data:
+  mlflow-data:
