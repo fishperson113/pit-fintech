@@ -14,6 +14,7 @@ Last updated: 2026-07-21. Status words are strict:
 | Detailed milestone logs | verified | M001 and M002 logs under `artifacts/changelog/milestones/` |
 | Milestone pre-commit guard | verified | four unit cases pass; installed at `.git/hooks/pre-commit` |
 | Human-readable reports location | verified | reports moved to `docs/reports/` |
+| Four-slide PIT proposal deck | verified | 4 slides render at 1440x810 without overflow/errors; button and keyboard navigation pass |
 
 ## Sprint 1
 

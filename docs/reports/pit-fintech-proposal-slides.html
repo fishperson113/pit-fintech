@@ -1,0 +1,899 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#071310">
+  <title>PIT Fintech — Project Proposal</title>
+  <style>
+    :root {
+      --bg: #071310;
+      --bg-deep: #030a08;
+      --surface: rgba(17, 42, 35, 0.72);
+      --surface-strong: #102a23;
+      --line: rgba(183, 255, 206, 0.16);
+      --text: #effff5;
+      --muted: #9bb8aa;
+      --green: #a8ff78;
+      --mint: #4de0bd;
+      --amber: #ffc766;
+      --coral: #ff8d78;
+      --shadow: 0 26px 90px rgba(0, 0, 0, 0.38);
+      --font-display: "Arial Narrow", "Roboto Condensed", "Segoe UI", sans-serif;
+      --font-body: Inter, "Segoe UI", Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      background: var(--bg-deep);
+      color: var(--text);
+      font-family: var(--font-body);
+      overflow: hidden;
+    }
+
+    button {
+      color: inherit;
+      font: inherit;
+    }
+
+    .deck {
+      position: absolute;
+      inset: 0;
+      width: min(100vw, calc(100vh * 16 / 9));
+      height: min(100vh, calc(100vw * 9 / 16));
+      margin: auto;
+      overflow: hidden;
+      background: var(--bg);
+      box-shadow: var(--shadow);
+      isolation: isolate;
+    }
+
+    .deck::before {
+      position: absolute;
+      inset: 0;
+      z-index: -2;
+      background:
+        radial-gradient(circle at 82% 12%, rgba(77, 224, 189, 0.14), transparent 24%),
+        radial-gradient(circle at 14% 88%, rgba(168, 255, 120, 0.10), transparent 28%),
+        linear-gradient(145deg, #071310 0%, #091b17 54%, #06100d 100%);
+      content: "";
+    }
+
+    .deck::after {
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      background-image:
+        linear-gradient(var(--line) 1px, transparent 1px),
+        linear-gradient(90deg, var(--line) 1px, transparent 1px);
+      background-size: 64px 64px;
+      opacity: 0.23;
+      content: "";
+      mask-image: linear-gradient(to bottom, black, transparent 78%);
+    }
+
+    .progress {
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 50;
+      height: 4px;
+      width: 25%;
+      background: linear-gradient(90deg, var(--green), var(--mint));
+      transition: width 300ms ease;
+    }
+
+    .slide {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: clamp(18px, 2.2vw, 34px);
+      padding: clamp(34px, 4.2vw, 72px) clamp(38px, 5vw, 86px) clamp(58px, 5.4vw, 88px);
+      opacity: 0;
+      visibility: hidden;
+      transform: translateX(24px);
+      transition: opacity 280ms ease, transform 360ms ease, visibility 280ms;
+    }
+
+    .slide.active {
+      opacity: 1;
+      visibility: visible;
+      transform: translateX(0);
+    }
+
+    .slide-head,
+    .slide-foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .eyebrow,
+    .slide-number,
+    .micro-label {
+      color: var(--green);
+      font-size: clamp(10px, 0.78vw, 14px);
+      font-weight: 800;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+
+    .slide-number,
+    .footer-note {
+      color: var(--muted);
+    }
+
+    .brand-mark {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted);
+      font-size: clamp(10px, 0.78vw, 14px);
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .brand-mark::before {
+      width: 9px;
+      height: 9px;
+      border-radius: 2px;
+      background: var(--green);
+      box-shadow: 0 0 22px rgba(168, 255, 120, 0.68);
+      content: "";
+    }
+
+    .slide-body {
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    h1,
+    h2,
+    h3 {
+      font-family: var(--font-display);
+      font-weight: 800;
+      letter-spacing: -0.035em;
+    }
+
+    h1 {
+      max-width: 1020px;
+      font-size: clamp(50px, 6.6vw, 112px);
+      line-height: 0.91;
+      text-transform: uppercase;
+    }
+
+    h2 {
+      max-width: 1050px;
+      font-size: clamp(34px, 4.25vw, 72px);
+      line-height: 0.98;
+    }
+
+    h3 {
+      font-size: clamp(17px, 1.45vw, 26px);
+      line-height: 1.05;
+    }
+
+    .accent {
+      color: var(--green);
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .lead {
+      max-width: 930px;
+      margin-top: clamp(18px, 2vw, 32px);
+      color: #cce2d6;
+      font-size: clamp(17px, 1.48vw, 27px);
+      line-height: 1.45;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: clamp(22px, 2.6vw, 40px);
+    }
+
+    .pill {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 9px 14px;
+      background: rgba(255, 255, 255, 0.035);
+      color: #cfe8da;
+      font-size: clamp(11px, 0.82vw, 14px);
+      font-weight: 700;
+      letter-spacing: 0.04em;
+    }
+
+    .invariant-rail {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-top: clamp(25px, 3vw, 48px);
+      max-width: 1120px;
+    }
+
+    .invariant {
+      position: relative;
+      min-height: 92px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 17px 18px 16px 52px;
+      background: rgba(10, 28, 23, 0.72);
+    }
+
+    .invariant .index {
+      position: absolute;
+      top: 17px;
+      left: 18px;
+      color: var(--green);
+      font-family: var(--font-display);
+      font-size: 18px;
+      font-weight: 900;
+    }
+
+    .invariant strong {
+      display: block;
+      margin-bottom: 5px;
+      font-size: clamp(13px, 1vw, 18px);
+    }
+
+    .invariant span {
+      color: var(--muted);
+      font-size: clamp(10px, 0.76vw, 13px);
+      line-height: 1.35;
+    }
+
+    .problem-layout {
+      display: grid;
+      grid-template-columns: 1.05fr 0.95fr;
+      gap: clamp(24px, 4vw, 70px);
+      align-items: center;
+    }
+
+    .thesis {
+      margin-top: 28px;
+      border-left: 4px solid var(--green);
+      padding: 4px 0 4px 24px;
+      color: #dff7e9;
+      font-size: clamp(17px, 1.55vw, 28px);
+      font-weight: 650;
+      line-height: 1.35;
+    }
+
+    .risk-stack {
+      display: grid;
+      gap: 12px;
+    }
+
+    .risk-card {
+      display: grid;
+      grid-template-columns: 42px 1fr;
+      gap: 14px;
+      align-items: center;
+      border: 1px solid rgba(255, 141, 120, 0.22);
+      border-radius: 15px;
+      padding: 15px 17px;
+      background: linear-gradient(90deg, rgba(255, 141, 120, 0.08), rgba(10, 28, 23, 0.65));
+    }
+
+    .risk-icon {
+      display: grid;
+      width: 38px;
+      height: 38px;
+      place-items: center;
+      border-radius: 10px;
+      background: rgba(255, 141, 120, 0.12);
+      color: var(--coral);
+      font-weight: 900;
+    }
+
+    .risk-card p {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: clamp(10px, 0.78vw, 14px);
+      line-height: 1.35;
+    }
+
+    .answer-strip {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      margin-top: 18px;
+      border: 1px solid rgba(168, 255, 120, 0.22);
+      border-radius: 14px;
+      padding: 14px 18px;
+      background: rgba(168, 255, 120, 0.055);
+    }
+
+    .answer-strip strong {
+      color: var(--green);
+      font-size: clamp(12px, 0.92vw, 16px);
+      text-transform: uppercase;
+    }
+
+    .answer-strip span {
+      color: #d2e9dd;
+      font-size: clamp(11px, 0.82vw, 15px);
+      text-align: right;
+    }
+
+    .pipeline {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 9px;
+      margin-top: clamp(24px, 2.8vw, 44px);
+    }
+
+    .stage {
+      position: relative;
+      min-height: 126px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      padding: 18px 13px;
+      background: linear-gradient(155deg, rgba(19, 50, 41, 0.88), rgba(8, 24, 19, 0.84));
+    }
+
+    .stage:not(:last-child)::after {
+      position: absolute;
+      top: 50%;
+      right: -10px;
+      z-index: 3;
+      color: var(--green);
+      font-size: 14px;
+      font-weight: 900;
+      content: "›";
+      transform: translateY(-50%);
+    }
+
+    .stage-code {
+      display: inline-grid;
+      min-width: 31px;
+      height: 25px;
+      margin-bottom: 15px;
+      place-items: center;
+      border-radius: 7px;
+      background: rgba(168, 255, 120, 0.12);
+      color: var(--green);
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .stage strong {
+      display: block;
+      font-size: clamp(11px, 0.88vw, 16px);
+      line-height: 1.15;
+    }
+
+    .stage p {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: clamp(9px, 0.68vw, 12px);
+      line-height: 1.35;
+    }
+
+    .contract-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .contract {
+      border-top: 2px solid var(--mint);
+      padding: 12px 14px;
+      background: rgba(77, 224, 189, 0.045);
+      color: #cfe8dc;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: clamp(9px, 0.68vw, 12px);
+      line-height: 1.4;
+    }
+
+    .direction-grid {
+      display: grid;
+      grid-template-columns: 1.12fr 1.12fr 0.76fr;
+      gap: 14px;
+      margin-top: clamp(22px, 2.5vw, 40px);
+    }
+
+    .direction {
+      min-height: 210px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 22px;
+      background: rgba(10, 29, 23, 0.75);
+    }
+
+    .direction.primary {
+      border-color: rgba(168, 255, 120, 0.36);
+      background: linear-gradient(150deg, rgba(168, 255, 120, 0.11), rgba(10, 29, 23, 0.76));
+    }
+
+    .direction.research {
+      border-color: rgba(77, 224, 189, 0.34);
+      background: linear-gradient(150deg, rgba(77, 224, 189, 0.10), rgba(10, 29, 23, 0.76));
+    }
+
+    .direction.experience {
+      border-color: rgba(255, 199, 102, 0.28);
+    }
+
+    .direction .rank {
+      color: var(--green);
+      font-family: var(--font-display);
+      font-size: clamp(28px, 2.5vw, 44px);
+      font-weight: 900;
+    }
+
+    .direction.research .rank {
+      color: var(--mint);
+    }
+
+    .direction.experience .rank {
+      color: var(--amber);
+    }
+
+    .direction h3 {
+      margin: 8px 0 13px;
+    }
+
+    .direction p,
+    .direction li {
+      color: var(--muted);
+      font-size: clamp(10px, 0.76vw, 13px);
+      line-height: 1.45;
+    }
+
+    .direction ul {
+      display: grid;
+      gap: 5px;
+      padding-left: 17px;
+    }
+
+    .closing-line {
+      margin-top: 18px;
+      color: #e7faef;
+      font-size: clamp(14px, 1.22vw, 22px);
+      font-weight: 750;
+      text-align: center;
+    }
+
+    .closing-line span {
+      color: var(--green);
+    }
+
+    .footer-note {
+      font-size: clamp(9px, 0.68vw, 12px);
+      letter-spacing: 0.04em;
+    }
+
+    .controls {
+      position: absolute;
+      right: clamp(20px, 2.2vw, 36px);
+      bottom: clamp(18px, 2vw, 32px);
+      z-index: 60;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .nav-button {
+      display: grid;
+      width: 38px;
+      height: 38px;
+      place-items: center;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: rgba(13, 37, 30, 0.86);
+      cursor: pointer;
+      transition: border-color 180ms ease, background 180ms ease, transform 180ms ease;
+    }
+
+    .nav-button:hover,
+    .nav-button:focus-visible {
+      border-color: rgba(168, 255, 120, 0.54);
+      background: rgba(31, 66, 54, 0.94);
+      outline: none;
+      transform: translateY(-1px);
+    }
+
+    .counter {
+      min-width: 52px;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 12px;
+      text-align: center;
+    }
+
+    .keyboard-hint {
+      position: absolute;
+      bottom: clamp(25px, 2.35vw, 40px);
+      left: clamp(38px, 5vw, 86px);
+      z-index: 60;
+      color: rgba(155, 184, 170, 0.7);
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .slide.active .reveal {
+      animation: reveal-up 480ms ease both;
+    }
+
+    .slide.active .reveal.delay-1 { animation-delay: 80ms; }
+    .slide.active .reveal.delay-2 { animation-delay: 160ms; }
+    .slide.active .reveal.delay-3 { animation-delay: 240ms; }
+
+    @keyframes reveal-up {
+      from { opacity: 0; transform: translateY(18px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 800px), (max-height: 520px) {
+      .slide {
+        gap: 12px;
+        padding: 26px 34px 54px;
+      }
+
+      .invariant-rail,
+      .contract-grid {
+        gap: 7px;
+      }
+
+      .invariant {
+        min-height: 74px;
+        padding: 12px 12px 10px 40px;
+      }
+
+      .invariant .index {
+        top: 12px;
+        left: 12px;
+      }
+
+      .pipeline {
+        gap: 5px;
+      }
+
+      .stage {
+        min-height: 100px;
+        padding: 12px 9px;
+      }
+
+      .direction {
+        min-height: 170px;
+        padding: 15px;
+      }
+    }
+
+    @media (max-aspect-ratio: 4 / 3) {
+      .deck {
+        width: 100vw;
+        height: 100vh;
+      }
+
+      .problem-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .risk-stack {
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .risk-card {
+        grid-template-columns: 1fr;
+      }
+
+      .pipeline {
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .stage:not(:last-child)::after {
+        display: none;
+      }
+    }
+
+    @media print {
+      html,
+      body {
+        overflow: visible;
+        background: white;
+      }
+
+      .deck {
+        position: static;
+        width: 13.333in;
+        height: auto;
+        overflow: visible;
+        box-shadow: none;
+      }
+
+      .slide {
+        position: relative;
+        width: 13.333in;
+        height: 7.5in;
+        opacity: 1;
+        visibility: visible;
+        transform: none;
+        break-after: page;
+      }
+
+      .controls,
+      .keyboard-hint,
+      .progress {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="deck" aria-label="PIT Fintech proposal presentation">
+    <div class="progress" id="progress" aria-hidden="true"></div>
+
+    <section class="slide active" aria-labelledby="slide-1-title">
+      <header class="slide-head">
+        <span class="eyebrow">Project proposal · Fintech ML systems</span>
+        <span class="slide-number">01 / 04</span>
+      </header>
+      <div class="slide-body">
+        <h1 id="slide-1-title" class="reveal">
+          Point-in-Time<br><span class="accent">Fraud Feature</span> Platform
+        </h1>
+        <p class="lead reveal delay-1">
+          Xây dựng feature platform đúng theo thời điểm trên local Delta Lakehouse — để model
+          chỉ nhìn thấy dữ liệu thực sự tồn tại tại lúc ra quyết định.
+        </p>
+        <div class="pill-row reveal delay-2">
+          <span class="pill">Local-first</span>
+          <span class="pill">CPU-only</span>
+          <span class="pill">Zero mandatory cost</span>
+          <span class="pill">6 tuần · 3 sprint</span>
+        </div>
+        <div class="invariant-rail reveal delay-3">
+          <article class="invariant">
+            <span class="index">01</span>
+            <strong>Không đọc tương lai</strong>
+            <span>Mọi source event phải đứng trước prediction cutoff.</span>
+          </article>
+          <article class="invariant">
+            <span class="index">02</span>
+            <strong>Offline = Online</strong>
+            <span>Training vector và serving vector giữ cùng semantics.</span>
+          </article>
+          <article class="invariant">
+            <span class="index">03</span>
+            <strong>Backfill tái lập được</strong>
+            <span>Cùng snapshot, version, range → cùng checksum.</span>
+          </article>
+        </div>
+      </div>
+      <footer class="slide-foot">
+        <span class="brand-mark">PIT Fintech</span>
+        <span class="footer-note">Design & evaluation — not a Kaggle leaderboard project</span>
+      </footer>
+    </section>
+
+    <section class="slide" aria-labelledby="slide-2-title">
+      <header class="slide-head">
+        <span class="eyebrow">Tên dự án & mục tiêu</span>
+        <span class="slide-number">02 / 04</span>
+      </header>
+      <div class="slide-body problem-layout">
+        <div>
+          <p class="micro-label reveal">Bài toán cần giải quyết</p>
+          <h2 id="slide-2-title" class="reveal delay-1">
+            Model có thể <span class="accent">đẹp trên notebook</span>, nhưng sai khi serving.
+          </h2>
+          <p class="thesis reveal delay-2">
+            “Điểm số tốt không có giá trị nếu feature chưa tồn tại tại decision time.”
+          </p>
+        </div>
+        <div class="risk-stack reveal delay-2">
+          <article class="risk-card">
+            <span class="risk-icon">F</span>
+            <div>
+              <h3>Future leakage</h3>
+              <p>Aggregate vô tình đọc transaction xảy ra sau cutoff.</p>
+            </div>
+          </article>
+          <article class="risk-card">
+            <span class="risk-icon">≠</span>
+            <div>
+              <h3>Training–serving skew</h3>
+              <p>Notebook SQL và Redis serving dùng hai logic khác nhau.</p>
+            </div>
+          </article>
+          <article class="risk-card">
+            <span class="risk-icon">↺</span>
+            <div>
+              <h3>Backfill khó kiểm chứng</h3>
+              <p>Rerun không ghim snapshot/version nên artifact âm thầm thay đổi.</p>
+            </div>
+          </article>
+          <div class="answer-strip">
+            <strong>Mục tiêu</strong>
+            <span>Biến temporal correctness thành data contract có test và evidence.</span>
+          </div>
+        </div>
+      </div>
+      <footer class="slide-foot">
+        <span class="brand-mark">PIT Fintech</span>
+        <span class="footer-note">Correct evaluation before model optimization</span>
+      </footer>
+    </section>
+
+    <section class="slide" aria-labelledby="slide-3-title">
+      <header class="slide-head">
+        <span class="eyebrow">Giải pháp & công nghệ</span>
+        <span class="slide-number">03 / 04</span>
+      </header>
+      <div class="slide-body">
+        <h2 id="slide-3-title" class="reveal">
+          Một luồng dữ liệu, <span class="accent">hai temporal views</span>, một contract.
+        </h2>
+        <div class="pipeline reveal delay-1" aria-label="Data and model processing pipeline">
+          <article class="stage">
+            <span class="stage-code">01</span>
+            <strong>Raw archive</strong>
+            <p>IEEE-CIS primary<br>PaySim fallback</p>
+          </article>
+          <article class="stage">
+            <span class="stage-code">02</span>
+            <strong>Bronze / Silver</strong>
+            <p>Delta Lake<br>entity + event contract</p>
+          </article>
+          <article class="stage">
+            <span class="stage-code">03</span>
+            <strong>PIT compute</strong>
+            <p>DuckDB<br>pre-decision + post-event</p>
+          </article>
+          <article class="stage">
+            <span class="stage-code">04</span>
+            <strong>Feature store</strong>
+            <p>Feast contract<br>Redis online state</p>
+          </article>
+          <article class="stage">
+            <span class="stage-code">05</span>
+            <strong>Model lifecycle</strong>
+            <p>LightGBM<br>MLflow promotion</p>
+          </article>
+          <article class="stage">
+            <span class="stage-code">06</span>
+            <strong>Score & replay</strong>
+            <p>FastAPI<br>parity + freshness</p>
+          </article>
+        </div>
+        <div class="contract-grid reveal delay-2">
+          <div class="contract">source.order_key &lt; prediction.order_key</div>
+          <div class="contract">read state → score → update state</div>
+          <div class="contract">snapshot + feature + model + code version</div>
+        </div>
+      </div>
+      <footer class="slide-foot">
+        <span class="brand-mark">PIT Fintech</span>
+        <span class="footer-note">Makefile · uv · pytest · Compose · GitHub Actions</span>
+      </footer>
+    </section>
+
+    <section class="slide" aria-labelledby="slide-4-title">
+      <header class="slide-head">
+        <span class="eyebrow">Định hướng đầu ra</span>
+        <span class="slide-number">04 / 04</span>
+      </header>
+      <div class="slide-body">
+        <h2 id="slide-4-title" class="reveal">
+          <span class="accent">Fintech-ready engineering</span>, research-backed evidence.
+        </h2>
+        <div class="direction-grid reveal delay-1">
+          <article class="direction primary">
+            <span class="rank">01</span>
+            <h3>Đi làm Fintech / MLOps</h3>
+            <ul>
+              <li>Temporal data modeling và leakage prevention</li>
+              <li>Feature lifecycle, lineage, version gate</li>
+              <li>Offline/online parity và serving reliability</li>
+              <li>Local reproducibility + CI evidence</li>
+            </ul>
+          </article>
+          <article class="direction research">
+            <span class="rank">02</span>
+            <h3>Nghiên cứu / Proposal</h3>
+            <ul>
+              <li>RQ/Hypothesis rõ ràng, paper-inspired adaptation</li>
+              <li>E1–E5: correctness và model ablation</li>
+              <li>P1–P5: full vs incremental backfill</li>
+              <li>Threats to validity và machine-readable evidence</li>
+            </ul>
+          </article>
+          <article class="direction experience">
+            <span class="rank">03</span>
+            <h3>Trải nghiệm</h3>
+            <p>
+              Jupyter, Docker và cloud optional là phương tiện học — không phải outcome chính.
+              Core acceptance vẫn chạy local, CPU-only và không bắt buộc trả phí.
+            </p>
+          </article>
+        </div>
+        <p class="closing-line reveal delay-2">
+          Đầu ra cuối: <span>một ML systems portfolio có thể kiểm chứng</span>, không chỉ một model demo.
+        </p>
+      </div>
+      <footer class="slide-foot">
+        <span class="brand-mark">PIT Fintech</span>
+        <span class="footer-note">Outcome: trustworthy features before higher model scores</span>
+      </footer>
+    </section>
+
+    <div class="keyboard-hint">← → điều hướng · F toàn màn hình</div>
+    <nav class="controls" aria-label="Slide navigation">
+      <button class="nav-button" id="previous" type="button" aria-label="Slide trước">←</button>
+      <span class="counter"><span id="current">01</span> / 04</span>
+      <button class="nav-button" id="next" type="button" aria-label="Slide tiếp theo">→</button>
+    </nav>
+  </main>
+
+  <script>
+    const slides = Array.from(document.querySelectorAll(".slide"));
+    const progress = document.getElementById("progress");
+    const currentLabel = document.getElementById("current");
+    let currentIndex = 0;
+
+    function showSlide(index) {
+      currentIndex = Math.max(0, Math.min(index, slides.length - 1));
+      slides.forEach((slide, position) => {
+        const active = position === currentIndex;
+        slide.classList.toggle("active", active);
+        slide.setAttribute("aria-hidden", String(!active));
+      });
+      currentLabel.textContent = String(currentIndex + 1).padStart(2, "0");
+      progress.style.width = `${((currentIndex + 1) / slides.length) * 100}%`;
+      window.location.hash = `slide-${currentIndex + 1}`;
+    }
+
+    function toggleFullscreen() {
+      if (document.fullscreenElement) {
+        document.exitFullscreen();
+      } else {
+        document.documentElement.requestFullscreen();
+      }
+    }
+
+    document.getElementById("previous").addEventListener("click", () => showSlide(currentIndex - 1));
+    document.getElementById("next").addEventListener("click", () => showSlide(currentIndex + 1));
+
+    document.addEventListener("keydown", (event) => {
+      if (["ArrowRight", "PageDown", " "].includes(event.key)) {
+        event.preventDefault();
+        showSlide(currentIndex + 1);
+      }
+      if (["ArrowLeft", "PageUp"].includes(event.key)) {
+        event.preventDefault();
+        showSlide(currentIndex - 1);
+      }
+      if (event.key === "Home") showSlide(0);
+      if (event.key === "End") showSlide(slides.length - 1);
+      if (event.key.toLowerCase() === "f") toggleFullscreen();
+    });
+
+    const hashMatch = window.location.hash.match(/slide-(\d+)/);
+    showSlide(hashMatch ? Number(hashMatch[1]) - 1 : 0);
+  </script>
+</body>
+</html>
