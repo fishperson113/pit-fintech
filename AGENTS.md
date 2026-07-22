@@ -62,10 +62,13 @@ Paper dùng FeathrPO, Spark và các dataset TPCxAI/Favorita/eCommerce. Project 
 | Chi phí | Bắt buộc bằng 0 trong thời gian experiment |
 | Cloud | Optional; Modal + Upstash nếu đăng ký/quota dùng được |
 | Cloud fallback | Local Docker Compose là acceptance path |
-| Training | LightGBM baseline; không tối ưu model sâu |
+| Training | Chốt model family sau PaySim EDA; LightGBM chỉ là candidate baseline, không tối ưu model sâu |
+| Training runtime | Python CLI local CPU; không Ray Train/Ray Tune trong MVP |
 | IaC | Makefile + Compose + CI; không bắt buộc Terraform/OpenTofu |
 | Distributed stack | Không Spark, Kafka, Kubernetes hoặc Airflow trong must-have |
-| Streaming | Deterministic chronological replay thay cho live stream |
+| Event ingress | Một logical Transaction Producer/Replay Driver dùng ordered in-memory iterator/queue; không external broker trong MVP |
+| Streaming | Deterministic chronological replay từng event thay cho live stream; xử lý xong `t` mới phát `t+1` |
+| Serving runtime | FastAPI/Uvicorn reference; không Ray Serve trước khi có benchmark chứng minh nhu cầu scale |
 | Dashboard | Chỉ phục vụ evidence; không phải outcome chính |
 | TypeScript | Nice-to-have Sprint 3 sau khi Python reference pass |
 
@@ -89,11 +92,18 @@ Fixture này là **ground truth cho PIT correctness**. Fraud labels của datase
 
 ### Dataset áp dụng
 
-1. Primary: IEEE-CIS Fraud Detection nếu tải được và entity proxy có đủ repeated history.
-2. Fallback: PaySim nếu Kaggle access hoặc entity sensitivity của IEEE-CIS fail trong hai ngày đầu.
-3. Không chạy full benchmark trên cả hai dataset trong MVP.
+1. EDA-first path: PaySim; phải profile temporal structure, entity history, imbalance, leakage
+   risk và feature cardinality trước khi khóa model family.
+2. Candidate alternatives: IEEE-CIS Fraud Detection và Home Credit. Chỉ chuyển khi PaySim
+   không đạt temporal/entity viability hoặc có ADR nêu rõ giá trị nghiên cứu bổ sung.
+3. Không chạy full benchmark trên nhiều application dataset trong MVP; synthetic temporal
+   oracle luôn là correctness ground truth độc lập.
 
 IEEE-CIS entity candidate ban đầu: canonicalized hash của `card1|card2|card3|card5`; phải xác nhận bằng EDA trước khi khóa. Event ordering ban đầu: `TransactionDT`, sau đó `TransactionID`.
+
+Home Credit chỉ được chọn nếu biến thể dataset có event time, repeated entity history và
+pre-decision semantics đủ rõ cho PIT evaluation; static applicant snapshot không tự động phù
+hợp với feature-store research question.
 
 Nếu dùng PaySim, review leakage trước khi dùng các balance columns; ưu tiên `step`, transaction attributes và explicit origin/destination entity history.
 
@@ -105,15 +115,15 @@ Nếu dùng PaySim, review leakage trước khi dùng các balance columns; ưu 
 | Language | Python cho reference implementation |
 | Lakehouse | Delta Lake qua `delta-rs`/`deltalake`, dữ liệu Parquet |
 | Offline compute | DuckDB |
-| Feature contract | Feast; custom PIT oracle vẫn là correctness source of truth |
+| Feature contract | Feast ở vai trò registry/retrieval/materialization mỏng; custom PIT oracle vẫn là correctness source of truth |
 | Online store | Local Redis; Upstash là hosted option |
 | Validation | Pandera + custom temporal assertions + pytest |
-| Model | LightGBM |
+| Model | TBD sau PaySim EDA; LightGBM là candidate baseline |
 | Tracking/registry | MLflow local với alias `candidate`, `champion`, `previous` |
 | Serving | FastAPI + versioned `FeatureProvider` boundary |
 | Workflow | Python CLI + Makefile |
 | Services | Docker Compose: Redis, MLflow, FastAPI |
-| Monitoring | Structured JSON logs; Prometheus/Grafana optional profile |
+| Monitoring | Structured JSON + OTel instrumentation; OTel Collector/Prometheus/Grafana trên VPS là optional Sprint 3, ngoài core Compose |
 | CI | GitHub Actions fast fixture lane |
 | Cloud | Modal CPU + Upstash, optional |
 | TS experiment | Fastify + Redis + ONNX Runtime Node, optional Sprint 3 |
@@ -121,16 +131,22 @@ Nếu dùng PaySim, review leakage trước khi dùng các balance columns; ưu 
 Core architecture:
 
 ```text
-Raw archive
-  -> Bronze Delta
-  -> Silver canonical events
-  -> DuckDB PIT computation
-  -> Gold pre-decision features + post-event state
-  -> Feast historical retrieval / Redis materialization
-  -> LightGBM + MLflow
-  -> FastAPI scoring
-  -> chronological replay, parity and monitoring evidence
+Offline/medallion:
+  Raw archive -> Bronze Delta -> Silver canonical events
+  -> DuckDB PIT computation -> Gold pre-decision features + post-event state
+  -> Feast contract -> Redis materialization
+
+Training:
+  Gold/Feast historical retrieval -> Python training CLI (model TBD sau EDA) -> MLflow
+
+Online/replay:
+  one logical Replay Driver (ordered in-memory queue) -> FastAPI transaction t
+  -> read Redis history strictly before t -> score t
+  -> update Redis + append t to Event History only after scoring
 ```
+
+Medallion là offline data architecture và phải chạy bằng Python CLI/Makefile; notebook chỉ dùng
+để EDA/experiment. Bronze/Silver/Gold không nằm trên synchronous serving request path.
 
 ## 8. Sprint plan và Definition of Done
 
@@ -146,7 +162,7 @@ Must-have outcomes:
 - raw CSV thành Bronze/Silver Delta sample;
 - 10–15 feature specs có window semantics;
 - naive/leaky versus PIT prototype;
-- static/PIT LightGBM baseline với temporal split;
+- static/PIT baseline với temporal split; LightGBM là candidate, chỉ khóa sau PaySim EDA;
 - PIT implementation trong `src/` và exhaustive temporal tests;
 - Makefile, dependency lock và CI skeleton.
 
@@ -161,14 +177,17 @@ Go gate:
 
 Must-have outcomes:
 
-- Feast repository và versioned feature service;
-- Gold Delta offline features;
+- Feast repository và versioned feature service ở vai trò contract mỏng;
+- Gold Delta offline features được build qua Python CLI/Makefile, không phụ thuộc notebook;
 - full/range/incremental backfill cùng immutable manifest;
 - Redis materialization và watermark;
-- temporal training dataset, LightGBM và MLflow run;
+- temporal training dataset, model đã được khóa bằng EDA evidence và MLflow run; training local
+  single-node, không Ray Train/Ray Tune;
 - model promotion/rollback với deployment manifest;
-- FastAPI scoring và versioned feature-provider interface;
-- chronological replay;
+- FastAPI/Uvicorn scoring và versioned feature-provider interface; không Ray Serve trong MVP;
+- một logical Transaction Producer/Replay Driver với deterministic in-memory queue/iterator;
+- chronological replay theo thứ tự `score t -> post-score Redis update -> append Event History`,
+  hoàn tất `t` rồi mới phát `t+1`; không Kafka/RabbitMQ/Redis Streams service;
 - integration tests cho parity, duplicates, idempotency và recovery;
 - Compose + one-command local E2E.
 
@@ -196,7 +215,8 @@ Must-have outcomes:
 Should-have:
 
 - Modal + Upstash smoke deployment;
-- Prometheus/Grafana dashboard;
+- OTel Collector + Prometheus + Grafana self-host trên VPS bằng deployment/ops boundary riêng;
+  app repo chỉ giữ instrumentation, metric contract, dashboard JSON và config mẫu không secret;
 - late-arrival correction experiment.
 
 Nice-to-have, chỉ làm khi core release gates pass và còn buffer:
@@ -217,7 +237,10 @@ Nice-to-have, chỉ làm khi core release gates pass và còn buffer:
 | E4 | PIT-correct history + temporal split | Kết quả chính, deployable nếu pass gates |
 | E5 | E4 model + stale/skew injection trong replay | Detection/reliability test |
 
-Dùng cùng fixed LightGBM configuration, feature version và seed policy. Primary metric là PR-AUC; secondary là ROC-AUC và recall tại fixed FPR. Model không cần thắng leaky baseline; metric giảm sau khi loại leakage là kết quả hợp lệ.
+Sau PaySim EDA, khóa một model family/configuration cho toàn bộ E1–E5 cùng feature version và
+seed policy; LightGBM là candidate baseline chứ không phải quyết định trước dữ liệu. Primary
+metric là PR-AUC; secondary là ROC-AUC và recall tại fixed FPR. Model không cần thắng leaky
+baseline; metric giảm sau khi loại leakage là kết quả hợp lệ.
 
 ### Pipeline
 
@@ -253,14 +276,24 @@ deploy-cloud | export-onnx | serve-ts | benchmark-serving  # optional
 
 ## 11. Scope guards
 
-- Không dựng Kafka/Kubernetes/Airflow/Spark trước khi core gates pass.
-- Feast là registry/retrieval contract, không thay thế independent PIT oracle.
+- Không dựng Kafka/Kubernetes/Airflow/Spark, RabbitMQ, Redis Streams hoặc Debezium trong MVP.
+- Chỉ dùng một logical replay producer; nhiều entity không đồng nghĩa cần nhiều producer.
+- Không dùng Ray Train/Ray Tune/Ray Serve nếu chưa có benchmark chứng minh distributed
+  training, large-scale HPO hoặc serving replicas là bottleneck thực tế.
+- Feast là registry/retrieval/materialization contract mỏng, không compute feature và không thay
+  thế independent PIT oracle. Chỉ bỏ Feast qua ADR và phải thay đủ versioned FeatureSpec,
+  FeatureProvider, materialization manifest và parity gates.
+- Medallion Bronze/Silver/Gold chỉ thuộc offline path và chạy bằng CLI/Makefile; notebook không
+  phải pipeline executor, serving không đi xuyên medallion.
 - Query/score online phải xảy ra trước khi event hiện tại update state.
 - Không dùng accuracy làm metric chính cho fraud imbalance.
 - Không dùng label-derived hoặc post-outcome fields làm model features.
 - Không tune model để che correctness failure.
 - Không coi cloud deployment là điều kiện nghiệm thu.
 - Không triển khai TypeScript trước khi Python reference, replay parity và Sprint 2 gate pass.
+- Không thêm Superset: report/Grafana đã đủ cho evidence, project không phải BI platform.
+- Observability VPS là optional Sprint 3 và không nằm trong core Compose; Grafana phải đọc một
+  telemetry backend như Prometheus, không nhận trực tiếp telemetry từ application.
 - Không đánh đổi correctness evidence lấy dashboard hoặc architecture screenshot.
 
 ## 12. Việc phải làm trong session đầu tiên của project mới
@@ -272,8 +305,8 @@ deploy-cloud | export-onnx | serve-ts | benchmark-serving  # optional
 5. Tạo synthetic temporal fixture và independent reference oracle.
 6. Viết tests future/duplicate/tie/late-arrival/window-boundary trước khi tải full dataset.
 7. Tạo ba notebook Sprint 1: data profile, entity/temporal analysis, leakage prototype.
-8. Chốt IEEE-CIS hoặc PaySim bằng Day-2 go/no-go; ghi quyết định vào ADR.
-9. Chỉ sau khi temporal tests pass mới build lakehouse và model baseline.
+8. Chạy PaySim EDA trước, rồi chốt PaySim/IEEE-CIS/Home Credit bằng go/no-go có ADR.
+9. Chỉ sau khi temporal tests pass và EDA evidence đủ mới build lakehouse và khóa model baseline.
 10. Cập nhật trạng thái artifact/gate trong repo; luôn phân biệt planned, implemented và verified.
 
 ## 13. Quy tắc bắt buộc về milestone changelog và project status

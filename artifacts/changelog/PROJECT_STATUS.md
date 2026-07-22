@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-07-21. Status words are strict:
+Last updated: 2026-07-22. Status words are strict:
 
 - **planned**: present in the six-week guide, with no claim that code exists;
 - **implemented**: code/artifact exists but the relevant gate may not have run;
@@ -11,10 +11,14 @@ Last updated: 2026-07-21. Status words are strict:
 | Artifact / guard | Status | Evidence |
 |---|---|---|
 | Cumulative changelog | verified | `artifacts/changelog/CHANGELOG.md` |
-| Detailed milestone logs | verified | M001 and M002 logs under `artifacts/changelog/milestones/` |
+| Detailed milestone logs | verified | M001–M006 logs under `artifacts/changelog/milestones/` |
 | Milestone pre-commit guard | verified | four unit cases pass; installed at `.git/hooks/pre-commit` |
 | Human-readable reports location | verified | reports moved to `docs/reports/` |
-| Four-slide PIT proposal deck | verified | 4 slides render at 1440x810 without overflow/errors; button and keyboard navigation pass |
+| Four-slide PIT proposal deck | verified | slide 2 states the full PIT-Correct Feature Platform for Fraud Detection name, objective, two execution paths (offline training and online serving), the cross-cutting OTel/Prometheus/Grafana observability layer, and four scope anchors; slide 3 embeds the user-authored architecture image; slide 4 progresses from Engineering/MLOps to thesis-ready E2E research; 4 slides render at 1440x810 without overflow/errors; navigation passes |
+| Editable Draw.io target architecture | verified | connected high-level v3 opens in app.diagrams.net; 42 elements, 13 action-labeled edges, explicit Delta offline/Redis online/Feast bridge roles, replaceable logo placeholders, no XML/reference defects |
+| Copy-ready Mermaid architecture | verified | current high-level handoff; 7 subgraphs, 12 nodes, 16 action-labeled edges and 10 logo placeholders; transaction `t` is scored from Redis history before `t`, then updates Redis and appends to Event History for the DuckDB/Delta offline path; unique node IDs and valid edge references; OTel/Grafana remains planned |
+| M005 sprint scope refinement | verified | Sprint 2/3 planning contract now fixes one-producer in-memory replay, score-before-update, offline-only medallion, thin Feast role, no Ray/Kafka/CDC/BI stack, and optional external VPS observability |
+| M006 reusable project self-review checklist | verified | `docs/reports/project-self-review-checklist.md`; 13 non-negotiable hard gates plus a 100-point evidence-based scorecard across data, correctness, SWE, MLOps, serving, operations and scale reasoning |
 
 ## Sprint 1
 
@@ -29,22 +33,24 @@ Last updated: 2026-07-21. Status words are strict:
 | CI fixture lane | implemented | `.github/workflows/ci.yml` |
 | JupyterLab and three Sprint 1 notebooks | verified | all three execute in memory through the project kernel |
 | Redis + MLflow local service boundary | implemented | Compose config passes; image build hit host timeout and remains unverified |
-| IEEE-CIS access/checksum | planned | requires competition-rule acceptance |
-| Entity sensitivity and full data profile | planned | Day-2 decision input |
-| IEEE-CIS vs PaySim ADR decision | planned | do not lock before EDA |
+| PaySim access/checksum and EDA | planned | EDA-first path; profile time/entity/leakage/imbalance before ADR |
+| Dataset/entity ADR | planned | PaySim first; IEEE-CIS and Home Credit are alternatives |
 | Bronze/Silver Delta sample | verified | 8 Bronze rows, 7 Silver rows, separated label table; 1 integration/time-travel test passes |
-| Static/PIT LightGBM baseline | planned | later Sprint 1 |
+| Model-family gate and static/PIT baseline | planned | lock after PaySim EDA; LightGBM is a candidate only |
 
 ## Sprint 2
 
-Feast repository, Gold features, full/range/incremental backfill, Redis materialization,
-LightGBM + MLflow model run, gated promotion/rollback, FastAPI scoring, chronological replay,
-offline/online parity, and sample E2E are all **planned**.
+Thin Feast contract, CLI-built Gold features, full/range/incremental backfill, Redis
+materialization, local selected-model + MLflow run, gated promotion/rollback, FastAPI/Uvicorn
+scoring, one-producer ordered in-memory replay, offline/online parity, and sample E2E are all
+**planned**. Ray Train/Tune/Serve and external message brokers are out of the Sprint 2 MVP.
 
 ## Sprint 3
 
-E1–E5/P1–P5 experiment execution, monitoring, fault injection report, clean-room audit, cloud
-smoke path, final report, and optional TypeScript scorer are all **planned**.
+E1–E5/P1–P5 experiment execution, fault injection report, clean-room audit, cloud smoke path,
+final report, and optional TypeScript scorer are all **planned**. OTel Collector, Prometheus and
+Grafana on a separate VPS/ops boundary are **planned/should-have**, not part of core Compose or a
+release dependency.
 
 This table must be updated whenever an artifact crosses from planned to implemented or from
 implemented to verified.

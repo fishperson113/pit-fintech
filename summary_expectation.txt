@@ -1,0 +1,360 @@
+# Review lại theo góc nhìn Big Tech
+
+Không có nhiều công ty công khai giáo trình onboarding Data Engineer nội bộ theo từng tuần. Vì vậy, cách đáng tin cậy nhất là đối chiếu:
+
+* Khung năng lực chính thức của Google, AWS, Microsoft và Databricks.
+* Các bài viết kỹ thuật về pipeline thật của Netflix, Uber và LinkedIn.
+* Sau đó hạ độ khó xuống mức **Software Engineer mới tốt nghiệp**, thay vì yêu cầu tương đương một Data Engineer đã có kinh nghiệm.
+
+## 1. Big Tech thực sự coi trọng điều gì?
+
+AWS phân bổ nội dung Data Engineer thành ingestion/transformation 34%, storage 26%, operations 22% và security/governance 18%. Tuy nhiên, AWS cũng ghi rõ ứng viên mục tiêu thường có 2–3 năm kinh nghiệm DE, nên không thể bê toàn bộ phạm vi này vào chương trình thực tập 5 tuần. ([AWS Static][1])
+
+Google đặt trọng tâm vào thiết kế hệ thống, ingestion, batch/stream processing, data storage, modeling, validation, ACID, late-arriving data, CI/CD, observability, fault tolerance và recovery. Điểm đáng chú ý là **công cụ chỉ nằm bên dưới các quyết định kiến trúc**, không phải mục tiêu học tập cuối cùng. ([Google Services][2])
+
+Databricks ở cấp độ Professional vẫn dành 22% cho Python/SQL, sau đó mới đến performance, quality, monitoring, security, debugging và deployment. Điều này củng cố rằng một người mới nên giỏi code và reasoning trước khi học nhiều platform. ([Databricks][3])
+
+Các hệ thống thực tế cũng hội tụ vào cùng một số nguyên tắc:
+
+* Netflix xem incremental processing phải đồng thời bảo đảm **accuracy, freshness và backfill**. ([Netflix TechBlog][4])
+* Uber thiết kế ingestion quanh ba yêu cầu: **freshness, quality và efficiency**, đồng thời nhấn mạnh schema evolution và khả năng hiểu dữ liệu. ([Uber][5])
+* LinkedIn cho thấy việc nối quá nhiều hệ thống bằng custom code làm pipeline khó vận hành; họ hướng đến cách khai báo bằng SQL và platform hóa phần phức tạp. ([LinkedIn Engineering][6])
+* Netflix cung cấp project template và sample workflow để chuẩn hóa boilerplate, cho phép kỹ sư tập trung vào business logic, testing và deployment thay vì tự dựng mọi thứ từ đầu. ([Netflix TechBlog][7])
+
+**Kết luận:** bài thực tập không nên là “cài một mini data platform”. Nó nên là **một pipeline nhỏ, nhưng bị kiểm tra sâu về tính đúng, khả năng chạy lại, xử lý thay đổi và debug**.
+
+---
+
+# 2. Hành trình phù hợp với một Software Engineer mới ra trường
+
+Giả sử tôi là một SWE mới tốt nghiệp có tiềm năng cao:
+
+* Tôi có thể viết Python cơ bản.
+* Biết cấu trúc dữ liệu, Git và SQL ở mức nhập môn.
+* Chưa biết dbt, Airflow, Kafka hoặc Spark.
+* Tôi học nhanh nhưng cần được dẫn từ bài toán cụ thể đến nguyên lý hệ thống.
+
+Trình tự tốt nhất sẽ là:
+
+```text
+Code đúng
+→ hiểu dữ liệu
+→ thiết kế storage/model
+→ xử lý thay đổi
+→ vận hành khi có lỗi
+→ suy luận về scale
+```
+
+Không nên bắt đầu bằng Docker, Airflow hay Kafka.
+
+---
+
+# 3. Chương trình 5 tuần đã điều chỉnh
+
+## Project: Local Wallet Data Pipeline
+
+### Stack bắt buộc
+
+```text
+Python
+SQL
+PostgreSQL
+DuckDB
+CSV / JSONL / Parquet
+Git
+pytest
+```
+
+Chỉ dùng Docker để chạy PostgreSQL nếu cần.
+
+Không bắt buộc:
+
+* MinIO.
+* dbt.
+* Prefect/Airflow.
+* Kafka.
+* Spark.
+* Dashboard.
+
+Các công cụ này có thể là phần mở rộng sau khi intern đã hoàn thành yêu cầu nền tảng.
+
+---
+
+## Tuần 1 — Từ Software Engineer sang Data Engineer
+
+### Bài toán
+
+Intern nhận:
+
+* Mô tả nghiệp vụ ví điện tử chưa hoàn toàn chi tiết.
+* Một số file customer và merchant.
+* Một luồng transaction JSONL.
+* Một repository mẫu có cấu trúc nhưng chưa có implementation.
+
+Intern phải:
+
+1. Làm rõ grain của từng loại dữ liệu.
+2. Thiết kế schema PostgreSQL.
+3. Xác định primary key, foreign key, constraint và index.
+4. Viết Python ingest CSV/JSONL vào PostgreSQL.
+5. Xử lý null, sai kiểu dữ liệu và duplicate.
+6. Viết unit test cho parser và validator.
+7. Viết SQL sử dụng join, CTE, aggregation và window function.
+
+### Mentor không nên cung cấp
+
+* DDL hoàn chỉnh.
+* Code ingestion mẫu hoàn chỉnh.
+* Danh sách chính xác mọi trường hợp lỗi.
+
+### Quan sát tiềm năng
+
+* Có hỏi grain và uniqueness trước khi code không?
+* Có chia code thành module hay viết một script dài?
+* Có nghĩ đến dữ liệu xấu không?
+* Khi test fail, có debug có phương pháp không?
+
+**Mục tiêu tuần 1:** chứng minh đây là một Software Engineer có nền tảng tốt, chưa cần chứng minh là Data Engineer.
+
+---
+
+## Tuần 2 — Storage và Data Modeling
+
+Intern xây dựng:
+
+```text
+PostgreSQL / JSONL
+        ↓
+Raw Parquet
+        ↓
+Standardized Parquet
+        ↓
+DuckDB analytical tables
+```
+
+Yêu cầu:
+
+* Chuyển dữ liệu sang Parquet.
+* So sánh CSV, JSONL và Parquet về kích thước, schema và tốc độ truy vấn.
+* Partition transaction theo ngày.
+* Xây dựng:
+
+  * `dim_customer`
+  * `dim_merchant`
+  * `fact_transaction`
+  * `mart_daily_payment`
+* Ghi rõ grain của từng bảng.
+* Dùng `EXPLAIN` để xem query plan.
+* Giải thích khi nào normalize và khi nào denormalize.
+
+### Điều chỉnh so với bài cũ
+
+Không đưa dbt vào ngay. Intern phải hiểu SQL model và dependency trước. dbt chỉ là công cụ giúp quản lý những thứ này.
+
+### Quan sát tiềm năng
+
+* Có thiết kế bảng dựa trên access pattern không?
+* Có hiểu một transaction thay đổi trạng thái sẽ ảnh hưởng fact table thế nào?
+* Có đo đạc trước khi kết luận Parquet nhanh hơn không?
+* Có giải thích được trade-off thay vì chỉ làm theo hướng dẫn không?
+
+---
+
+## Tuần 3 — Incremental Processing và Correctness
+
+Đây là tuần có trọng số cao nhất.
+
+Intern phải xây dựng:
+
+* Initial full load.
+* Incremental load theo `updated_at`.
+* Watermark/checkpoint.
+* Upsert record bị thay đổi.
+* Chạy lại cùng batch không tạo duplicate.
+* Backfill theo khoảng ngày.
+* Reconciliation giữa source và target.
+
+Các tình huống bắt buộc:
+
+1. Transaction đến trễ ba ngày.
+2. Transaction từ `PENDING` đổi thành `SUCCESS`.
+3. Một file được gửi lại hai lần.
+4. Pipeline bị dừng giữa chừng.
+5. Một ngày cần chạy lại toàn bộ.
+6. Source bổ sung một cột mới.
+
+Reconciliation tối thiểu:
+
+```text
+row_count
+distinct_transaction_count
+sum_amount
+success_count
+min_event_time
+max_event_time
+```
+
+### Concept phải giải thích được
+
+* Append và upsert.
+* Full load và incremental load.
+* Event time và processing time.
+* Idempotency.
+* At-least-once và exactly-once ở mức khái niệm.
+* Backfill và replay.
+* Schema evolution.
+
+### Quan sát tiềm năng
+
+Một intern tiềm năng cao thường bắt đầu hình thành các **invariant**, ví dụ:
+
+```text
+Một transaction_id chỉ có một trạng thái cuối cùng.
+Chạy lại một input không làm tăng tổng số transaction.
+Tổng amount ở fact phải đối soát được với standardized layer.
+```
+
+Đây là dấu hiệu quan trọng hơn việc biết dùng Kafka.
+
+---
+
+## Tuần 4 — Production Engineering và Incident
+
+Intern productionize pipeline:
+
+```text
+extract
+→ validate
+→ transform
+→ load
+→ reconcile
+→ publish
+```
+
+Yêu cầu:
+
+* Một CLI hoặc command chạy toàn bộ pipeline.
+* Config tách khỏi code.
+* Không lưu password trong source code.
+* Structured logging.
+* Retry cho lỗi tạm thời.
+* Exit code rõ ràng.
+* Unit test và integration test.
+* Data quality checks.
+* Pipeline dừng đúng bước khi dữ liệu không hợp lệ.
+* Lưu run history: thời gian, trạng thái, input và số bản ghi.
+
+Sau đó mentor đưa một incident:
+
+> Mart hôm nay có tổng doanh số thấp hơn source 8%, pipeline vẫn báo thành công.
+
+Intern phải:
+
+1. Xác định phạm vi ảnh hưởng.
+2. Tìm layer bắt đầu sai lệch.
+3. Xác định root cause.
+4. Backfill dữ liệu.
+5. Thêm test hoặc reconciliation để lỗi không lặp lại.
+6. Viết postmortem ngắn.
+
+### Orchestrator
+
+Sau khi pipeline Python hoạt động tốt, intern có thể chuyển sang Prefect. Không nên để Prefect che mất logic retry, checkpoint và dependency.
+
+---
+
+## Tuần 5 — Change Request và System Design
+
+Tuần cuối không nên dành chủ yếu cho README hoặc slide.
+
+Mentor đưa change request:
+
+> Hệ thống tăng từ 100.000 lên một tỷ transaction/ngày. Business yêu cầu dữ liệu fraud có độ trễ dưới năm phút, còn báo cáo tài chính có thể chạy T+1.
+
+Intern không cần triển khai hệ thống lớn trên laptop, nhưng phải thiết kế:
+
+* Thành phần nào tiếp tục chạy batch.
+* Thành phần nào cần streaming.
+* Partition key.
+* Cách xử lý late event.
+* Cách replay dữ liệu.
+* Cách tránh duplicate.
+* Storage cho raw và serving.
+* SLO về freshness và completeness.
+* Cách monitor và recover.
+* Những phần nào có thể dùng Kafka, Spark/Flink hoặc warehouse.
+
+Intern cũng phải thay đổi pipeline local theo một yêu cầu mới, chẳng hạn:
+
+* Customer ID đổi từ integer sang string.
+* Một customer có nhiều wallet.
+* Giao dịch hoàn tiền tham chiếu giao dịch gốc.
+* Merchant thay đổi category nhưng cần lưu lịch sử.
+
+### Mục tiêu
+
+Không đánh giá việc intern có nhớ kiến trúc “chuẩn” hay không. Đánh giá khả năng:
+
+* Phân rã yêu cầu.
+* Nhận diện state và failure mode.
+* Chuyển kiến thức từ pipeline local sang hệ thống lớn.
+* Trình bày trade-off và các giả định.
+
+---
+
+# 4. Cách mentor tổ chức mỗi tuần
+
+Nên dùng cùng một nhịp:
+
+| Thời điểm | Hoạt động                                             |
+| --------- | ----------------------------------------------------- |
+| Thứ Hai   | Giao requirement và acceptance criteria               |
+| Thứ Ba    | Intern gửi design note 1–2 trang trước khi code nhiều |
+| Thứ Tư    | Review thiết kế, chỉ hỏi gợi mở                       |
+| Thứ Năm   | Mentor đưa edge case chưa công bố                     |
+| Thứ Sáu   | Demo, code review và retrospective                    |
+
+Cho phép intern sử dụng tài liệu và AI. Tuy nhiên, intern phải:
+
+* Giải thích từng quyết định.
+* Sửa code trực tiếp khi có requirement mới.
+* Debug một case chưa nhìn thấy trước.
+* Viết test chứng minh bản sửa đúng.
+
+Cách này phân biệt khá tốt giữa người **copy được solution** và người **thực sự có mô hình tư duy kỹ thuật**.
+
+---
+
+# 5. Thang điểm để đánh giá tiềm năng
+
+| Nhóm                                                       | Trọng số |
+| ---------------------------------------------------------- | -------: |
+| Data correctness, incremental, idempotency, reconciliation |      25% |
+| Python, SQL và software engineering                        |      25% |
+| Debugging, testing và incident handling                    |      20% |
+| Learning velocity và phản ứng với feedback                 |      20% |
+| Giải thích thiết kế và trade-off                           |      10% |
+
+Không nên đánh giá chủ yếu dựa trên số feature hoàn thành. Một intern có tiềm năng cao có thể chưa làm hết extension nhưng thường thể hiện:
+
+* Code tuần sau tốt hơn rõ rệt tuần trước.
+* Không lặp lại cùng một lỗi sau feedback.
+* Biết biến incident thành test.
+* Biết đặt câu hỏi đúng trước khi chọn công nghệ.
+* Biết thừa nhận giả định và giới hạn của thiết kế.
+
+## Phiên bản cuối cùng nên dùng
+
+**Ba tuần đầu:** build nền tảng và correctness.
+**Tuần 4:** vận hành và incident.
+**Tuần 5:** change request và system design.
+
+Đây gần với hành trình của một **high-potential Software Engineer chuyển sang Data Engineering** hơn so với việc yêu cầu intern hoàn thành PostgreSQL + MinIO + dbt + Prefect + Kafka trong năm tuần.
+
+[1]: https://d1.awsstatic.com/training-and-certification/docs-data-engineer-associate/AWS-Certified-Data-Engineer-Associate_Exam-Guide.pdf "AWS Certified Data Engineer - Associate (DEA-C01) Exam Guide"
+[2]: https://services.google.com/fh/files/misc/professional_data_engineer_exam_guide_english.pdf "v4.2 Professional Data Engineer Exam Guide | English"
+[3]: https://www.databricks.com/learn/certification/data-engineer-professional "Databricks Certified Data Engineer Professional | Databricks"
+[4]: https://netflixtechblog.com/incremental-processing-using-netflix-maestro-and-apache-iceberg-b8ba072ddeeb "Medium"
+[5]: https://www.uber.com/us/en/blog/dbevents-ingestion-framework/ "DBEvents: A Standardized Framework for Efficiently Ingesting Data into Uber’s Apache Hadoop Data Lake"
+[6]: https://engineering.linkedin.com/content/engineering/en-us/blog/2023/declarative-data-pipelines-with-hoptimator "Declarative Data Pipelines with Hoptimator | LinkedIn Engineering"
+[7]: https://netflixtechblog.com/ready-to-go-sample-data-pipelines-with-dataflow-17440a9e141d "Medium"

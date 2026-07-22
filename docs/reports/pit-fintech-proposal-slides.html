@@ -260,162 +260,181 @@
       line-height: 1.35;
     }
 
-    .problem-layout {
-      display: grid;
-      grid-template-columns: 1.05fr 0.95fr;
-      gap: clamp(24px, 4vw, 70px);
-      align-items: center;
+    .execution-framing {
+      justify-content: center;
     }
 
-    .thesis {
-      margin-top: 28px;
-      border-left: 4px solid var(--green);
-      padding: 4px 0 4px 24px;
-      color: #dff7e9;
-      font-size: clamp(17px, 1.55vw, 28px);
-      font-weight: 650;
-      line-height: 1.35;
+    .execution-framing h2 {
+      max-width: none;
+      font-size: clamp(30px, 3.5vw, 58px);
     }
 
-    .risk-stack {
-      display: grid;
-      gap: 12px;
+    .execution-intro {
+      max-width: 1120px;
+      margin-top: 12px;
+      color: #d7ebdf;
+      font-size: clamp(13px, 1.05vw, 18px);
+      line-height: 1.45;
     }
 
-    .risk-card {
+    .execution-intro strong {
+      color: var(--green);
+    }
+
+    .execution-grid {
       display: grid;
-      grid-template-columns: 42px 1fr;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 14px;
-      align-items: center;
-      border: 1px solid rgba(255, 141, 120, 0.22);
-      border-radius: 15px;
-      padding: 15px 17px;
-      background: linear-gradient(90deg, rgba(255, 141, 120, 0.08), rgba(10, 28, 23, 0.65));
+      margin-top: clamp(16px, 1.8vw, 28px);
     }
 
-    .risk-icon {
-      display: grid;
-      width: 38px;
-      height: 38px;
-      place-items: center;
-      border-radius: 10px;
-      background: rgba(255, 141, 120, 0.12);
-      color: var(--coral);
+    .execution-card {
+      min-height: 218px;
+      border: 1px solid rgba(168, 255, 120, 0.30);
+      border-radius: 18px;
+      padding: 22px;
+      background: linear-gradient(150deg, rgba(168, 255, 120, 0.10), rgba(10, 29, 23, 0.78));
+    }
+
+    .execution-card.serving {
+      border-color: rgba(77, 224, 189, 0.34);
+      background: linear-gradient(150deg, rgba(77, 224, 189, 0.10), rgba(10, 29, 23, 0.78));
+    }
+
+    .execution-card.observability {
+      border-color: rgba(255, 199, 102, 0.34);
+      background: linear-gradient(150deg, rgba(255, 199, 102, 0.10), rgba(10, 29, 23, 0.78));
+    }
+
+    .execution-kicker {
+      color: var(--green);
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: clamp(10px, 0.76vw, 13px);
       font-weight: 900;
+      letter-spacing: 0.12em;
     }
 
-    .risk-card p {
-      margin-top: 4px;
+    .execution-card.serving .execution-kicker {
+      color: var(--mint);
+    }
+
+    .execution-card.observability .execution-kicker {
+      color: var(--amber);
+    }
+
+    .execution-card h3 {
+      margin-top: 10px;
+      font-size: clamp(19px, 1.55vw, 28px);
+    }
+
+    .execution-flow {
+      margin: 18px 0 14px;
+      border-radius: 10px;
+      padding: 11px 13px;
+      background: rgba(3, 10, 8, 0.52);
+      color: #e3f7ea;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: clamp(9px, 0.68vw, 12px);
+    }
+
+    .execution-card p {
       color: var(--muted);
-      font-size: clamp(10px, 0.78vw, 14px);
-      line-height: 1.35;
+      font-size: clamp(10px, 0.74vw, 13px);
+      line-height: 1.45;
     }
 
-    .answer-strip {
-      display: flex;
+    .platform-bridge {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 22px;
       align-items: center;
-      justify-content: space-between;
-      gap: 24px;
-      margin-top: 18px;
-      border: 1px solid rgba(168, 255, 120, 0.22);
+      margin-top: 16px;
+      border: 1px solid rgba(255, 199, 102, 0.28);
       border-radius: 14px;
       padding: 14px 18px;
-      background: rgba(168, 255, 120, 0.055);
+      background: rgba(255, 199, 102, 0.055);
     }
 
-    .answer-strip strong {
-      color: var(--green);
-      font-size: clamp(12px, 0.92vw, 16px);
+    .platform-bridge strong {
+      color: var(--amber);
+      font-size: clamp(11px, 0.84vw, 15px);
+      letter-spacing: 0.08em;
       text-transform: uppercase;
     }
 
-    .answer-strip span {
-      color: #d2e9dd;
+    .platform-bridge span {
+      color: #d9e9df;
       font-size: clamp(11px, 0.82vw, 15px);
       text-align: right;
     }
 
-    .pipeline {
+    .scope-row {
       display: grid;
-      grid-template-columns: repeat(6, 1fr);
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 9px;
-      margin-top: clamp(24px, 2.8vw, 44px);
+      margin-top: 12px;
     }
 
-    .stage {
-      position: relative;
-      min-height: 126px;
+    .scope-chip {
       border: 1px solid var(--line);
-      border-radius: 15px;
-      padding: 18px 13px;
-      background: linear-gradient(155deg, rgba(19, 50, 41, 0.88), rgba(8, 24, 19, 0.84));
-    }
-
-    .stage:not(:last-child)::after {
-      position: absolute;
-      top: 50%;
-      right: -10px;
-      z-index: 3;
-      color: var(--green);
-      font-size: 14px;
-      font-weight: 900;
-      content: "›";
-      transform: translateY(-50%);
-    }
-
-    .stage-code {
-      display: inline-grid;
-      min-width: 31px;
-      height: 25px;
-      margin-bottom: 15px;
-      place-items: center;
-      border-radius: 7px;
-      background: rgba(168, 255, 120, 0.12);
-      color: var(--green);
-      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-      font-size: 11px;
-      font-weight: 900;
-    }
-
-    .stage strong {
-      display: block;
-      font-size: clamp(11px, 0.88vw, 16px);
-      line-height: 1.15;
-    }
-
-    .stage p {
-      margin-top: 8px;
-      color: var(--muted);
+      border-radius: 999px;
+      padding: 8px 10px;
+      background: rgba(255, 255, 255, 0.035);
+      color: #bcd5c7;
       font-size: clamp(9px, 0.68vw, 12px);
-      line-height: 1.35;
+      font-weight: 750;
+      letter-spacing: 0.03em;
+      text-align: center;
     }
 
-    .contract-grid {
+    .architecture-slide {
+      gap: clamp(10px, 1.35vw, 20px);
+      padding-top: clamp(28px, 3vw, 48px);
+      padding-bottom: clamp(54px, 4.6vw, 74px);
+    }
+
+    .architecture-slide .slide-body {
+      justify-content: flex-start;
+    }
+
+    .architecture-slide h2 {
+      max-width: none;
+      font-size: clamp(30px, 3.45vw, 58px);
+    }
+
+    .architecture-figure {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 12px;
-      margin-top: 18px;
+      flex: 1;
+      min-height: 0;
+      width: 100%;
+      margin-top: clamp(12px, 1.5vw, 22px);
+      overflow: hidden;
+      place-items: center;
+      border: 1px solid rgba(168, 255, 120, 0.32);
+      border-radius: 18px;
+      padding: 6px;
+      background: #ffffff;
+      box-shadow: 0 18px 54px rgba(0, 0, 0, 0.32);
     }
 
-    .contract {
-      border-top: 2px solid var(--mint);
-      padding: 12px 14px;
-      background: rgba(77, 224, 189, 0.045);
-      color: #cfe8dc;
-      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-      font-size: clamp(9px, 0.68vw, 12px);
-      line-height: 1.4;
+    .architecture-figure img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      border-radius: 12px;
+      background: #ffffff;
     }
 
     .direction-grid {
       display: grid;
-      grid-template-columns: 1.12fr 1.12fr 0.76fr;
-      gap: 14px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
       margin-top: clamp(22px, 2.5vw, 40px);
     }
 
     .direction {
-      min-height: 210px;
+      min-height: 248px;
       border: 1px solid var(--line);
       border-radius: 18px;
       padding: 22px;
@@ -432,10 +451,6 @@
       background: linear-gradient(150deg, rgba(77, 224, 189, 0.10), rgba(10, 29, 23, 0.76));
     }
 
-    .direction.experience {
-      border-color: rgba(255, 199, 102, 0.28);
-    }
-
     .direction .rank {
       color: var(--green);
       font-family: var(--font-display);
@@ -447,10 +462,6 @@
       color: var(--mint);
     }
 
-    .direction.experience .rank {
-      color: var(--amber);
-    }
-
     .direction h3 {
       margin: 8px 0 13px;
     }
@@ -460,6 +471,12 @@
       color: var(--muted);
       font-size: clamp(10px, 0.76vw, 13px);
       line-height: 1.45;
+    }
+
+    .direction .direction-summary {
+      margin-bottom: 14px;
+      color: #d7ebdf;
+      font-size: clamp(12px, 0.9vw, 16px);
     }
 
     .direction ul {
@@ -553,8 +570,7 @@
         padding: 26px 34px 54px;
       }
 
-      .invariant-rail,
-      .contract-grid {
+      .invariant-rail {
         gap: 7px;
       }
 
@@ -568,13 +584,32 @@
         left: 12px;
       }
 
-      .pipeline {
-        gap: 5px;
+      .architecture-slide {
+        padding: 22px 26px 50px;
       }
 
-      .stage {
-        min-height: 100px;
-        padding: 12px 9px;
+      .execution-card {
+        min-height: 172px;
+        padding: 15px;
+      }
+
+      .execution-flow {
+        margin: 11px 0 9px;
+      }
+
+      .scope-row {
+        gap: 5px;
+        margin-top: 7px;
+      }
+
+      .scope-chip {
+        padding: 5px 7px;
+      }
+
+      .architecture-figure {
+        margin-top: 8px;
+        border-radius: 12px;
+        padding: 3px;
       }
 
       .direction {
@@ -589,25 +624,6 @@
         height: 100vh;
       }
 
-      .problem-layout {
-        grid-template-columns: 1fr;
-      }
-
-      .risk-stack {
-        grid-template-columns: repeat(3, 1fr);
-      }
-
-      .risk-card {
-        grid-template-columns: 1fr;
-      }
-
-      .pipeline {
-        grid-template-columns: repeat(3, 1fr);
-      }
-
-      .stage:not(:last-child)::after {
-        display: none;
-      }
     }
 
     @media print {
@@ -695,51 +711,52 @@
         <span class="eyebrow">Tên dự án & mục tiêu</span>
         <span class="slide-number">02 / 04</span>
       </header>
-      <div class="slide-body problem-layout">
-        <div>
-          <p class="micro-label reveal">Bài toán cần giải quyết</p>
-          <h2 id="slide-2-title" class="reveal delay-1">
-            Model có thể <span class="accent">đẹp trên notebook</span>, nhưng sai khi serving.
-          </h2>
-          <p class="thesis reveal delay-2">
-            “Điểm số tốt không có giá trị nếu feature chưa tồn tại tại decision time.”
-          </p>
+      <div class="slide-body execution-framing">
+        <h2 id="slide-2-title" class="reveal">
+          PIT-Correct Feature Platform <span class="accent">for Fraud Detection.</span>
+        </h2>
+        <p class="execution-intro reveal delay-1">
+          <strong>Mục tiêu:</strong> train fraud model không leakage, serve fraud score đúng cutoff,
+          và quan sát freshness · parity · latency xuyên suốt cùng một versioned feature contract.
+        </p>
+        <div class="execution-grid reveal delay-1">
+          <article class="execution-card">
+            <span class="execution-kicker">01 · OFFLINE TRAINING</span>
+            <h3>Train fraud model</h3>
+            <div class="execution-flow">PIT dataset → train / evaluate → MLflow</div>
+            <p>Chọn model sau EDA; chỉ học từ history tồn tại trước prediction cutoff.</p>
+          </article>
+          <article class="execution-card serving">
+            <span class="execution-kicker">02 · ONLINE SERVING</span>
+            <h3>Serve fraud score</h3>
+            <div class="execution-flow">transaction t + Redis history &lt; t → FastAPI</div>
+            <p>Score trước; chỉ sau prediction mới update Redis và Event History.</p>
+          </article>
+          <article class="execution-card observability">
+            <span class="execution-kicker">03 · OBSERVABILITY</span>
+            <h3>Observe system health</h3>
+            <div class="execution-flow">OTel → Prometheus → Grafana</div>
+            <p>Theo dõi freshness, parity, latency, errors và version mismatch.</p>
+          </article>
         </div>
-        <div class="risk-stack reveal delay-2">
-          <article class="risk-card">
-            <span class="risk-icon">F</span>
-            <div>
-              <h3>Future leakage</h3>
-              <p>Aggregate vô tình đọc transaction xảy ra sau cutoff.</p>
-            </div>
-          </article>
-          <article class="risk-card">
-            <span class="risk-icon">≠</span>
-            <div>
-              <h3>Training–serving skew</h3>
-              <p>Notebook SQL và Redis serving dùng hai logic khác nhau.</p>
-            </div>
-          </article>
-          <article class="risk-card">
-            <span class="risk-icon">↺</span>
-            <div>
-              <h3>Backfill khó kiểm chứng</h3>
-              <p>Rerun không ghim snapshot/version nên artifact âm thầm thay đổi.</p>
-            </div>
-          </article>
-          <div class="answer-strip">
-            <strong>Mục tiêu</strong>
-            <span>Biến temporal correctness thành data contract có test và evidence.</span>
-          </div>
+        <div class="platform-bridge reveal delay-2">
+          <strong>Shared PIT Feature Platform</strong>
+          <span>Delta · DuckDB · Feast · Redis giữ Training/Serving cùng semantics; telemetry kiểm chứng.</span>
+        </div>
+        <div class="scope-row reveal delay-3" aria-label="Project scope">
+          <span class="scope-chip">PaySim · EDA-first</span>
+          <span class="scope-chip">Local CPU · zero mandatory cost</span>
+          <span class="scope-chip">6 tuần · 3 sprint</span>
+          <span class="scope-chip">Engineering → thesis-ready</span>
         </div>
       </div>
       <footer class="slide-foot">
         <span class="brand-mark">PIT Fintech</span>
-        <span class="footer-note">Correct evaluation before model optimization</span>
+        <span class="footer-note">Core question: same features at the same cutoff</span>
       </footer>
     </section>
 
-    <section class="slide" aria-labelledby="slide-3-title">
+    <section class="slide architecture-slide" aria-labelledby="slide-3-title">
       <header class="slide-head">
         <span class="eyebrow">Giải pháp & công nghệ</span>
         <span class="slide-number">03 / 04</span>
@@ -748,43 +765,16 @@
         <h2 id="slide-3-title" class="reveal">
           Một luồng dữ liệu, <span class="accent">hai temporal views</span>, một contract.
         </h2>
-        <div class="pipeline reveal delay-1" aria-label="Data and model processing pipeline">
-          <article class="stage">
-            <span class="stage-code">01</span>
-            <strong>Raw archive</strong>
-            <p>IEEE-CIS primary<br>PaySim fallback</p>
-          </article>
-          <article class="stage">
-            <span class="stage-code">02</span>
-            <strong>Bronze / Silver</strong>
-            <p>Delta Lake<br>entity + event contract</p>
-          </article>
-          <article class="stage">
-            <span class="stage-code">03</span>
-            <strong>PIT compute</strong>
-            <p>DuckDB<br>pre-decision + post-event</p>
-          </article>
-          <article class="stage">
-            <span class="stage-code">04</span>
-            <strong>Feature store</strong>
-            <p>Feast contract<br>Redis online state</p>
-          </article>
-          <article class="stage">
-            <span class="stage-code">05</span>
-            <strong>Model lifecycle</strong>
-            <p>LightGBM<br>MLflow promotion</p>
-          </article>
-          <article class="stage">
-            <span class="stage-code">06</span>
-            <strong>Score & replay</strong>
-            <p>FastAPI<br>parity + freshness</p>
-          </article>
-        </div>
-        <div class="contract-grid reveal delay-2">
-          <div class="contract">source.order_key &lt; prediction.order_key</div>
-          <div class="contract">read state → score → update state</div>
-          <div class="contract">snapshot + feature + model + code version</div>
-        </div>
+        <figure class="architecture-figure reveal delay-1" aria-labelledby="slide-3-title">
+          <img
+            src="../architecture/pipeline.png"
+            width="1457"
+            height="626"
+            alt="Kiến trúc high-level của PIT feature platform, gồm data pipeline, feature platform, training pipeline, model registry, serving pipeline, development environment và observability."
+            loading="eager"
+            decoding="sync"
+          >
+        </figure>
       </div>
       <footer class="slide-foot">
         <span class="brand-mark">PIT Fintech</span>
@@ -799,45 +789,37 @@
       </header>
       <div class="slide-body">
         <h2 id="slide-4-title" class="reveal">
-          <span class="accent">Fintech-ready engineering</span>, research-backed evidence.
+          <span class="accent">Engineering trước.</span> Thesis là bước phát triển tiếp theo.
         </h2>
         <div class="direction-grid reveal delay-1">
           <article class="direction primary">
             <span class="rank">01</span>
-            <h3>Đi làm Fintech / MLOps</h3>
+            <h3>Engineering / MLOps</h3>
+            <p class="direction-summary">Đầu ra gần: một hệ thống chạy được và có thể kiểm chứng.</p>
             <ul>
-              <li>Temporal data modeling và leakage prevention</li>
-              <li>Feature lifecycle, lineage, version gate</li>
-              <li>Offline/online parity và serving reliability</li>
-              <li>Local reproducibility + CI evidence</li>
+              <li>Data pipeline, model lifecycle và online serving</li>
+              <li>PIT correctness, parity và reproducible backfill</li>
+              <li>Makefile, CI, observability và vận hành local</li>
             </ul>
           </article>
           <article class="direction research">
             <span class="rank">02</span>
-            <h3>Nghiên cứu / Proposal</h3>
+            <h3>Thesis-ready extension</h3>
+            <p class="direction-summary">Nâng chính codebase này thành nghiên cứu E2E hoàn chỉnh.</p>
             <ul>
-              <li>RQ/Hypothesis rõ ràng, paper-inspired adaptation</li>
-              <li>E1–E5: correctness và model ablation</li>
-              <li>P1–P5: full vs incremental backfill</li>
-              <li>Threats to validity và machine-readable evidence</li>
+              <li>RQ, experiment protocol và temporal oracle</li>
+              <li>E1–E5 / P1–P5, ablation và threats to validity</li>
+              <li>Chuẩn hoàn thiện tham chiếu: thesis E2E e-commerce prediction</li>
             </ul>
-          </article>
-          <article class="direction experience">
-            <span class="rank">03</span>
-            <h3>Trải nghiệm</h3>
-            <p>
-              Jupyter, Docker và cloud optional là phương tiện học — không phải outcome chính.
-              Core acceptance vẫn chạy local, CPU-only và không bắt buộc trả phí.
-            </p>
           </article>
         </div>
         <p class="closing-line reveal delay-2">
-          Đầu ra cuối: <span>một ML systems portfolio có thể kiểm chứng</span>, không chỉ một model demo.
+          Lộ trình: <span>build system → prove correctness → package thành thesis E2E.</span>
         </p>
       </div>
       <footer class="slide-foot">
         <span class="brand-mark">PIT Fintech</span>
-        <span class="footer-note">Outcome: trustworthy features before higher model scores</span>
+        <span class="footer-note">Career-first · thesis-ready</span>
       </footer>
     </section>
 

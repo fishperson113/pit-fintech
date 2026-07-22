@@ -11,6 +11,10 @@ silver data -> offline features -> historical training dataset -> model
 
 Definition of Done của sprint không phải “Feast UI mở được”. Definition of Done là cùng entity/cutoff/version tạo feature vector giống nhau ở offline reference và online replay.
 
+Bronze/Silver/Gold là medallion layers của offline data path và phải được build bằng Python
+CLI/Makefile. JupyterLab chỉ hỗ trợ EDA/experiment; synchronous FastAPI request không chạy xuyên
+medallion hay DuckDB.
+
 ---
 
 ## 0. Bản đồ artifact
@@ -21,11 +25,11 @@ Definition of Done của sprint không phải “Feast UI mở được”. Defi
 | S2-A2 | `src/features/build_offline.py` | optimized DuckDB computation -> Gold Delta tables |
 | S2-A3 | `src/backfill/` | full/range/incremental Delta backfill + manifest |
 | S2-A4 | `src/materialization/` | online-store population và watermark |
-| S2-A5 | `src/training/` | temporal dataset + LightGBM + MLflow |
+| S2-A5 | `src/training/` | temporal dataset + EDA-selected model + MLflow |
 | S2-A6 | `src/serving/` | FastAPI scoring service |
-| S2-A7 | `src/replay/` | chronological replay/checkpoint harness |
+| S2-A7 | `src/replay/` | one-producer ordered in-memory replay/checkpoint harness |
 | S2-A8 | `tests/integration/` | end-to-end, idempotency, parity, duplicate |
-| S2-A9 | `compose.yaml` | Redis, MLflow, API, optional Prometheus/Grafana |
+| S2-A9 | `compose.yaml` | core services only: Redis, MLflow, API |
 | S2-A10 | `docs/feature-lineage.md` | source -> feature -> service -> model |
 | S2-A11 | `docs/local-deployment.md` | clean setup, run, teardown, recovery |
 | S2-A12 | `docs/reports/sprint-2-gate.md` | gate evidence và known gaps |
@@ -55,29 +59,48 @@ Mọi thay đổi contract giữa sprint phải tạo ADR mới và bump version
 
 ```mermaid
 sequenceDiagram
-    participant Raw as Silver Delta Tables
+    participant Silver as Silver Delta
     participant Build as DuckDB Builder
-    participant Offline as Gold Delta Feature Tables
-    participant Feast as Feast Registry/SDK
-    participant Train as Trainer + MLflow
+    participant Gold as Gold Delta
+    participant Feast as Feast Contract
+    participant Train as Training CLI
+    participant MLflow as MLflow Registry
     participant Mat as Materializer
     participant Redis as Online Store
-    participant API as Scoring API
+    participant Producer as Replay Driver
+    participant API as FastAPI
+    participant History as Event History
 
-    Raw->>Build: feature spec + range + versions
-    Build->>Offline: atomic Delta commit + versions + manifest
-    Feast->>Offline: historical feature retrieval
-    Feast->>Train: PIT-correct training dataset
-    Train->>Train: train/evaluate/register artifact
-    Offline->>Mat: post-event state after source events <= watermark
+    Silver->>Build: feature spec + pinned versions
+    Build->>Gold: atomic PIT feature commit
+    Train->>Feast: request historical features
+    Feast->>Gold: query pinned PIT features
+    Gold-->>Feast: PIT feature rows
+    Feast-->>Train: training vectors
+    Train->>MLflow: log and register model
+    Gold->>Mat: post-event state to watermark
     Mat->>Redis: versioned feature vectors
-    API->>Redis: get online features(entity)
-    API->>API: combine request features + score
+    Note over Producer,API: one producer, ordered in-memory replay
+    Producer->>API: transaction t
+    API->>Redis: read history before t
+    Redis-->>API: online feature vector
+    API->>API: score t
+    API->>Redis: update after score
+    API->>History: append after score
+    API-->>Producer: prediction and event complete
 ```
 
 ---
 
 ## 3. T1 — Feast feature repository
+
+Feast là control-plane contract mỏng cho entity/schema/feature service, historical retrieval và
+materialization. DuckDB vẫn compute PIT features, Delta vẫn là offline source of truth, Redis vẫn
+là online store, và custom oracle vẫn là correctness authority. Không dùng Feast UI làm gate.
+
+Chỉ bỏ Feast nếu fixture integration bị block sau time-box và có ADR. Fallback phải tự cung cấp
+đủ versioned `FeatureSpec`, `FeatureProvider`, Redis key/schema contract, materialization manifest
+và parity gates; không thay bằng một script copy Gold sang Redis thiếu contract.
 
 ### 3.1. Configuration profiles
 
@@ -223,6 +246,11 @@ Fault-injection path:
 
 ## 6. T4 — Historical dataset và training pipeline
 
+Training chạy bằng Python CLI trên local CPU. Model family vẫn là TBD cho tới khi PaySim EDA và
+temporal validation đủ evidence; LightGBM chỉ là candidate. Không dùng Ray Train hoặc Ray Tune
+trong Sprint 2. Nếu cần so sánh nhẹ, chạy một candidate/config matrix nhỏ, deterministic và log
+từng run vào MLflow; không mở large-scale hyperparameter search.
+
 ### 6.1. Historical retrieval
 
 Entity dataframe cho training gồm:
@@ -357,7 +385,12 @@ Parity phải pass ở cả hai nếu cả hai nằm trong supported path.
 
 ### 8.1. Replay clock
 
-Replay transactions theo ordered event time. Tại checkpoint T:
+Replay dùng đúng một logical Transaction Producer/Replay Driver. Input được sort bằng event time
+và deterministic tie-break, giữ trong Python iterator/generator hoặc in-memory queue. Driver phát
+một event, chờ scoring và post-score commit hoàn tất, rồi mới phát event kế tiếp. Không dùng
+Kafka, RabbitMQ, Redis Streams hoặc service queue ngoài trong acceptance path.
+
+Tại checkpoint T:
 
 1. chọn transaction `e` tại cutoff T;
 2. replay/materialize chỉ các event đứng trước `e`;
@@ -411,6 +444,10 @@ Không sửa mismatch bằng cách tăng float tolerance trước khi xác đị
 ## 9. T7 — FastAPI scoring service
 
 Feature retrieval được tách qua `FeatureProvider` interface. Local Redis, Feast SDK và hosted Upstash là adapters; scoring layer chỉ nhận versioned feature vector. MVP vẫn được deploy trong một process để tránh microservice overhead.
+
+FastAPI/Uvicorn là reference serving runtime. Không dùng Ray Serve trong Sprint 2; chỉ đánh giá
+lại sau khi correctness pass và serving benchmark chứng minh single-process/worker path là
+bottleneck. Load/concurrency benchmark không được làm thay đổi replay correctness mode tuần tự.
 
 ### 9.1. Request contract
 
@@ -469,8 +506,11 @@ Feature retrieval được tách qua `FeatureProvider` interface. Local Redis, F
 - Redis;
 - MLflow tracking server;
 - scoring API;
-- optional Prometheus/Grafana profile.
 - optional MinIO profile để smoke-test Delta tables trên S3-compatible storage.
+
+OpenTelemetry Collector, Prometheus và Grafana không nằm trong core Compose. Nếu triển khai ở
+Sprint 3, chúng chạy trên VPS/ops boundary riêng; repo này chỉ giữ instrumentation và versioned
+dashboard/config contract cần cho reproducibility.
 
 ### 10.1. Data persistence
 
@@ -515,7 +555,7 @@ Feature retrieval được tách qua `FeatureProvider` interface. Local Redis, F
 
 ```text
 synthetic raw -> Bronze/Silver Delta -> Gold features -> train -> materialize
--> API score -> parity check -> report
+-> one-producer replay -> API score -> post-score update/append -> parity check -> report
 ```
 
 E2E phải chạy bằng một command và không yêu cầu internet/Kaggle.
@@ -553,7 +593,7 @@ Full data dùng cùng code path, chỉ khác config/manifest.
 | G1 Feast contract | historical retrieval khớp fixture oracle |
 | G2 Backfill | full/range rerun có checksum giống nhau và Delta versions được ghi |
 | G3 Atomicity | failed run không để committed partial output |
-| G4 Training | temporal LightGBM run có MLflow artifacts đầy đủ |
+| G4 Training | temporal run của model đã chọn sau EDA có MLflow artifacts đầy đủ |
 | G5 Materialization | latest feature state đúng watermark/version |
 | G6 Parity | mismatch bằng 0 theo tolerance trên required checkpoints |
 | G7 Serving | API trả prediction + lineage/freshness metadata |
@@ -574,7 +614,7 @@ Nếu G6 chưa pass, Sprint 3 chỉ được làm debug/parity; không triển k
 | 2 | DuckDB feature builder -> Gold Delta, parity với reference | S2-A2 |
 | 3 | Backfill state machine + atomic Delta commit | S2-A3 |
 | 4 | Full/incremental/idempotency tests | S2-A3, S2-A8 |
-| 5 | Historical dataset + MLflow trainer + candidate alias | S2-A5, S2-A13 |
+| 5 | Historical dataset + local training CLI + MLflow candidate alias | S2-A5, S2-A13 |
 | 6 | Redis materialization + watermark/version | S2-A4 |
 | 7 | Replay/parity harness | S2-A7 |
 | 8 | FeatureProvider boundary + FastAPI scoring + failure policies | S2-A6, S2-A14 |

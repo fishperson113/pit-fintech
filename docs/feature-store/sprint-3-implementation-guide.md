@@ -21,7 +21,7 @@ Sprint 3 chuyển hệ thống đã đúng thành bằng chứng có thể bảo
 | S3-A2 | `artifacts/experiments/<run_id>/` | raw metrics/log/timing/checksum |
 | S3-A3 | `docs/reports/correctness-ablation.md` | leaky vs PIT, random vs temporal |
 | S3-A4 | `docs/reports/backfill-performance.md` | CSV/Parquet/Delta/full/incremental/time travel |
-| S3-A5 | `monitoring/` | freshness, parity, latency, error metrics/dashboard |
+| S3-A5 | `monitoring/` | metric contract, OTel instrumentation config and dashboard JSON; no bundled runtime stack |
 | S3-A6 | `docs/reports/reliability-and-skew.md` | injected failure matrix |
 | S3-A7 | `deploy/modal_app.py` + config | optional hosted scoring path |
 | S3-A8 | `docs/reports/cloud-cost.md` | quota, usage, zero-cost evidence |
@@ -207,6 +207,24 @@ Kết quả chỉ có giá trị trên IEEE-CIS, single-node DuckDB và machine 
 ---
 
 ## 5. T4 — Monitoring
+
+Observability runtime là should-have và được self-host trên VPS/ops boundary riêng, không thêm
+nguyên stack vào core `compose.yaml` của application repo:
+
+```text
+FastAPI/training -> OTLP over TLS -> OTel Collector (VPS)
+                  -> Prometheus (VPS) -> Grafana (VPS)
+```
+
+Grafana là visualization/query frontend, không nhận hoặc lưu telemetry trực tiếp. Prometheus là
+metrics backend; Collector nhận/process/export OTLP. Khi application chạy trên laptop sau NAT,
+application push OTLP ra VPS thay vì để Prometheus trên VPS scrape ngược vào laptop.
+
+Application repo chỉ version-control instrumentation, metric names/semantics, dashboard JSON và
+config/example không chứa secret. Runtime Compose/config có thể nằm trong ops repo hoặc VPS
+directory riêng. Endpoint phải có TLS, authentication/VPN và firewall; không public trực tiếp
+Grafana, Prometheus hoặc OTLP receiver. Superset không thuộc scope vì đây không phải BI platform;
+Loki chỉ cân nhắc sau khi metrics/evidence gates pass.
 
 ### 5.1. Metrics bắt buộc
 
@@ -421,7 +439,7 @@ Không cam kết full data chạy trong CI.
 
 - exact lock hash;
 - Docker image digest;
-- Feast/DuckDB/delta-rs/LightGBM/MLflow versions;
+- Feast/DuckDB/delta-rs/selected-model package/MLflow versions;
 - Bronze/Silver/Gold Delta table versions;
 - model/feature/entity versions;
 - OS/machine metadata.
@@ -473,7 +491,8 @@ Cấu trúc:
 
 ## 11. T10 — TypeScript serving experiment (Nice-to-have)
 
-Đây là experiment sau prototype, không phải acceptance path. Python FastAPI + native LightGBM scorer của Sprint 2 vẫn là reference implementation và fallback bắt buộc.
+Đây là experiment sau prototype, không phải acceptance path. Python FastAPI + model đã chọn sau
+EDA của Sprint 2 vẫn là reference implementation và fallback bắt buộc.
 
 ### 11.1. Entry gate
 
@@ -514,7 +533,7 @@ golden-vectors.json
 
 Trên ít nhất 1.000 pinned feature vectors:
 
-- Python LightGBM và TypeScript ONNX dùng cùng model/preprocessing versions;
+- Python selected-model scorer và TypeScript ONNX dùng cùng model/preprocessing versions;
 - class output phải giống nhau;
 - probability difference nằm trong tolerance đã khóa trước khi chạy;
 - categorical/missing/default/float dtype cases đều có golden tests;
@@ -594,7 +613,7 @@ TypeScript artifacts S3-A13/A14 không nằm trong release gates. Nếu được
 | 2 | Run E1–E4 | S3-A2 |
 | 3 | Analyze correctness/model ablation | S3-A3 |
 | 4 | Run P1–P5 | S3-A2, A4 |
-| 5 | Monitoring metrics/dashboard | S3-A5 |
+| 5 | OTel instrumentation + Prometheus/Grafana dashboard trên VPS (hoặc documented fallback) | S3-A5 |
 | 6 | Fault/skew injection suite | S3-A6 |
 | 7 | Modal/Upstash integration hoặc fallback | S3-A7 |
 | 8 | Cloud smoke + cost/resource + clean-room | S3-A8 |

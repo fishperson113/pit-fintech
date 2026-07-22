@@ -14,7 +14,7 @@ flowchart LR
     P --> D["Bronze/Silver Delta sample"]
     D -. "Sprint 2" .-> G["Gold + Feast + backfill"]
     G -.-> R["Redis online state"]
-    G -.-> L["LightGBM + MLflow"]
+    G -.-> L["Model-selection gate after EDA + MLflow"]
     R -.-> A["FastAPI scoring"]
     L -.-> A
 ```
@@ -41,3 +41,8 @@ Full-data Bronze/Silver ingestion, Gold Delta writers, Feast retrieval, backfill
 materialization, training, model registry aliases, FeatureProvider, scoring, replay parity,
 monitoring, and cloud deployment are planned. Their arrows are dashed so this diagram cannot
 be mistaken for architecture-as-built evidence.
+
+The editable target architecture is maintained in
+[`docs/architecture/pit-feature-platform-target.drawio`](architecture/pit-feature-platform-target.drawio).
+It records PaySim as the EDA-first path and LightGBM as a candidate baseline rather than a
+pre-EDA model commitment.
