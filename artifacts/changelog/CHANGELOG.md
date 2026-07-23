@@ -1,5 +1,49 @@
 # Project changelog
 
+## 2026-07-23 — M007 refinement: DuckDB and Feast trade-offs
+
+- Rebalanced slide 3's talk track away from definitions of atomicity, idempotency and
+  reproducibility and toward the architecture decisions the presenter expects to defend.
+- Explained DuckDB as an embedded analytical fit for the local file-first scan/window/join/
+  aggregate workload while keeping PostgreSQL as a valid server-oriented alternative.
+- Explained Feast as an optional thin contract/retrieval/materialization boundary rather than a
+  correctness dependency, and listed the custom FeatureSpec/provider/materializer/version-gate
+  responsibilities required without it.
+- Added mentor Q&A for DuckDB versus PostgreSQL and Feast versus a custom implementation.
+- Verified the current DuckDB and Feast documentation boundaries, the revised talk-track content
+  and timing density; `git diff --check` passes with working-copy line-ending warnings only.
+- Detail: [M007 log](milestones/M007-meetup-speaker-script.md).
+
+## 2026-07-23 — M008: Vietnamese PIT terminology catalog
+
+- Added `docs/reports/catalog.md`, a project-specific glossary for the English terminology in the
+  proposal deck and ten-minute speaker script.
+- Anchored the explanations in one transaction-at-10:00 example and explained `temporal view` as
+  offline historical reconstruction versus online pre-decision state.
+- Distinguished event time from knowledge time, pre-decision features from post-event state, PIT
+  join from temporal split, parity from freshness, and atomicity from idempotency and
+  reproducibility.
+- Added role boundaries for DuckDB, Delta, Feast, Redis, FastAPI, MLflow and the observability
+  stack, plus a Vietnamese replacement cheat sheet and five meetup-ready sentences.
+- Verified the required core terms, timeline example, technology-role table, Vietnamese cheat
+  sheet and five meetup-ready sentences; `git diff --check` passes with working-copy line-ending
+  warnings only.
+- Detail: [M008 log](milestones/M008-pit-term-catalog.md).
+
+## 2026-07-23 — M007: Ten-minute PIT meetup speaker script
+
+- Added a speaker-ready Markdown talk track for the four-slide proposal deck under
+  `docs/reports/`.
+- Allocated the ten-minute narrative around the three invariants, the score-before-update causal
+  path, the two temporal views, and oracle/parity/backfill evidence instead of listing tools.
+- Added delivery cues, transitions, status-safe language, six presentation caveats and concise
+  answers to likely mentor questions.
+- Corrected the target observability flow verbally to
+  `Application -> OTel Collector -> Prometheus -> Grafana` without modifying the source deck.
+- Verified four timed slide sections, delivery cues, caveats, status boundaries and mentor Q&A;
+  `git diff --check` passes with working-copy line-ending warnings only.
+- Detail: [M007 log](milestones/M007-meetup-speaker-script.md).
+
 ## 2026-07-22 — M006: Evidence-based project self-review checklist
 
 - Added a reusable checklist for end-of-sprint, pre-demo and final self-review under
