@@ -11,7 +11,8 @@ param(
     [string]$Target = "help",
     [string]$HostAddress = "127.0.0.1",
     [int]$Port = 8000,
-    [int]$JupyterPort = 8888
+    [int]$JupyterPort = 8888,
+    [string]$Dataset = "sample"
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,9 +42,12 @@ switch ($Target) {
         Invoke-Checked "docker" @("compose", "--profile", "lab", "up", "--build", "jupyter")
     }
     "data-sample" { Invoke-Checked "uv" @("run", "pit", "data", "sample") }
+    "data-snapshot" {
+        Invoke-Checked "uv" @("run", "pit", "data", "snapshot", "--dataset", "paysim")
+    }
     "profile" {
         Invoke-Checked "uv" @("run", "pit", "data", "sample")
-        Invoke-Checked "uv" @("run", "pit", "data", "profile", "--dataset", "sample")
+        Invoke-Checked "uv" @("run", "pit", "data", "profile", "--dataset", $Dataset)
     }
     "build-lakehouse" {
         & $PSCommandPath "test-temporal"
@@ -108,7 +112,8 @@ switch ($Target) {
             @("lab", "start local JupyterLab"),
             @("lab-container", "start isolated JupyterLab with Compose"),
             @("data-sample", "build and validate temporal fixture"),
-            @("profile", "generate the decision-oriented sample profile"),
+            @("data-snapshot", "freeze PaySim identity and write the snapshot manifest"),
+            @("profile", "generate the decision-oriented profile for -Dataset"),
             @("build-lakehouse", "build sample Bronze/Silver Delta tables after tests"),
             @("lakehouse-history", "inspect local Delta commit history"),
             @("test-temporal", "run PIT correctness suite"),

@@ -21,7 +21,8 @@ class Settings(BaseSettings):
     data_root: Path = Path("./data")
     artifact_root: Path = Path("./artifacts")
     dataset: str = "sample"
-    entity_definition_version: str = "entity-ieee-candidate-v0"
+    paysim_csv: Path | None = None
+    entity_definition_version: str = "entity-application-candidate-v0"
     feature_definition_version: str = "fraud-history-v1"
     feature_service_version: str = "fraud-scoring-v1"
     float_tolerance: float = Field(default=1e-6, gt=0)

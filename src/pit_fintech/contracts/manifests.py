@@ -28,6 +28,22 @@ class DatasetManifest(BaseModel):
     code_commit: str
 
 
+class DatasetSnapshotManifest(BaseModel):
+    """Immutable identity and minimum profile for a raw application dataset."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    dataset: str
+    dataset_snapshot_id: str
+    source: str
+    file: DatasetFile
+    schema_columns: tuple[str, ...]
+    source_rows: int
+    step_min: int
+    step_max: int
+    code_commit: str
+
+
 class DeltaTableSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

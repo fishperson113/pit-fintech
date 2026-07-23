@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 
-def verify_notebooks(project_root: Path, timeout_seconds: int = 60) -> list[Path]:
+def verify_notebooks(project_root: Path, timeout_seconds: int = 300) -> list[Path]:
     try:
         import nbformat
         from nbclient import NotebookClient

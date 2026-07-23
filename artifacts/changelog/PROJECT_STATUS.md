@@ -11,7 +11,7 @@ Last updated: 2026-07-23. Status words are strict:
 | Artifact / guard | Status | Evidence |
 |---|---|---|
 | Cumulative changelog | verified | `artifacts/changelog/CHANGELOG.md` |
-| Detailed milestone logs | verified | M001–M008 logs under `artifacts/changelog/milestones/` |
+| Detailed milestone logs | verified | M001–M010 logs under `artifacts/changelog/milestones/` |
 | Milestone pre-commit guard | verified | four unit cases pass; installed at `.git/hooks/pre-commit` |
 | Human-readable reports location | verified | reports moved to `docs/reports/` |
 | Four-slide PIT proposal deck | verified | slide 2 states the full PIT-Correct Feature Platform for Fraud Detection name, objective, two execution paths (offline training and online serving), the cross-cutting OTel/Prometheus/Grafana observability layer, and four scope anchors; slide 3 embeds the user-authored architecture image; slide 4 progresses from Engineering/MLOps to thesis-ready E2E research; 4 slides render at 1440x810 without overflow/errors; navigation passes |
@@ -19,7 +19,7 @@ Last updated: 2026-07-23. Status words are strict:
 | Copy-ready Mermaid architecture | verified | current high-level handoff; 7 subgraphs, 12 nodes, 16 action-labeled edges and 10 logo placeholders; transaction `t` is scored from Redis history before `t`, then updates Redis and appends to Event History for the DuckDB/Delta offline path; unique node IDs and valid edge references; OTel/Grafana remains planned |
 | M005 sprint scope refinement | verified | Sprint 2/3 planning contract now fixes one-producer in-memory replay, score-before-update, offline-only medallion, thin Feast role, no Ray/Kafka/CDC/BI stack, and optional external VPS observability |
 | M006 reusable project self-review checklist | verified | `docs/reports/project-self-review-checklist.md`; 13 non-negotiable hard gates plus a 100-point evidence-based scorecard across data, correctness, SWE, MLOps, serving, operations and scale reasoning |
-| Ten-minute PIT meetup speaker script | verified | `docs/reports/pit-fintech-meetup-10min-script.md`; four timed slide sections, DuckDB/PostgreSQL workload rationale, optional Feast/custom workaround, status-safe caveats and eight mentor Q&A prompts; content scan and `git diff --check` pass |
+| Ten-minute PIT meetup speaker script | verified | `docs/reports/pit-fintech-meetup-10min-script.md`; compressed four-slide talk track targets 9:20 plus buffer, keeps slide 3 as the technical core, and separates six concise mentor Q&A prompts from the spoken script; four slide headings, four closing claims, six Q&A prompts and required status/architecture claims pass the content scan; `git diff --check` passes |
 | Vietnamese PIT terminology catalog | verified | `docs/reports/catalog.md`; required-term scan, reader-aid structure and `git diff --check` pass |
 
 ## Sprint 1
@@ -33,9 +33,10 @@ Last updated: 2026-07-23. Status words are strict:
 | Independent pre-decision PIT oracle | verified | 0 future reads across 12 temporal tests |
 | Temporal/unit test suite | verified | 12 temporal + 10 unit + 1 integration test pass |
 | CI fixture lane | implemented | `.github/workflows/ci.yml` |
-| JupyterLab and three Sprint 1 notebooks | verified | all three execute in memory through the project kernel |
+| JupyterLab and three Sprint 1 notebooks | verified | all three target the real PaySim schema, never fall back to the synthetic oracle, resolve the repository root even when kernels start in `notebooks/`, and execute against the schema fixture; DuckDB query cells pass |
 | Redis + MLflow local service boundary | implemented | Compose config passes; image build hit host timeout and remains unverified |
-| PaySim access/checksum and EDA | planned | EDA-first path; profile time/entity/leakage/imbalance before ADR |
+| PaySim access/checksum and EDA | implemented | PaySim discovery/schema validation, optional full SHA-256, DuckDB CLI profile, and three real-data EDA notebooks exist; full Kaggle snapshot is not present, so application row counts/checksum/EDA conclusions remain unverified |
+| PaySim raw snapshot command | verified | `make data-snapshot` and `.\make.ps1 data-snapshot` call the same CLI boundary; schema, SHA-256, row/step profile and atomic manifest persistence pass fixture unit tests; PowerShell help exposes the target, the current full 28-test suite passes, and execution on the full user-downloaded CSV remains pending |
 | Dataset/entity ADR | planned | PaySim first; IEEE-CIS and Home Credit are alternatives |
 | Bronze/Silver Delta sample | verified | 8 Bronze rows, 7 Silver rows, separated label table; 1 integration/time-travel test passes |
 | Model-family gate and static/PIT baseline | planned | lock after PaySim EDA; LightGBM is a candidate only |

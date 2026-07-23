@@ -9,7 +9,14 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from pit_fintech.config import get_settings
 from pit_fintech.data.build_lakehouse import build_sample_lakehouse, lakehouse_history
+from pit_fintech.data.paysim import (
+    create_paysim_snapshot,
+    find_paysim_csv,
+    profile_paysim,
+    setup_instructions,
+)
 from pit_fintech.data.sample import PARQUET_PATH, build_sample_fixture, profile_sample_fixture
 from pit_fintech.platform.doctor import collect_checks
 from pit_fintech.platform.notebooks import verify_notebooks
@@ -58,18 +65,79 @@ def data_sample() -> None:
 @data_app.command("profile")
 def data_profile(
     dataset: Annotated[str, typer.Option(help="Dataset implementation to profile")] = "sample",
+    path: Annotated[
+        Path | None,
+        typer.Option(
+            help="Explicit PaySim CSV path; otherwise use PAYSIM_CSV, .env, or default location"
+        ),
+    ] = None,
+    checksum: Annotated[
+        bool,
+        typer.Option(help="Hash the full PaySim file and emit dataset_snapshot_id"),
+    ] = False,
 ) -> None:
     """Generate a decision-oriented profile for an implemented dataset path."""
 
-    if dataset != "sample":
-        console.print("[red]Full-data profiling is planned after data access is verified.[/]")
+    if dataset == "sample":
+        profile = profile_sample_fixture()
+        title = "Synthetic fixture profile"
+    elif dataset == "paysim":
+        project_root = Path.cwd()
+        csv_path = find_paysim_csv(project_root, path)
+        if csv_path is None:
+            console.print(f"[yellow]{setup_instructions(project_root)}[/]")
+            raise typer.Exit(code=2)
+        profile = profile_paysim(csv_path, include_checksum=checksum)
+        title = "PaySim profile"
+    else:
+        console.print(f"[red]Unknown dataset: {dataset}. Use sample or paysim.[/]")
         raise typer.Exit(code=2)
-    profile = profile_sample_fixture()
-    table = Table(title="Synthetic fixture profile")
+    table = Table(title=title)
     table.add_column("Metric")
     table.add_column("Value")
     for key, value in profile.items():
         table.add_row(key, str(value))
+    console.print(table)
+
+
+@data_app.command("snapshot")
+def data_snapshot(
+    dataset: Annotated[str, typer.Option(help="Raw dataset to identify")] = "paysim",
+    path: Annotated[
+        Path | None,
+        typer.Option(help="Explicit PaySim CSV path; otherwise use configured/default location"),
+    ] = None,
+) -> None:
+    """Create a raw-data identity manifest before EDA or lakehouse ingestion."""
+
+    if dataset != "paysim":
+        console.print("[red]Only the PaySim application snapshot is implemented.[/]")
+        raise typer.Exit(code=2)
+
+    project_root = Path.cwd()
+    csv_path = find_paysim_csv(project_root, path)
+    if csv_path is None:
+        console.print(f"[yellow]{setup_instructions(project_root)}[/]")
+        raise typer.Exit(code=2)
+
+    settings = get_settings()
+    artifact_root = settings.artifact_root
+    if not artifact_root.is_absolute():
+        artifact_root = project_root / artifact_root
+    manifest, manifest_path = create_paysim_snapshot(
+        csv_path,
+        project_root=project_root,
+        artifact_root=artifact_root,
+    )
+    table = Table(title="PaySim raw snapshot")
+    table.add_column("Field")
+    table.add_column("Value")
+    table.add_row("dataset_snapshot_id", manifest.dataset_snapshot_id)
+    table.add_row("sha256", manifest.file.sha256)
+    table.add_row("bytes", str(manifest.file.bytes))
+    table.add_row("rows", str(manifest.source_rows))
+    table.add_row("step range", f"{manifest.step_min}-{manifest.step_max}")
+    table.add_row("manifest", str(manifest_path))
     console.print(table)
 
 

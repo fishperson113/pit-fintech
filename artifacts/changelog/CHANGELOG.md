@@ -1,5 +1,65 @@
 # Project changelog
 
+## 2026-07-23 — M009 refinement: notebook-safe PaySim path resolution
+
+- Fixed the loader bug where `Path.cwd()` caused kernels launched from `notebooks/` to search
+  under `notebooks/data/raw/`.
+- Added repository-root discovery by walking parents to `pyproject.toml`; the loader and setup
+  instructions now normalize any supplied working directory.
+- Updated all three PaySim notebooks to use the resolved repository root.
+- Verified five PaySim unit tests, including a notebook-directory regression case; all three
+  notebooks execute against the schema fixture and Ruff passes. The user's full PaySim EDA was
+  intentionally not run.
+- Detail: [M009 log](milestones/M009-paysim-eda-notebooks.md).
+
+## 2026-07-23 — M010: PaySim raw snapshot Make target
+
+- Added `data-snapshot` to GNU Make and the Windows PowerShell companion so the user can freeze
+  the PaySim input through the project command contract.
+- Added a dedicated CLI snapshot operation that validates schema, computes the full SHA-256,
+  profiles row count and step range, and atomically writes a machine-readable manifest under a
+  checksum-addressed artifact directory.
+- Kept data acquisition manual and kept snapshotting read-only with respect to the raw CSV.
+- Verified idempotency on a temporary PaySim-schema CSV: the same input produces the same
+  snapshot ID, manifest path and manifest content.
+- Evidence: four PaySim unit tests and the full 27-test suite pass; Ruff check/format and
+  `git diff --check` pass; PowerShell help exposes the new target. The full PaySim snapshot
+  command was intentionally not run because that is the next user learning action.
+- Detail: [M010 log](milestones/M010-paysim-raw-snapshot-target.md).
+
+## 2026-07-23 — M009: PaySim EDA notebooks and profile boundary
+
+- Replaced the three synthetic/mock Sprint 1 notebooks with real PaySim workflows for snapshot
+  profiling, temporal/entity viability, and leakage auditing.
+- Added a reusable PaySim module that discovers the raw CSV, validates the exact 11-column
+  schema, computes SHA-256 snapshot identity, opens a lazy DuckDB view, and emits a
+  machine-readable profile.
+- Extended `pit data profile --dataset paysim` and the Windows `profile -Dataset paysim`
+  boundary; documented default path, shell environment and `.env` configuration.
+- Encoded the Kaggle source warning as a baseline leakage policy: balance columns are excluded,
+  `isFraud` is label-only, and `isFlaggedFraud` is an existing policy output rather than neutral
+  request context.
+- Verified all notebook SQL against a committed schema-only test fixture and verified the
+  missing-data path does not substitute synthetic data. Full PaySim EDA remains unverified until
+  the authorized Kaggle CSV is present and its checksum/results are recorded.
+- Evidence: 26 pytest cases pass; Ruff check and format pass; three notebooks pass in both
+  execution modes; CLI fixture profile emits `paysim1:b40a4eb1c8971b54`.
+- Detail: [M009 log](milestones/M009-paysim-eda-notebooks.md).
+
+## 2026-07-23 — M007 refinement: shorter meetup delivery
+
+- Reduced each slide to one memorable claim and removed repeated explanations from the spoken
+  path.
+- Rebalanced the timing to a 9:20 target plus 40 seconds of buffer while retaining slide 3 as
+  the deepest technical section.
+- Preserved the DuckDB/Delta role boundary, optional Feast/custom workaround, chronological
+  replay parity and honest verified-versus-planned status.
+- Moved six concise mentor prompts into an explicitly optional Q&A section.
+- Verified four slide headings, four explicit closing claims, six optional Q&A prompts, and the
+  required evidence-boundary, DuckDB/Delta, Feast and narrow-scope statements; `git diff --check`
+  passes with working-copy line-ending warnings only.
+- Detail: [M007 log](milestones/M007-meetup-speaker-script.md).
+
 ## 2026-07-23 — M007 refinement: DuckDB and Feast trade-offs
 
 - Rebalanced slide 3's talk track away from definitions of atomicity, idempotency and

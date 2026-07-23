@@ -25,6 +25,9 @@ lab-container: ## Start the isolated JupyterLab Compose profile
 data-sample: ## Materialize and validate the committed synthetic temporal oracle
 	uv run pit data sample
 
+data-snapshot: ## Freeze the PaySim raw file identity and write its manifest
+	uv run pit data snapshot --dataset paysim
+
 profile: data-sample ## Generate the decision-oriented profile for DATASET
 	uv run pit data profile --dataset $(DATASET)
 
@@ -77,4 +80,4 @@ logs: ## Follow core service logs
 down: ## Stop services without deleting data volumes
 	docker compose down
 
-.PHONY: help bootstrap doctor lab lab-container data-sample profile build-lakehouse lakehouse-history test-temporal test-unit test-lakehouse test-notebooks test lint format check changelog-check lock up-core status logs down
+.PHONY: help bootstrap doctor lab lab-container data-sample data-snapshot profile build-lakehouse lakehouse-history test-temporal test-unit test-lakehouse test-notebooks test lint format check changelog-check lock up-core status logs down

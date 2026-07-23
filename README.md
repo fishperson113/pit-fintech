@@ -37,6 +37,37 @@ same Python control plane:
 
 The synthetic path requires no Kaggle token, cloud account, Redis, or MLflow server.
 
+### Run the PaySim EDA notebooks
+
+Download [PaySim](https://www.kaggle.com/datasets/ealaxi/paysim1) into the default raw-data
+location:
+
+```text
+data/raw/paysim/PS_20174392719_1491204439457_log.csv
+```
+
+Alternatively, set `PAYSIM_CSV` in the shell or copy `.env.example` to `.env` and set
+`PIT_PAYSIM_CSV`. Freeze the raw input once before running EDA:
+
+```bash
+make data-snapshot
+make profile DATASET=paysim
+make lab
+```
+
+```powershell
+.\make.ps1 data-snapshot
+.\make.ps1 profile -Dataset paysim
+.\make.ps1 lab
+```
+
+`data-snapshot` writes a machine-readable manifest under
+`artifacts/datasets/paysim1/<checksum-prefix>/snapshot-manifest.json`. It does not copy or mutate
+the raw CSV.
+
+The notebooks do not fall back to synthetic data. Without the PaySim CSV they show setup
+instructions and skip data queries.
+
 ## Implemented command contract
 
 | Command | Outcome |
@@ -46,7 +77,8 @@ The synthetic path requires no Kaggle token, cloud account, Redis, or MLflow ser
 | `lab` | Start JupyterLab with project code importable from the locked environment |
 | `lab-container` | Start an isolated, localhost-only JupyterLab Compose profile |
 | `data-sample` | Validate hand-calculated vectors and materialize the synthetic Parquet fixture |
-| `profile` | Emit a machine-readable decision profile for the implemented dataset path |
+| `data-snapshot` | Hash/profile the PaySim raw CSV and persist its immutable identity manifest |
+| `profile` | Profile the synthetic fixture or real PaySim CSV through the same CLI boundary |
 | `test-temporal` | Exercise future, duplicate, tie, late-arrival, boundary, cold-start, and ordering cases |
 | `build-lakehouse` | Write versioned Bronze/Silver Delta tables after the temporal gate |
 | `lakehouse-history` | Inspect exact local Delta versions and operations |
@@ -95,9 +127,11 @@ survive `make down` / `.\make.ps1 down`.
 
 ## Dataset policy
 
-The committed synthetic fixture is the correctness ground truth. IEEE-CIS is the primary
-application dataset only after access and Day-2 entity sensitivity checks pass; PaySim is the
-fallback. Raw competition files are never committed. See [data access](docs/data-access.md).
+The committed synthetic fixture remains the temporal-correctness ground truth. PaySim is the
+EDA-first application dataset; IEEE-CIS and Home Credit are ADR-gated alternatives. The PaySim
+notebooks must profile temporal/entity viability and leakage before the application contract or
+model family is locked. Raw dataset files are never committed. See
+[data access](docs/data-access.md).
 
 ## Scope guard
 

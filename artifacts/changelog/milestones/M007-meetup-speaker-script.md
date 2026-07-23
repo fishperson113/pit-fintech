@@ -29,6 +29,9 @@ concise answers for likely mentor questions.
   name the equivalent custom FeatureSpec/provider/materializer/version-gate workaround.
 - Compress atomic/idempotent/reproducible backfill terminology into one practical acceptance
   statement so the talk stays focused on architecture decisions.
+- Compress every slide to one memorable claim, preserve slide 3 as the technical center, target
+  9:20 of speech plus a 40-second delivery buffer, and move optional mentor material out of the
+  spoken path.
 
 ## Files changed
 
@@ -54,10 +57,22 @@ new mentor Q&A prompts are present; detailed atomic/idempotent/reproducible defi
 Timing-density review: pass after compressing the new technology rationale and retaining backfill
 as one practical acceptance statement.
 git diff --check: pass; existing LF-to-CRLF working-copy warnings only.
+
+2026-07-23 shorter-delivery refinement:
+Implementation status: verified.
+The four spoken sections now each have one explicit closing sentence. The main timing target is
+9:20 with a 40-second buffer; six optional mentor questions are separated from the talk.
+Structural content scan: pass; four slide headings, four closing claims and six Q&A prompts are
+present.
+Claim-retention scan: pass; the verified evidence boundary, DuckDB/Delta separation, optional
+Feast boundary and narrow research-platform scope remain explicit.
+git diff --check: pass; existing LF-to-CRLF working-copy warnings only.
 ```
 
 ## Deviations, gaps and next step
 
 - The source HTML deck was not edited.
 - Spoken duration depends on delivery speed; the time boxes are a rehearsal target.
-- Next step: rehearse once with a timer and shorten examples before removing technical claims.
+- Actual spoken duration remains unverified until a timed rehearsal.
+- Next step: rehearse once with a timer and only trim optional slide 3 trade-off sentences if
+  delivery exceeds ten minutes.

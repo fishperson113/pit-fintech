@@ -6,14 +6,22 @@
 hand-calculated vectors, writes `data/fixtures/temporal_cases.parquet`, and records a runtime
 manifest under `artifacts/sample/`. This path is sufficient for correctness and CI.
 
-## PaySim EDA-first path (planned)
+## PaySim EDA-first path
 
 1. Acquire PaySim from its authorized source and record license/source metadata.
-2. Download into `data/raw/` through the future `data` command.
-3. Verify filename, byte count, and SHA-256 before extraction or processing.
-4. Profile event ordering, origin/destination history, class imbalance, duplicates and leakage
-   risk in the balance columns.
+2. Place the CSV at
+   `data/raw/paysim/PS_20174392719_1491204439457_log.csv`, set `PAYSIM_CSV` in the shell, or set
+   `PIT_PAYSIM_CSV` in `.env`.
+3. Run `make data-snapshot` or `.\make.ps1 data-snapshot`. This hashes the raw file, records its
+   row count/schema/step range and writes the immutable snapshot manifest.
+4. Run `make profile DATASET=paysim` or `.\make.ps1 profile -Dataset paysim`, then run the three
+   notebooks to profile event ordering, origin/destination history, class
+   imbalance, duplicates and leakage risk.
 5. Record the dataset/entity/time policy and the model-family decision in ADRs only after EDA.
+
+Dataset discovery, schema validation, DuckDB profiling and notebook queries are implemented.
+Acquisition is intentionally manual/Kaggle-controlled, and the full snapshot has not been
+verified until its SHA-256 and EDA evidence are recorded.
 
 ## IEEE-CIS alternative path (planned)
 
