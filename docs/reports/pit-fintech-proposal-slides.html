@@ -428,7 +428,7 @@
 
     .direction-grid {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: minmax(0, 1fr);
       gap: 18px;
       margin-top: clamp(22px, 2.5vw, 40px);
     }
@@ -446,20 +446,11 @@
       background: linear-gradient(150deg, rgba(168, 255, 120, 0.11), rgba(10, 29, 23, 0.76));
     }
 
-    .direction.research {
-      border-color: rgba(77, 224, 189, 0.34);
-      background: linear-gradient(150deg, rgba(77, 224, 189, 0.10), rgba(10, 29, 23, 0.76));
-    }
-
     .direction .rank {
       color: var(--green);
       font-family: var(--font-display);
       font-size: clamp(28px, 2.5vw, 44px);
       font-weight: 900;
-    }
-
-    .direction.research .rank {
-      color: var(--mint);
     }
 
     .direction h3 {
@@ -670,7 +661,7 @@
       </header>
       <div class="slide-body">
         <h1 id="slide-1-title" class="reveal">
-          Point-in-Time<br><span class="accent">Fraud Feature</span> Platform
+          PIT-Correct<br><span class="accent">Feature Platform</span><br>for Fraud Detection
         </h1>
         <p class="lead reveal delay-1">
           Xây dựng feature platform đúng theo thời điểm trên local Delta Lakehouse — để model
@@ -713,7 +704,7 @@
       </header>
       <div class="slide-body execution-framing">
         <h2 id="slide-2-title" class="reveal">
-          PIT-Correct Feature Platform <span class="accent">for Fraud Detection.</span>
+          PIT-Correct Feature Platform <span class="accent">for Fraud Detection</span>
         </h2>
         <p class="execution-intro reveal delay-1">
           <strong>Mục tiêu:</strong> train fraud model không leakage, serve fraud score đúng cutoff,
@@ -747,7 +738,7 @@
           <span class="scope-chip">PaySim · EDA-first</span>
           <span class="scope-chip">Local CPU · zero mandatory cost</span>
           <span class="scope-chip">6 tuần · 3 sprint</span>
-          <span class="scope-chip">Engineering → thesis-ready</span>
+          <span class="scope-chip">Engineering / MLOps outcome</span>
         </div>
       </div>
       <footer class="slide-foot">
@@ -784,42 +775,32 @@
 
     <section class="slide" aria-labelledby="slide-4-title">
       <header class="slide-head">
-        <span class="eyebrow">Định hướng đầu ra</span>
+          <span class="eyebrow">Đầu ra sau 6 tuần</span>
         <span class="slide-number">04 / 04</span>
       </header>
       <div class="slide-body">
         <h2 id="slide-4-title" class="reveal">
-          <span class="accent">Engineering trước.</span> Thesis là bước phát triển tiếp theo.
+          <span class="accent">Một hệ thống engineering</span> chạy được và kiểm chứng được.
         </h2>
         <div class="direction-grid reveal delay-1">
           <article class="direction primary">
             <span class="rank">01</span>
             <h3>Engineering / MLOps</h3>
-            <p class="direction-summary">Đầu ra gần: một hệ thống chạy được và có thể kiểm chứng.</p>
+            <p class="direction-summary">Một local feature platform cho fraud scoring, có evidence để bàn giao.</p>
             <ul>
               <li>Data pipeline, model lifecycle và online serving</li>
               <li>PIT correctness, parity và reproducible backfill</li>
-              <li>Makefile, CI, observability và vận hành local</li>
-            </ul>
-          </article>
-          <article class="direction research">
-            <span class="rank">02</span>
-            <h3>Thesis-ready extension</h3>
-            <p class="direction-summary">Nâng chính codebase này thành nghiên cứu E2E hoàn chỉnh.</p>
-            <ul>
-              <li>RQ, experiment protocol và temporal oracle</li>
-              <li>E1–E5 / P1–P5, ablation và threats to validity</li>
-              <li>Chuẩn hoàn thiện tham chiếu: thesis E2E e-commerce prediction</li>
+              <li>Makefile, CI, observability, replay và recovery</li>
             </ul>
           </article>
         </div>
         <p class="closing-line reveal delay-2">
-          Lộ trình: <span>build system → prove correctness → package thành thesis E2E.</span>
+          Lộ trình: <span>build system → prove correctness → hand off một platform local reproducible.</span>
         </p>
       </div>
       <footer class="slide-foot">
         <span class="brand-mark">PIT Fintech</span>
-        <span class="footer-note">Career-first · thesis-ready</span>
+        <span class="footer-note">Engineering-first · evidence-backed</span>
       </footer>
     </section>
 

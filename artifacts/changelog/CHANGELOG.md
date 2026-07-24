@@ -1,5 +1,40 @@
 # Project changelog
 
+## 2026-07-24 — M013: Proposal deck title consistency
+
+- Synchronized the slide 1 title with slide 2 as `PIT-Correct Feature Platform for Fraud
+  Detection`.
+- Preserved the four-slide engineering-only pitch structure and all existing architecture content.
+- Detail: [M013 log](milestones/M013-proposal-deck-title-consistency.md).
+
+## 2026-07-24 — M012: Engineering-only proposal deck
+
+- Removed thesis-ready language and the separate thesis extension card from the four-slide pitch
+  deck at `docs/reports/pit-fintech-proposal-slides.html`.
+- Reframed slide 4 around the actual six-week engineering/MLOps outcome: a runnable local feature
+  platform with PIT correctness, parity, reproducible backfill, replay/recovery and evidence-backed
+  handoff.
+- Updated the slide 2 scope chip and slide 4 footer to remove thesis positioning while preserving
+  the existing PIT architecture, observability and project scope.
+- Removed the unused research-card CSS and kept the deck as a four-slide engineering pitch.
+- Detail: [M012 log](milestones/M012-engineering-only-proposal-deck.md).
+
+## 2026-07-24 — M011: Deep knowledge and oral-defense checklist
+
+- Added `docs/reports/knowledge-defense-checklist.md` to define what the project author must
+  understand after each sprint, separately from what the implementation has verified.
+- Introduced a D0–D4 depth rubric and four observable checks: explain, draw/calculate, break with
+  a counterexample, and prove with repository evidence.
+- Made Sprint 1 deliberately detailed around grain/entity/order, event and knowledge time,
+  cutoff/window semantics, leakage, independent oracle design, storage boundaries and debugging.
+- Added Sprint 2 gates for feature contracts, atomic/idempotent/reproducible backfills, replay,
+  Redis state, parity and model lifecycle; added Sprint 3 gates for experiments, incidents,
+  observability, scale transfer and research honesty.
+- Added 24 randomized oral-defense prompts, non-compensable core topics, shallow-understanding red
+  flags and a repeatable closed-note review form.
+- Cross-linked the knowledge checklist from the existing implementation/evidence scorecard.
+- Detail: [M011 log](milestones/M011-knowledge-defense-checklist.md).
+
 ## 2026-07-23 — M009 refinement: notebook-safe PaySim path resolution
 
 - Fixed the loader bug where `Path.cwd()` caused kernels launched from `notebooks/` to search
