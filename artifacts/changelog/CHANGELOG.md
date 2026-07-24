@@ -1,5 +1,21 @@
 # Project changelog
 
+## 2026-07-24 — M011: Deep knowledge and oral-defense checklist
+
+- Added `docs/reports/knowledge-defense-checklist.md` to define what the project author must
+  understand after each sprint, separately from what the implementation has verified.
+- Introduced a D0–D4 depth rubric and four observable checks: explain, draw/calculate, break with
+  a counterexample, and prove with repository evidence.
+- Made Sprint 1 deliberately detailed around grain/entity/order, event and knowledge time,
+  cutoff/window semantics, leakage, independent oracle design, storage boundaries and debugging.
+- Added Sprint 2 gates for feature contracts, atomic/idempotent/reproducible backfills, replay,
+  Redis state, parity and model lifecycle; added Sprint 3 gates for experiments, incidents,
+  observability, scale transfer and research honesty.
+- Added 24 randomized oral-defense prompts, non-compensable core topics, shallow-understanding red
+  flags and a repeatable closed-note review form.
+- Cross-linked the knowledge checklist from the existing implementation/evidence scorecard.
+- Detail: [M011 log](milestones/M011-knowledge-defense-checklist.md).
+
 ## 2026-07-23 — M009 refinement: notebook-safe PaySim path resolution
 
 - Fixed the loader bug where `Path.cwd()` caused kernels launched from `notebooks/` to search
