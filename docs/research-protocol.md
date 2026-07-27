@@ -49,7 +49,7 @@ The FeatureSpec decision freezes:
 
 ## PaySim application source path
 
-M018 implements the source tables named by ADR-003:
+M018 verified the source tables named by ADR-003:
 
 ```text
 raw PaySim snapshot
@@ -60,12 +60,13 @@ raw PaySim snapshot
 
 The Silver transaction table excludes labels, policy output and balance fields. The application
 manifest binds exact Delta versions to the raw snapshot, entity/feature versions, canonical
-FeatureSpec checksum, code state, quality-gate observations and local resource evidence. Fixture
-and full-data execution remain user-run gates; no M018 runtime result is predeclared.
+FeatureSpec checksum, code state, quality-gate observations and local resource evidence. The
+user-run full build published exact v1 tables from clean commit `6e93e7f…`, with 6,362,620 rows
+per table and 8/8 quality gates passing.
 
-## Implemented Silver baseline protocol
+## Verified Silver baseline protocol
 
-M019 implements, but has not yet runtime-verified, the clean Sprint 1 model baseline:
+M019 verified the clean Sprint 1 model baseline:
 
 - sources are exact manifest-recorded versions of `silver.paysim_transactions` and
   `silver.paysim_labels`;
@@ -81,5 +82,10 @@ M019 implements, but has not yet runtime-verified, the clean Sprint 1 model base
   MLflow runs and model URIs are required evidence;
 - clean baseline publication rejects dirty or mismatched trainer/lakehouse Git lineage.
 
-Notebook 05 is a thin caller and interpretation surface. The non-notebook `train` command is the
-acceptance path. No M019 metric or runtime result is predeclared.
+Notebook 05 is a thin caller and interpretation surface over the same function exposed by the
+non-notebook `train` command.
+
+The frozen result uses clean commit `6e93e7f…`, exact Silver v1 and vector checksum `c7f075…`.
+E1 test PR-AUC is 0.258342; E4 test PR-AUC is 0.102766. E4's lower PR-AUC and fixed-FPR recall
+are accepted PaySim utility evidence even though its global ROC-AUC is higher. No post-result
+tuning changes this Sprint 1 baseline.

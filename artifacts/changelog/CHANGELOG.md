@@ -1,5 +1,22 @@
 # Project changelog
 
+## 2026-07-27 — M020: Sprint 1 closure
+
+- Reconciled all nine Sprint 1 release gates against the accepted PaySim ADRs, source files,
+  user-provided command outputs and immutable runtime manifests.
+- Added a completion report that freezes dataset, exact Silver v1, FeatureSpec checksum, clean
+  code commit, training-vector checksum and MLflow run lineage for Sprint 2.
+- Consolidated the full PaySim snapshot, missingness/quality checks, transaction distribution,
+  entity viability and leakage inventory into a standalone application-data report.
+- Kept E4's weaker PR-AUC/fixed-FPR outcome as an explicit PaySim utility limitation rather than
+  tuning after seeing test results.
+- Returned notebook 05 to its exact output-free source object; MLflow and JSON manifests remain
+  the authoritative run evidence.
+- Clarified that Sprint 1 is complete while online parity, atomic/incremental backfill, Redis,
+  serving, replay and model lifecycle remain Sprint 2/3 gates.
+- Status: verified. No model, notebook, test or data pipeline was executed by the agent.
+- Detail: [M020 log](milestones/M020-sprint-1-closure.md).
+
 ## 2026-07-27 — M019: Silver-based LightGBM training baseline
 
 - Started the final Sprint 1 baseline from exact Silver Delta transaction and label versions.
@@ -32,7 +49,22 @@
 - The first commit attempt passed Ruff check and all safety/governance guards; Ruff format
   reformatted notebook 05, the training module and two test files, correctly stopping the commit
   for review and restaging.
-- Status: implemented. Fixture and notebook gates pass; clean full E1/E4 training remains.
+- Commit `6e93e7f` then passed every pre-commit guard and left a clean worktree.
+- User rebuilt Bronze/Silver as exact Delta v1 from the same clean commit and ran notebook 05 in
+  train-and-review mode.
+- Completed MLflow parent `e1ebc167813e40b88f16c6e611decea7` with 322,461 vectors, all 8,213
+  PaySim fraud rows, checksum `c7f075…` and zero future reads.
+- Reconciled train/validation/test to 205,781/78,701/37,979 rows; validation and test retain
+  natural prevalence.
+- E1 reached test PR-AUC 0.258342, ROC-AUC 0.601620 and recall 0.275559 at observed FPR
+  0.007951. E4 reached PR-AUC 0.102766, ROC-AUC 0.784978 and recall 0.036741 at observed FPR
+  0.003894.
+- Confirmed both child runs, feature artifacts, pinned MLmodel environments and pickle-free
+  skops model files.
+- Notebook 05 executed all eight code cells without errors. Integer-nullability and missing-pip
+  messages are non-blocking MLflow environment/signature warnings; no feature-name warning,
+  lineage mismatch or cutoff violation occurred.
+- Status: verified. E4's lower PR/operating-point result is retained without tuning.
 - Detail: [M019 log](milestones/M019-silver-training-baseline.md).
 
 ## 2026-07-27 — M018: PaySim application Bronze/Silver lakehouse

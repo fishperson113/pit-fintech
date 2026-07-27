@@ -1,7 +1,27 @@
 # PaySim Silver training baseline
 
-Status: **implemented; fixture and notebook gates verified; full training pending**.
+Status: **verified**.
 Milestone: M019.
+
+Verified run:
+
+- parent MLflow run `e1ebc167813e40b88f16c6e611decea7`;
+- clean code and lakehouse commit `6e93e7f43df4c00ce438ca66ccc31f3e0f4870b5`;
+- Silver transaction/label version `1`;
+- 322,461 vectors and all 8,213 PaySim fraud rows;
+- vector checksum `c7f07593038c2d67b325254702073864f6eb3f193ee34031855ebc1fbd93b8b8`;
+- future-read violations `0`.
+
+Test results:
+
+| Experiment | Test PR-AUC | Test ROC-AUC | Recall | Precision | Observed FPR |
+|---|---:|---:|---:|---:|---:|
+| E1 static/temporal | 0.258342 | 0.601620 | 0.275559 | 0.541601 | 0.007951 |
+| E4 PIT/temporal | 0.102766 | 0.784978 | 0.036741 | 0.243386 | 0.003894 |
+
+Test prevalence is 0.032966. E1 and E4 are therefore both above the random-ranking PR baseline,
+but E4 underperforms E1 on PR-AUC and the fixed-FPR operating point despite its higher ROC-AUC.
+This is accepted evidence of PaySim's temporal/entity limitations, not a correctness failure.
 
 ## What this pipeline proves
 
@@ -207,9 +227,12 @@ The CLI and notebook call the same function and produce the same manifest schema
 artifacts/experiments/paysim-silver-training/<mlflow-parent-run-id>/manifest.json
 ```
 
-## Acceptance interpretation
+After reviewing a full run, clear notebook outputs before committing. Runtime manifests and
+MLflow artifacts—not saved notebook output—are the source of truth.
 
-M019 can be marked verified only after user-provided evidence confirms:
+## Acceptance result
+
+M019 was marked verified after user-provided evidence confirmed:
 
 - fixture/unit/notebook gates pass;
 - a clean lakehouse rebuild succeeds;

@@ -5,11 +5,12 @@ three invariants: no future reads, offline/online parity, and reproducible backf
 project is a paper-inspired adaptation for one CPU machine; it does not claim to reproduce
 the FeathrPO/Spark speedups from the source paper.
 
-The repository is intentionally milestone-driven. The current implementation establishes
-the Sprint 1 temporal contract, PaySim feasibility evidence, a standalone LightGBM candidate
-spike, and an exact-Silver E1/E4 training baseline. Redis/MLflow infrastructure is wired for the
-next vertical slice, while Feast, Gold backfill, promotion, serving, replay, and cloud remain
-explicitly planned rather than represented by placeholder commands.
+The repository is intentionally milestone-driven. Sprint 1 is complete: the temporal contract,
+PaySim feasibility evidence, versioned Bronze/Silver path and exact-Silver E1/E4 baseline are
+verified. See the [Sprint 1 completion report](docs/reports/sprint-1-completion-report.md).
+Redis/MLflow infrastructure is wired for the next vertical slice, while Feast, Gold backfill,
+promotion, serving, replay, and cloud remain explicitly planned rather than represented by
+placeholder commands.
 
 ## Quick start
 

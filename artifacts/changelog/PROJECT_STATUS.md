@@ -11,8 +11,8 @@ Last updated: 2026-07-27. Status words are strict:
 | Artifact / guard | Status | Evidence |
 |---|---|---|
 | Cumulative changelog | verified | `artifacts/changelog/CHANGELOG.md` |
-| Detailed milestone logs | verified | M001–M019 logs under `artifacts/changelog/milestones/` |
-| Milestone pre-commit guard | verified | hook blocked the first M019 commit after Ruff reformatted four files; Ruff check, milestone, large-file, conflict, TOML/YAML, EOF and whitespace guards passed; changes are being reviewed/restaged |
+| Detailed milestone logs | verified | M001–M020 logs under `artifacts/changelog/milestones/` |
+| Milestone pre-commit guard | verified | hook blocked the first M019 attempt after Ruff reformatted four files; the reviewed retry passed Ruff, milestone, large-file, conflict, TOML/YAML, EOF and whitespace guards in commit `6e93e7f` |
 | Human-readable reports location | verified | reports moved to `docs/reports/` |
 | Four-slide PIT proposal deck | verified | slide 2 states the full PIT-Correct Feature Platform for Fraud Detection name, objective, two execution paths (offline training and online serving), the cross-cutting OTel/Prometheus/Grafana observability layer, and four scope anchors; slide 3 embeds the user-authored architecture image; slide 4 now focuses only on the six-week engineering/MLOps outcome and evidence-backed handoff; 4 slides render at 1440x810 without overflow/errors; navigation passes |
 | Editable Draw.io target architecture | verified | connected high-level v3 opens in app.diagrams.net; 42 elements, 13 action-labeled edges, explicit Delta offline/Redis online/Feast bridge roles, replaceable logo placeholders, no XML/reference defects |
@@ -26,7 +26,8 @@ Last updated: 2026-07-27. Status words are strict:
 | M016 standalone LightGBM candidate spike | verified | user-run `model-spike` completed E1–E4 with exit `0`; parent `0407debd24294c01a1d040f6aa33cc95`, snapshot `paysim1:16910f90577b0d98`, 38,213-row cohort, validated manifest/checksums and four logged `skops` models; candidate metrics retain sampled-cohort and dirty-commit boundaries |
 | M017 PaySim FeatureSpec v1 | verified | user-run `features` passed with checksum `5b4e2b6db613f28dd6da209c50a5c3beb82969247e0248d39007bea9c9c26cf4`; temporal 23/23 and notebooks 01–04 passed; after replacing the presentation-width-sensitive CLI assertion, the user confirmed the corrected unit suite passed |
 | M018 PaySim application lakehouse | verified | full snapshot `paysim1:16910f90577b0d98` built into three Delta v0 tables of 6,362,620 rows; 8/8 gates pass; 56.29s, 113,030 rows/s, 649,248,646 active Delta bytes, 31 partitions; fixture 3/3 and unit 30/30 pass; artifact correctly records dirty commit boundary |
-| M019 Silver-based LightGBM baseline | implemented | user-run unit 34/34, exact-Silver fixture 4/4 and notebook 5/5 gates pass with exit `0`; full clean-code lakehouse rebuild and E1/E4 training remain pending |
+| M019 Silver-based LightGBM baseline | verified | clean Silver v1/code `6e93e7f…`; 322,461 vectors, 8,213 fraud, checksum `c7f075…`, 0 future reads; MLflow parent `e1ebc…`; E1/E4 complete with exact manifests and skops models |
+| M020 Sprint 1 closure | verified | all 9 Sprint 1 gates reconciled in `docs/reports/sprint-1-completion-report.md`; notebook 05 restored output-free; frozen Sprint 2 lineage recorded |
 | Ten-minute PIT meetup speaker script | verified | `docs/reports/pit-fintech-meetup-10min-script.md`; compressed four-slide talk track targets 9:20 plus buffer, keeps slide 3 as the technical core, and separates six concise mentor Q&A prompts from the spoken script; four slide headings, four closing claims, six Q&A prompts and required status/architecture claims pass the content scan; `git diff --check` passes |
 | Vietnamese PIT terminology catalog | verified | `docs/reports/catalog.md`; required-term scan, reader-aid structure and `git diff --check` pass |
 
@@ -46,12 +47,14 @@ Last updated: 2026-07-27. Status words are strict:
 | Silver training notebook 05 | verified | user-run notebook verifier passed it in review-only mode; it calls the same `src/` pipeline as `train` and explains lineage, split health, metrics and importance |
 | Redis + MLflow local service boundary | implemented | Compose config passes; image build hit host timeout and remains unverified |
 | PaySim access/checksum and EDA | verified | full snapshot/profile, cross-role analysis and destination gate outputs are verified; `CASH_OUT` is AMBER with 7-day warm fraud counts 2,058/186/101 across train/validation/test, `TRANSFER` is RED with 4/0/0, yielding accepted status `AMBER_CORRECTNESS_ONLY` |
+| PaySim application data profile | verified | `docs/reports/paysim-data-profile.md` consolidates full snapshot, quality, type/label distribution, entity viability and leakage decisions |
 | PaySim raw snapshot command | verified | user-run `.\make.ps1 data-snapshot` froze `paysim1:16910f90577b0d98`, 493,534,783 bytes, 6,362,620 rows and steps 1–743 in `artifacts/datasets/paysim1/16910f90577b0d98/snapshot-manifest.json` |
 | Dataset/entity ADR | verified | `docs/adr/002-paysim-dataset-entity-scope.md`; PaySim retained for engineering/PIT evidence, IEEE-CIS optional only if thesis/model-utility scope expands |
 | PaySim FeatureSpec v1 | verified | frozen 12-field contract, canonical checksum, temporal suite and notebooks are verified; the brittle Rich-table assertion was replaced by stable `feature_count: 12`, and the user confirmed the corrected unit suite passed |
-| PaySim application Bronze/Silver path | verified | full Bronze transactions, label-free Silver transactions and separate Silver labels published at exact Delta v0 with immutable/latest manifests and FeatureSpec checksum linkage |
+| PaySim application Bronze/Silver path | verified | full Bronze transactions, label-free Silver transactions and separate Silver labels published at exact Delta v1 with immutable/latest manifests and FeatureSpec checksum linkage |
 | Bronze/Silver Delta sample | verified | 8 Bronze rows, 7 Silver rows, separated label table; 1 integration/time-travel test passes |
-| Model-family gate and static/PIT baseline | implemented | M016 candidate evidence and FeatureSpec are verified; M019 clean exact-Silver E1/E4 code exists but fixture/full runtime and clean lineage remain pending |
+| Model-family gate and static/PIT baseline | verified | clean exact-Silver E1/E4 temporal baseline completed; E1 PR-AUC 0.258342 and E4 0.102766 on natural-prevalence test; weaker E4 is retained as valid utility evidence |
+| Sprint 1 release gate | verified | 9/9 gates pass; frozen handoff and accepted limits are recorded in `docs/reports/sprint-1-completion-report.md` |
 
 ## Sprint 2
 

@@ -24,13 +24,19 @@ Project kéo dài 6 tuần, solo, gồm 3 sprint. Cloud deployment và TypeScrip
   `raw CSV -> bronze.paysim_transactions -> silver.paysim_transactions +
   silver.paysim_labels`; full PaySim build đã verified với ba Delta v0 table, mỗi table
   6.362.620 dòng, 8/8 gate pass, 56,29 giây và 31 partition. Artifact ghi đúng dirty boundary.
-- M019 đã implement nhưng chưa runtime-verify training path
+- M019 đã verify training path
   `exact Silver Delta -> strict PIT vectors -> E1/E4 LightGBM -> MLflow + manifest`.
   Validation/test giữ natural prevalence; train chỉ downsample non-fraud có seed. Notebook 05
   chỉ gọi logic trong `src/` và mặc định review-only.
 - User đã verify M019 implementation gates: unit 34/34, exact-Silver integration 4/4 và
-  notebooks 01–05 đều pass với exit `0`. Full clean lakehouse rebuild và E1/E4 training chưa
-  chạy, nên M019 chưa được đánh dấu verified toàn bộ.
+  notebooks 01–05 đều pass với exit `0`.
+- Clean full run dùng Silver v1 và cùng commit `6e93e7f…`: parent MLflow `e1ebc…`, 322.461
+  vectors / 8.213 fraud, checksum `c7f075…`, future-read violations `0`. E1 PR-AUC 0,258342;
+  E4 PR-AUC 0,102766 nhưng ROC-AUC cao hơn. Kết quả E4 yếu hơn được giữ nguyên như evidence.
+- M020 đã đóng Sprint 1 với 9/9 gate PASS và frozen handoff tại
+  `docs/reports/sprint-1-completion-report.md`. Notebook 05 đã được trả về trạng thái output-free;
+  manifest và MLflow artifacts mới là evidence authoritative.
+- Sprint 2 bắt đầu từ exact Silver v1 và phải thêm probability-scoring wrapper trước serving.
 - Notebook chỉ là EDA/experiment surface. Correctness, model và lakehouse logic nằm trong `src/`
   và `tests/`.
 - Redis/MLflow Compose mới là service boundary; Feast, Gold, backfill, materialization, serving,

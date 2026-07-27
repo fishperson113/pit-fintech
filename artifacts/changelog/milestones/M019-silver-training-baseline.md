@@ -1,8 +1,8 @@
 # M019 — Silver-based LightGBM training baseline
 
 - Date: 2026-07-27
-- Updated: 2026-07-27 14:43:40 +07:00
-- Status: implemented
+- Updated: 2026-07-27 14:53:55 +07:00
+- Status: verified
 
 ## Scope and acceptance
 
@@ -150,6 +150,81 @@ merge-conflict, TOML/YAML, EOF, whitespace and milestone-changelog guards passed
 reformatted the new notebook, training module and two test files, so the hook correctly stopped
 the commit for review and restaging. No test or training command was rerun by the agent.
 
+The implementation was then committed cleanly as
+`6e93e7f43df4c00ce438ca66ccc31f3e0f4870b5`. All pre-commit guards passed on the retry.
+
+User-run clean full-data sequence:
+
+```text
+application lakehouse
+  bronze.paysim_transactions v1
+  silver.paysim_transactions v1
+  silver.paysim_labels v1
+  code commit: 6e93e7f43df4c00ce438ca66ccc31f3e0f4870b5
+
+notebook 05 / paysim-silver-lightgbm-v1
+  parent run: e1ebc167813e40b88f16c6e611decea7
+  status: completed
+  code commit: 6e93e7f43df4c00ce438ca66ccc31f3e0f4870b5
+  lakehouse code commit: 6e93e7f43df4c00ce438ca66ccc31f3e0f4870b5
+  vector rows: 322,461
+  vector fraud rows: 8,213
+  vector checksum: c7f07593038c2d67b325254702073864f6eb3f193ee34031855ebc1fbd93b8b8
+  future-read violations: 0
+```
+
+Partition reconciliation:
+
+```text
+train       steps 1-520    205,781 rows / 5,781 fraud / sampled negatives
+validation  steps 521-631   78,701 rows / 1,180 fraud / natural prevalence
+test        steps 632-743   37,979 rows / 1,252 fraud / natural prevalence
+sum                         322,461 rows / 8,213 fraud
+```
+
+Model results:
+
+```text
+E1 static/temporal
+  test PR-AUC: 0.258342464675527
+  test ROC-AUC: 0.601620215942672
+  recall@fixed-FPR: 0.27555910543131
+  precision@fixed-FPR: 0.54160125588697
+  observed test FPR: 0.00795055408827293
+  best iteration: 1
+  child run: e9fe5b1f0f90436e88c0e845d4f28a64
+
+E4 PIT/temporal
+  test PR-AUC: 0.102766342198827
+  test ROC-AUC: 0.784978314654078
+  recall@fixed-FPR: 0.036741214057508
+  precision@fixed-FPR: 0.243386243386243
+  observed test FPR: 0.00389359326925695
+  best iteration: 1
+  child run: 4ab5f1f4421a459884cec7d9a34c7d40
+```
+
+The manifest, MLflow lineage files, two feature-set artifacts and two pickle-free `model.skops`
+artifacts exist. Their generated MLmodel files carry the expected E1 three-field and E4
+twelve-field signatures plus pinned package requirements.
+
+Notebook cells executed sequentially from 1 through 8 with no error output. The run used
+`train-and-review`, loaded the latest application manifest, displayed matching lineage, the
+three chronological partitions, E1/E4 metrics, E4 gain importance and all four claim-boundary
+statements.
+
+Two non-blocking MLflow warnings were observed:
+
+- integer history fields make MLflow warn about hypothetical missing values; FeatureSpec v1
+  requires these fields and defaults them to zero, so Sprint 2's FeatureProvider must preserve
+  the non-null dtype contract;
+- MLflow could not resolve an installed `pip` version inside the uv environment, although the
+  emitted requirements file contains the exact MLflow, LightGBM, scikit-learn, pandas, NumPy and
+  skops versions.
+
+No LightGBM feature-name warning, exception, failed cell, lineage mismatch or cutoff violation
+occurred.
+
 Static inspection performed by the agent used current official delta-rs documentation to confirm
 `DeltaTable(path, version=...)` plus `to_pyarrow_dataset()` time travel, current LightGBM
 DataFrame feature-name behavior, and current MLflow `skops`/`pip_requirements` model logging.
@@ -158,8 +233,14 @@ This is API-design evidence, not runtime verification.
 ## Known gaps and next step
 
 - Fixture, unit and notebook gates now pass.
-- The final full-data model run should happen from a clean commit and a lakehouse manifest whose
-  code lineage is also clean.
-- The existing full-data Delta v0 manifest records dirty M018 lineage and is intentionally
-  rejected by clean M019 training. Rebuild once after the M019 commit to produce new exact
-  versions tied to the clean commit.
+- Clean full-data E1/E4 training now passes and M019 is verified.
+- E4 improves global ROC ranking but underperforms E1 on PR-AUC and the fixed-FPR operating
+  point. This is retained as valid PaySim/feature-utility evidence and must not be hidden through
+  tuning.
+- Both models stopped at iteration 1. Sprint 2 may diagnose temporal calibration/drift, but may
+  not change the frozen baseline retroactively.
+- The MLflow sklearn pyfunc signatures currently expose label `predict` output. Sprint 2 serving
+  needs an explicit probability-scoring wrapper plus the manifest threshold before promotion.
+- The executed notebook's outputs were reviewed, then mechanically cleared during M020. The
+  source notebook again matches its committed output-free object; the JSON training manifest and
+  MLflow artifacts are authoritative.
