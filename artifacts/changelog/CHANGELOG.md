@@ -1,5 +1,19 @@
 # Project changelog
 
+## 2026-07-27 — M023: CI dev-lane numpy dependency
+
+- Diagnosed a CI-only `make test-unit` failure (`ModuleNotFoundError: No module named 'numpy'`)
+  that stayed green locally.
+- Root cause: the fast-fixture lane installs only the `dev` group, but `numpy` entered the lock
+  only transitively through the optional `training` group, and
+  `tests/unit/test_paysim_lightgbm_spike.py` imports numpy at module top level.
+- Added `numpy>=2.4,<3` to the `dev` group so the CI unit lane collects it without pulling the
+  heavy `training` group; the bound matches the already-locked numpy (2.4.6 / 2.5.1).
+- Rejected module-level `importorskip` (would skip the whole spike module and its fixed-FPR
+  correctness tests) and rejected adding `training` to CI (violates the fast-lane intent).
+- Status: implemented; green CI run pending after `uv.lock` is re-locked and committed.
+- Detail: [M023 log](milestones/M023-ci-dev-numpy-dependency.md).
+
 ## 2026-07-27 — M022: Sprint 1 report deck and knowledge review
 
 - Added a seven-slide HTML Sprint 1 report using the proposal deck's visual system.
