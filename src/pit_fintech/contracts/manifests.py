@@ -191,3 +191,85 @@ class ModelCandidateManifest(BaseModel):
     mlflow_parent_run_id: str
     claim_boundary: tuple[str, ...]
     experiments: tuple[ModelCandidateResult, ...]
+
+
+class TrainingPartitionProfile(BaseModel):
+    """Observed label and time coverage for one chronological model partition."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: Literal["train", "validation", "test"]
+    rows: int
+    fraud_rows: int
+    fraud_rate: float
+    step_min: int
+    step_max: int
+    natural_prevalence: bool
+
+
+class ModelTrainingResult(BaseModel):
+    """One locked temporal baseline trained from the same Silver vector population."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    experiment_id: Literal["E1", "E4"]
+    feature_set: Literal["static", "pit"]
+    split_policy: Literal["temporal"]
+    feature_names: tuple[str, ...]
+    validation_threshold: float
+    validation_threshold_policy: Literal[
+        "max-tpr-within-fpr",
+        "zero-positive-fallback",
+    ]
+    test_pr_auc: float
+    test_roc_auc: float
+    test_recall_at_fixed_fpr: float
+    test_precision_at_fixed_fpr: float
+    test_observed_fpr: float
+    best_iteration: int
+    training_seconds: float
+    process_rss_before_bytes: int
+    process_rss_after_bytes: int
+    training_dataset_checksum: str
+    feature_importance_gain: dict[str, float]
+    mlflow_run_id: str
+    model_uri: str
+
+
+class SilverTrainingManifest(BaseModel):
+    """Reproducible E1/E4 evidence tied to exact PaySim Silver Delta versions."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: Literal["completed"]
+    pipeline_version: str
+    run_id: str
+    created_at: datetime
+    application_lakehouse_manifest_path: str
+    application_lakehouse_code_commit: str
+    dataset_snapshot_id: str
+    raw_file_sha256: str
+    entity_definition_version: str
+    feature_definition_version: str
+    feature_contract_checksum: str
+    source_tables: tuple[DeltaTableSnapshot, ...]
+    train_end_step: int
+    validation_end_step: int
+    train_nonfraud_sample_per_type: int
+    training_sampling_policy: str
+    vector_rows: int
+    vector_fraud_rows: int
+    vector_checksum: str
+    future_read_violations: int
+    partitions: tuple[TrainingPartitionProfile, ...]
+    model_family: Literal["lightgbm"]
+    model_parameters: dict[str, int | float | str | bool]
+    seed: int
+    fixed_fpr: float
+    code_commit: str
+    dependency_lock_sha256: str
+    dependency_versions: dict[str, str]
+    mlflow_tracking_uri: str
+    mlflow_parent_run_id: str
+    claim_boundary: tuple[str, ...]
+    experiments: tuple[ModelTrainingResult, ...]

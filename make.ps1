@@ -14,6 +14,7 @@ param(
     [int]$JupyterPort = 8888,
     [string]$Dataset = "sample",
     [int]$ModelNonfraudSample = 5000,
+    [int]$TrainNonfraudSamplePerType = 100000,
     [int]$ModelSeed = 20260727,
     [double]$ModelFixedFpr = 0.01
 )
@@ -96,6 +97,16 @@ switch ($Target) {
             $ModelFixedFpr.ToString([System.Globalization.CultureInfo]::InvariantCulture)
         )
     }
+    "train" {
+        Invoke-Checked "uv" @(
+            "run", "--group", "training", "pit", "model", "train",
+            "--dataset", "paysim",
+            "--train-nonfraud-sample-per-type", "$TrainNonfraudSamplePerType",
+            "--seed", "$ModelSeed",
+            "--fixed-fpr",
+            $ModelFixedFpr.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+        )
+    }
     "test" {
         Invoke-Checked "uv" @("run", "pit", "data", "sample")
         Invoke-Checked "uv" @("run", "pytest", "-q")
@@ -149,6 +160,7 @@ switch ($Target) {
             @("test-lakehouse", "run Delta snapshot and time-travel tests"),
             @("test-notebooks", "execute Sprint 1 notebooks in memory"),
             @("model-spike", "run the PaySim LightGBM E1-E4 candidate matrix"),
+            @("train", "train locked E1/E4 models from exact Silver versions"),
             @("test", "run all tests"),
             @("lint", "check source and notebooks"),
             @("format", "apply source formatting"),

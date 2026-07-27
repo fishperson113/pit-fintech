@@ -6,10 +6,10 @@ project is a paper-inspired adaptation for one CPU machine; it does not claim to
 the FeathrPO/Spark speedups from the source paper.
 
 The repository is intentionally milestone-driven. The current implementation establishes
-the Sprint 1 temporal contract, PaySim feasibility evidence, and a standalone LightGBM
-candidate-spike path. Redis/MLflow infrastructure is wired for the next vertical slice, while
-Feast, Gold backfill, promoted training, serving, replay, and cloud remain explicitly planned
-rather than represented by placeholder commands.
+the Sprint 1 temporal contract, PaySim feasibility evidence, a standalone LightGBM candidate
+spike, and an exact-Silver E1/E4 training baseline. Redis/MLflow infrastructure is wired for the
+next vertical slice, while Feast, Gold backfill, promotion, serving, replay, and cloud remain
+explicitly planned rather than represented by placeholder commands.
 
 ## Quick start
 
@@ -100,6 +100,32 @@ The spike uses a deterministic diagnostic cohort that oversamples fraud. Its met
 static, leaky and PIT variants within the pinned cohort; they are not production-prevalence
 model-quality claims and cannot promote a model.
 
+### Run the locked Silver training baseline
+
+M019 reads the exact `silver.paysim_transactions` and `silver.paysim_labels` versions in the
+latest application-lakehouse manifest. It trains E1 request-only and E4 strict-PIT baselines
+with identical temporal splits and model settings:
+
+```powershell
+.\make.ps1 train
+```
+
+Validation and test retain natural PaySim prevalence. Only train negatives are deterministically
+bounded per transaction type for CPU/RAM feasibility. The command refuses dirty code or a
+lakehouse built from a different commit.
+
+Notebook `05_silver_training_baseline.ipynb` calls the same reusable pipeline and explains how
+to read lineage, split health, E1/E4 metrics and feature importance. For an intentional clean
+notebook run:
+
+```powershell
+$env:PIT_NOTEBOOK_RUN_TRAINING = "1"
+.\make.ps1 lab-training
+```
+
+Keep the notebook file unchanged; enabling training by environment variable preserves clean Git
+lineage. See the [M019 reading guide](docs/reports/paysim-silver-training-baseline.md).
+
 ## Implemented command contract
 
 | Command | Outcome |
@@ -119,6 +145,7 @@ model-quality claims and cannot promote a model.
 | `test-lakehouse` | Verify sample/PaySim-fixture schema, quality, rerun, isolation, and time travel |
 | `test-notebooks` | Execute all Sprint 1 notebooks in memory without storing outputs |
 | `model-spike` | Run the standalone PaySim LightGBM E1–E4 candidate matrix with local MLflow |
+| `train` | Train locked E1/E4 baselines from exact PaySim Silver Delta versions |
 | `lint`, `test`, `check` | Run the same fast quality lane locally and in CI |
 | `changelog-check` | Ensure staged implementation changes update milestone audit logs |
 | `up-core`, `status`, `logs`, `down` | Operate Redis and MLflow without deleting volumes |

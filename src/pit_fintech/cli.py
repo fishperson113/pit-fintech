@@ -410,6 +410,128 @@ def model_spike(
     )
 
 
+@model_app.command("train")
+def model_train(
+    dataset: Annotated[str, typer.Option(help="Application dataset to train")] = "paysim",
+    lakehouse_manifest: Annotated[
+        Path | None,
+        typer.Option(
+            help="Exact application lakehouse manifest; default is the latest PaySim manifest"
+        ),
+    ] = None,
+    train_nonfraud_sample_per_type: Annotated[
+        int,
+        typer.Option(
+            min=1,
+            help="Maximum deterministic train non-fraud rows per transaction type",
+        ),
+    ] = 100_000,
+    seed: Annotated[
+        int,
+        typer.Option(help="Deterministic training and train-sampling seed"),
+    ] = 20_260_727,
+    fixed_fpr: Annotated[
+        float,
+        typer.Option(min=0.000001, max=0.999999, help="Validation FPR used to choose threshold"),
+    ] = 0.01,
+    tracking_uri: Annotated[
+        str | None,
+        typer.Option(help="Optional MLflow URI; default is local SQLite under artifacts"),
+    ] = None,
+    allow_dirty: Annotated[
+        bool,
+        typer.Option(
+            help="Allow diagnostic training from dirty/mismatched code lineage; never promotable"
+        ),
+    ] = False,
+) -> None:
+    """Train the locked E1/E4 baseline from exact PaySim Silver Delta versions."""
+
+    if dataset != "paysim":
+        console.print("[red]Only the PaySim Silver training baseline is implemented.[/]")
+        raise typer.Exit(code=2)
+
+    from pit_fintech.models.paysim_training import (
+        manifest_summary_rows,
+        run_paysim_silver_training,
+    )
+
+    project_root = resolve_project_root(Path.cwd())
+    settings = get_settings()
+    artifact_root = settings.artifact_root
+    if not artifact_root.is_absolute():
+        artifact_root = project_root / artifact_root
+    manifest_path = lakehouse_manifest
+    if manifest_path is None:
+        manifest_path = find_latest_paysim_lakehouse_manifest(artifact_root)
+    elif not manifest_path.is_absolute():
+        manifest_path = project_root / manifest_path
+    if manifest_path is None or not manifest_path.is_file():
+        console.print(
+            "[yellow]No PaySim application lakehouse manifest. "
+            "Run build-lakehouse --dataset paysim first.[/]"
+        )
+        raise typer.Exit(code=2)
+
+    manifest, output_path = run_paysim_silver_training(
+        manifest_path,
+        project_root=project_root,
+        artifact_root=artifact_root,
+        train_nonfraud_sample_per_type=train_nonfraud_sample_per_type,
+        seed=seed,
+        fixed_fpr=fixed_fpr,
+        tracking_uri=tracking_uri,
+        allow_dirty=allow_dirty,
+    )
+
+    partition_table = Table(title="Chronological training population")
+    partition_table.add_column("Split")
+    partition_table.add_column("Steps")
+    partition_table.add_column("Rows", justify="right")
+    partition_table.add_column("Fraud", justify="right")
+    partition_table.add_column("Fraud rate", justify="right")
+    partition_table.add_column("Prevalence")
+    for partition in manifest.partitions:
+        partition_table.add_row(
+            partition.name,
+            f"{partition.step_min}-{partition.step_max}",
+            f"{partition.rows:,}",
+            f"{partition.fraud_rows:,}",
+            f"{partition.fraud_rate:.6f}",
+            "natural" if partition.natural_prevalence else "train-sampled",
+        )
+    console.print(partition_table)
+
+    result_table = Table(title="PaySim Silver LightGBM baseline")
+    result_table.add_column("ID")
+    result_table.add_column("Features")
+    result_table.add_column("PR-AUC", justify="right")
+    result_table.add_column("ROC-AUC", justify="right")
+    result_table.add_column("Recall@FPR", justify="right")
+    result_table.add_column("Precision@FPR", justify="right")
+    result_table.add_column("Observed FPR", justify="right")
+    for row in manifest_summary_rows(manifest):
+        result_table.add_row(
+            str(row["experiment"]),
+            str(row["features"]),
+            f"{row['test_pr_auc']:.6f}",
+            f"{row['test_roc_auc']:.6f}",
+            f"{row['recall_at_fixed_fpr']:.6f}",
+            f"{row['precision_at_fixed_fpr']:.6f}",
+            f"{row['observed_fpr']:.6f}",
+        )
+    console.print(result_table)
+    versions = ", ".join(
+        f"{snapshot.layer}.{snapshot.table}=v{snapshot.version}"
+        for snapshot in manifest.source_tables
+    )
+    console.print(f"Silver versions: [cyan]{versions}[/]")
+    console.print(f"vector checksum: [cyan]{manifest.vector_checksum}[/]")
+    console.print(f"future-read violations: [green]{manifest.future_read_violations}[/]")
+    console.print(f"MLflow parent run: [cyan]{manifest.mlflow_parent_run_id}[/]")
+    console.print(f"manifest: {output_path}")
+
+
 @notebooks_app.command("verify")
 def notebooks_verify(
     project_root: Annotated[Path, typer.Option(help="Repository root containing notebooks")] = Path(

@@ -24,6 +24,13 @@ Project kéo dài 6 tuần, solo, gồm 3 sprint. Cloud deployment và TypeScrip
   `raw CSV -> bronze.paysim_transactions -> silver.paysim_transactions +
   silver.paysim_labels`; full PaySim build đã verified với ba Delta v0 table, mỗi table
   6.362.620 dòng, 8/8 gate pass, 56,29 giây và 31 partition. Artifact ghi đúng dirty boundary.
+- M019 đã implement nhưng chưa runtime-verify training path
+  `exact Silver Delta -> strict PIT vectors -> E1/E4 LightGBM -> MLflow + manifest`.
+  Validation/test giữ natural prevalence; train chỉ downsample non-fraud có seed. Notebook 05
+  chỉ gọi logic trong `src/` và mặc định review-only.
+- User đã verify M019 implementation gates: unit 34/34, exact-Silver integration 4/4 và
+  notebooks 01–05 đều pass với exit `0`. Full clean lakehouse rebuild và E1/E4 training chưa
+  chạy, nên M019 chưa được đánh dấu verified toàn bộ.
 - Notebook chỉ là EDA/experiment surface. Correctness, model và lakehouse logic nằm trong `src/`
   và `tests/`.
 - Redis/MLflow Compose mới là service boundary; Feast, Gold, backfill, materialization, serving,
@@ -130,6 +137,17 @@ E1–E4 trên cohort deterministic đã oversample fraud và log vào local SQLi
 artifact directory tách riêng. Đây là evidence để quyết định model/FeatureSpec, không phải final
 baseline, production metric hoặc model được phép promotion.
 
+M019 triển khai clean baseline riêng qua `train`/notebook 05:
+
+- đọc exact versions của `silver.paysim_transactions` và `silver.paysim_labels`;
+- chỉ chạy E1 static/temporal và E4 PIT/temporal;
+- train non-fraud có thể downsample deterministic theo transaction type;
+- validation/test luôn giữ natural prevalence;
+- yêu cầu Git commit của trainer và application lakehouse giống nhau và không dirty;
+- log FeatureSpec/Delta/vector/code/lock lineage vào MLflow và manifest;
+- hiện chỉ ở trạng thái implemented; user chưa chạy fixture gates, clean lakehouse rebuild hoặc
+  full-data training.
+
 FeatureSpec PaySim đã khóa ngày 2026-07-27 qua ADR-003:
 
 - contract `paysim-fraud-recipient-v1`, service `paysim-fraud-scoring-v1`;
@@ -154,7 +172,7 @@ FeatureSpec PaySim đã khóa ngày 2026-07-27 qua ADR-003:
 | Feature contract | Feast ở vai trò registry/retrieval/materialization mỏng; custom PIT oracle vẫn là correctness source of truth |
 | Online store | Local Redis; Upstash là hosted option |
 | Validation | Pandera + custom temporal assertions + pytest |
-| Model | TBD sau PaySim EDA; LightGBM là candidate baseline |
+| Model | LightGBM fixed CPU baseline cho M019; không deep tuning, promotion chỉ sau Sprint 2 gates |
 | Tracking/registry | MLflow local với alias `candidate`, `champion`, `previous` |
 | Serving | FastAPI + versioned `FeatureProvider` boundary |
 | Workflow | Python CLI + Makefile |
@@ -308,7 +326,7 @@ doctor | bootstrap | lab | data-sample | data | profile | build-lakehouse
 test-temporal | features | backfill | time-travel-check | materialize | train
 promote | rollback | serve | replay | test-e2e | benchmark | report
 deploy-cloud | export-onnx | serve-ts | benchmark-serving  # optional
-model-spike | lab-training  # Sprint 1 exploratory commands, not promotion path
+model-spike | train | lab-training  # Sprint 1 model commands, not promotion path
 ```
 
 ## 11. Scope guards

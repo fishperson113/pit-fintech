@@ -1,5 +1,5 @@
-"""Exploratory and production model workflows.
+"""Exploratory and contract-gated model workflows.
 
-Sprint 1 contains only the PaySim candidate spike. The promoted training pipeline remains a
-separate, feature-contract-gated deliverable.
+M016 keeps the raw-data candidate spike separate from M019's exact-Silver E1/E4 baseline.
+Promotion remains a Sprint 2 concern after parity and deployment-version gates exist.
 """

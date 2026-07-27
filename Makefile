@@ -8,6 +8,7 @@ DATASET ?= sample
 MODEL_NONFRAUD_SAMPLE ?= 5000
 MODEL_SEED ?= 20260727
 MODEL_FIXED_FPR ?= 0.01
+TRAIN_NONFRAUD_PER_TYPE ?= 100000
 
 help: ## Show implemented targets and their purpose
 	@awk 'BEGIN {FS = ":.*?## "}; /^[a-zA-Z0-9_.-]+:.*?## / {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -64,6 +65,12 @@ model-spike: ## Run the standalone PaySim LightGBM E1-E4 candidate matrix
 		--seed $(MODEL_SEED) \
 		--fixed-fpr $(MODEL_FIXED_FPR)
 
+train: ## Train locked E1/E4 baselines from exact PaySim Silver Delta versions
+	uv run --group training pit model train --dataset paysim \
+		--train-nonfraud-sample-per-type $(TRAIN_NONFRAUD_PER_TYPE) \
+		--seed $(MODEL_SEED) \
+		--fixed-fpr $(MODEL_FIXED_FPR)
+
 test: data-sample ## Run the complete local test suite
 	uv run pytest -q
 
@@ -95,4 +102,4 @@ logs: ## Follow core service logs
 down: ## Stop services without deleting data volumes
 	docker compose down
 
-.PHONY: help bootstrap doctor lab lab-training lab-container data-sample data-snapshot profile build-lakehouse lakehouse-history features test-temporal test-unit test-lakehouse test-notebooks model-spike test lint format check changelog-check lock up-core status logs down
+.PHONY: help bootstrap doctor lab lab-training lab-container data-sample data-snapshot profile build-lakehouse lakehouse-history features test-temporal test-unit test-lakehouse test-notebooks model-spike train test lint format check changelog-check lock up-core status logs down

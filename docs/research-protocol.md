@@ -62,3 +62,24 @@ The Silver transaction table excludes labels, policy output and balance fields. 
 manifest binds exact Delta versions to the raw snapshot, entity/feature versions, canonical
 FeatureSpec checksum, code state, quality-gate observations and local resource evidence. Fixture
 and full-data execution remain user-run gates; no M018 runtime result is predeclared.
+
+## Implemented Silver baseline protocol
+
+M019 implements, but has not yet runtime-verified, the clean Sprint 1 model baseline:
+
+- sources are exact manifest-recorded versions of `silver.paysim_transactions` and
+  `silver.paysim_labels`;
+- E1 and E4 both use chronological steps `1–520 / 521–631 / 632–743`;
+- E1 uses the frozen three request-time fields;
+- E4 uses all 12 frozen strict-PIT fields;
+- both use the same deterministic CPU-only LightGBM configuration and seed;
+- train retains all fraud and at most 100,000 deterministic non-fraud rows per transaction type;
+- validation and test retain all eligible rows at natural prevalence;
+- threshold selection uses validation only at fixed FPR `0.01`;
+- test PR-AUC is primary; ROC-AUC, recall, precision and observed FPR are reported together;
+- exact Delta versions/checksums, FeatureSpec checksum, vector checksum, code/lock identity,
+  MLflow runs and model URIs are required evidence;
+- clean baseline publication rejects dirty or mismatched trainer/lakehouse Git lineage.
+
+Notebook 05 is a thin caller and interpretation surface. The non-notebook `train` command is the
+acceptance path. No M019 metric or runtime result is predeclared.

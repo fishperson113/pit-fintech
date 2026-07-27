@@ -1,5 +1,40 @@
 # Project changelog
 
+## 2026-07-27 — M019: Silver-based LightGBM training baseline
+
+- Started the final Sprint 1 baseline from exact Silver Delta transaction and label versions.
+- Fixed the experiment boundary to E1 static/temporal versus E4 PIT/temporal with one shared,
+  deterministic CPU-only LightGBM configuration.
+- Validation and test keep natural prevalence; only train negatives may be deterministically
+  downsampled, with the policy captured in the training manifest.
+- The reusable implementation lives in `src/`; notebook 05 only calls and explains that
+  implementation.
+- Implemented exact manifest-recorded Silver time travel, schema/row/identity/contract gates,
+  strict-step 1h/24h/168h vectors and zero-future-read publication blocking.
+- Implemented deterministic train-only negative sampling while leaving all validation/test rows
+  at natural prevalence.
+- Implemented fixed-config E1/E4 LightGBM training with validation-only fixed-FPR thresholding,
+  pandas feature-name parity, MLflow `skops` models, feature importance and a validated lineage
+  manifest.
+- Added `pit model train`, Make/PowerShell `train`, fixture/unit contracts and notebook 05 with a
+  cell-by-cell reading guide.
+- Notebook 05 is review-only unless `PIT_NOTEBOOK_RUN_TRAINING=1`; notebook 04's training flag
+  was restored to false. The notebook verifier forcibly disables that environment flag for its
+  child kernels and restores it afterward.
+- Clean training rejects dirty or mismatched trainer/lakehouse commits. The verified v0
+  lakehouse is therefore feasibility evidence; it must be rebuilt once after the M019 commit.
+- User-run unit verification passed 34/34 in 5.72 seconds; exact-Silver fixture integration
+  passed 4/4 in 3.59 seconds; both returned exit `0`.
+- User-run notebook verification passed notebooks 01–05 with exit `0`. Windows ZMQ/TCP messages
+  were non-blocking local-kernel warnings.
+- The pasted full v0 lakehouse output is retained as previously verified M018 feasibility
+  evidence, not misclassified as the required post-M019 clean rebuild.
+- The first commit attempt passed Ruff check and all safety/governance guards; Ruff format
+  reformatted notebook 05, the training module and two test files, correctly stopping the commit
+  for review and restaging.
+- Status: implemented. Fixture and notebook gates pass; clean full E1/E4 training remains.
+- Detail: [M019 log](milestones/M019-silver-training-baseline.md).
+
 ## 2026-07-27 — M018: PaySim application Bronze/Silver lakehouse
 
 - Started the Sprint 1 application path from the immutable PaySim CSV snapshot to versioned

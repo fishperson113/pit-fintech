@@ -25,6 +25,10 @@ from pit_fintech.features.paysim_specs import (
     PAYSIM_LABEL_SOURCE,
     paysim_feature_contract_checksum,
 )
+from pit_fintech.models.paysim_training import (
+    TRAINING_VECTOR_COLUMNS,
+    build_silver_training_vectors,
+)
 
 pytestmark = pytest.mark.integration
 FIXTURE_PATH = Path(__file__).resolve().parents[1] / "fixtures" / "paysim_schema_sample.csv"
@@ -167,3 +171,50 @@ def test_paysim_quality_failure_blocks_delta_publish(tmp_path: Path) -> None:
         )
 
     assert not (data_root / "lakehouse").exists()
+
+
+def test_exact_silver_versions_build_strict_pit_training_vectors(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    csv_path = _copy_fixture(project_root)
+    manifest, manifest_path = build_paysim_lakehouse(
+        csv_path,
+        project_root=project_root,
+        data_root=project_root / "data",
+        artifact_root=project_root / "artifacts",
+        batch_size=4,
+    )
+
+    vectors, sources = build_silver_training_vectors(
+        manifest_path,
+        project_root=project_root,
+        train_nonfraud_sample_per_type=100,
+        seed=20_260_727,
+        train_end_step=2,
+        validation_end_step=4,
+    )
+
+    assert sources.manifest == manifest
+    assert sources.transactions_snapshot.version == 0
+    assert sources.labels_snapshot.version == 0
+    assert tuple(vectors.table.column_names) == TRAINING_VECTOR_COLUMNS
+    assert vectors.table.num_rows == 7
+    assert vectors.future_read_violations == 0
+    assert len(vectors.checksum) == 64
+    assert [(item.name, item.rows, item.natural_prevalence) for item in vectors.partitions] == [
+        ("train", 2, False),
+        ("validation", 3, True),
+        ("test", 2, True),
+    ]
+
+    rows = vectors.table.to_pylist()
+    step_five = next(row for row in rows if row["step"] == 5)
+    assert step_five["pit_prior_count_168h"] == 1
+    assert step_five["pit_prior_amount_168h"] == 5.0
+    assert step_five["recipient_has_history_168h"] == 1
+    assert step_five["max_pit_source_step_168h"] == 4
+
+    step_six = next(row for row in rows if row["step"] == 6)
+    assert step_six["pit_prior_count_168h"] == 0
+    assert step_six["recipient_has_history_168h"] == 0
+    assert step_six["max_pit_source_step_168h"] is None
