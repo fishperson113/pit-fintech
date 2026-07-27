@@ -1,5 +1,16 @@
 # Project changelog
 
+## 2026-07-27 — M022: Sprint 1 report deck and knowledge review
+
+- Added a seven-slide HTML Sprint 1 report using the proposal deck's visual system.
+- Structured the narrative around verified outcome, PaySim data decision, frozen FeatureSpec,
+  temporal oracle evidence, application path, honest E1/E4 result and Sprint 2 handoff.
+- Added a closed-note ten-question knowledge review with D0–D4 scoring, hard-invariant flags and
+  explicit pass criteria.
+- Static structure and evidence reconciliation pass; direct `file://` browser rendering was
+  policy-blocked, so visual confirmation and the interactive user interview remain.
+- Detail: [M022 log](milestones/M022-sprint-1-report-and-knowledge-review.md).
+
 ## 2026-07-27 — M021: Component-scoped lineage guard
 
 - Replaced repository-wide trainer/lakehouse commit equality with exact source-contract checks
