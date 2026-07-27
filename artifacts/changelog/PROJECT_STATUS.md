@@ -11,8 +11,8 @@ Last updated: 2026-07-27. Status words are strict:
 | Artifact / guard | Status | Evidence |
 |---|---|---|
 | Cumulative changelog | verified | `artifacts/changelog/CHANGELOG.md` |
-| Detailed milestone logs | verified | M001–M015 logs under `artifacts/changelog/milestones/` |
-| Milestone pre-commit guard | verified | four unit cases pass; installed at `.git/hooks/pre-commit` |
+| Detailed milestone logs | verified | M001–M018 logs under `artifacts/changelog/milestones/` |
+| Milestone pre-commit guard | verified | installed hook blocked the first M016–M018 commit after Ruff auto-fixes while milestone, large-file, conflict, TOML/YAML and whitespace guards passed; changes were restaged for retry |
 | Human-readable reports location | verified | reports moved to `docs/reports/` |
 | Four-slide PIT proposal deck | verified | slide 2 states the full PIT-Correct Feature Platform for Fraud Detection name, objective, two execution paths (offline training and online serving), the cross-cutting OTel/Prometheus/Grafana observability layer, and four scope anchors; slide 3 embeds the user-authored architecture image; slide 4 now focuses only on the six-week engineering/MLOps outcome and evidence-backed handoff; 4 slides render at 1440x810 without overflow/errors; navigation passes |
 | Editable Draw.io target architecture | verified | connected high-level v3 opens in app.diagrams.net; 42 elements, 13 action-labeled edges, explicit Delta offline/Redis online/Feast bridge roles, replaceable logo placeholders, no XML/reference defects |
@@ -23,6 +23,9 @@ Last updated: 2026-07-27. Status words are strict:
 | M013 proposal deck title consistency | verified | Slide 1 and slide 2 now use the exact same project name: `PIT-Correct Feature Platform for Fraud Detection` |
 | M014 PaySim application decision | verified | ADR-002 accepts PaySim as the primary engineering workload with `AMBER_CORRECTNESS_ONLY`; IEEE-CIS remains an optional thesis/model-utility spike |
 | M015 destination-centric leakage prototype | verified | user-run `test-temporal` passed 23/23 in 2.11s with exit code `0`; user-run `test-notebooks` passed all three notebooks, and notebook 03 saved 8 sequential code-cell executions with 0 cutoff violations |
+| M016 standalone LightGBM candidate spike | verified | user-run `model-spike` completed E1–E4 with exit `0`; parent `0407debd24294c01a1d040f6aa33cc95`, snapshot `paysim1:16910f90577b0d98`, 38,213-row cohort, validated manifest/checksums and four logged `skops` models; candidate metrics retain sampled-cohort and dirty-commit boundaries |
+| M017 PaySim FeatureSpec v1 | verified | user-run `features` passed with checksum `5b4e2b6db613f28dd6da209c50a5c3beb82969247e0248d39007bea9c9c26cf4`; temporal 23/23 and notebooks 01–04 passed; after replacing the presentation-width-sensitive CLI assertion, the user confirmed the corrected unit suite passed |
+| M018 PaySim application lakehouse | verified | full snapshot `paysim1:16910f90577b0d98` built into three Delta v0 tables of 6,362,620 rows; 8/8 gates pass; 56.29s, 113,030 rows/s, 649,248,646 active Delta bytes, 31 partitions; fixture 3/3 and unit 30/30 pass; artifact correctly records dirty commit boundary |
 | Ten-minute PIT meetup speaker script | verified | `docs/reports/pit-fintech-meetup-10min-script.md`; compressed four-slide talk track targets 9:20 plus buffer, keeps slide 3 as the technical core, and separates six concise mentor Q&A prompts from the spoken script; four slide headings, four closing claims, six Q&A prompts and required status/architecture claims pass the content scan; `git diff --check` passes |
 | Vietnamese PIT terminology catalog | verified | `docs/reports/catalog.md`; required-term scan, reader-aid structure and `git diff --check` pass |
 
@@ -35,15 +38,18 @@ Last updated: 2026-07-27. Status words are strict:
 | Read-only environment doctor | verified | `pit doctor`; only expected Delta-extension/Kaggle/Git warnings |
 | Synthetic temporal source and hand-calculated vectors | verified | current generated snapshot `synthetic-temporal-v1:1ef70772400a1d8e` |
 | Independent pre-decision PIT oracle | verified | 0 future reads across 12 temporal tests |
-| Temporal/unit test suite | verified | user-run `.\make.ps1 test-temporal`: 23 passed in 2.11s, exit code `0`, with the deprecated DuckDB warning removed |
+| Temporal oracle test suite | verified | latest user-run `.\make.ps1 test-temporal`: 23 passed in 1.97s, exit code `0`; M017's corrected unit-suite rerun is tracked separately |
 | CI fixture lane | implemented | `.github/workflows/ci.yml` |
-| JupyterLab and three Sprint 1 notebooks | verified | user-run `.\make.ps1 test-notebooks`: PASS for notebooks 01–03 and exit code `0`; notebook 03 full-data output has 8 sequential code cells, no errors and zero PIT cutoff violations for 1h/24h/168h |
+| JupyterLab and four Sprint 1 notebooks | verified | latest user-run `.\make.ps1 test-notebooks`: PASS for notebooks 01–04 and exit code `0`; Windows ZMQ/TCP messages were non-blocking local-kernel warnings |
+| LightGBM candidate notebook 04 | verified | review-first surface defaults to `RUN_TRAINING=False`, has no saved warning/training output, explains E1–E4 and exposes manifest lineage/resource evidence; included in the four-notebook passing run |
 | Redis + MLflow local service boundary | implemented | Compose config passes; image build hit host timeout and remains unverified |
 | PaySim access/checksum and EDA | verified | full snapshot/profile, cross-role analysis and destination gate outputs are verified; `CASH_OUT` is AMBER with 7-day warm fraud counts 2,058/186/101 across train/validation/test, `TRANSFER` is RED with 4/0/0, yielding accepted status `AMBER_CORRECTNESS_ONLY` |
 | PaySim raw snapshot command | verified | user-run `.\make.ps1 data-snapshot` froze `paysim1:16910f90577b0d98`, 493,534,783 bytes, 6,362,620 rows and steps 1–743 in `artifacts/datasets/paysim1/16910f90577b0d98/snapshot-manifest.json` |
 | Dataset/entity ADR | verified | `docs/adr/002-paysim-dataset-entity-scope.md`; PaySim retained for engineering/PIT evidence, IEEE-CIS optional only if thesis/model-utility scope expands |
+| PaySim FeatureSpec v1 | verified | frozen 12-field contract, canonical checksum, temporal suite and notebooks are verified; the brittle Rich-table assertion was replaced by stable `feature_count: 12`, and the user confirmed the corrected unit suite passed |
+| PaySim application Bronze/Silver path | verified | full Bronze transactions, label-free Silver transactions and separate Silver labels published at exact Delta v0 with immutable/latest manifests and FeatureSpec checksum linkage |
 | Bronze/Silver Delta sample | verified | 8 Bronze rows, 7 Silver rows, separated label table; 1 integration/time-travel test passes |
-| Model-family gate and static/PIT baseline | planned | lock after PaySim EDA; LightGBM is a candidate only |
+| Model-family gate and static/PIT baseline | implemented | pre-contract LightGBM E1–E4 execution is verified and FeatureSpec v1 is implemented from E4-safe inputs; LightGBM remains the baseline candidate until contract verification and the clean Silver-based temporal rerun |
 
 ## Sprint 2
 

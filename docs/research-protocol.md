@@ -17,3 +17,48 @@ The full protocol is frozen before final experiments. Current pre-registered rul
 
 The complete E1–E5/P1–P5 matrix is maintained in the source implementation guides under
 `docs/feature-store/` and will become `experiments/manifest.yaml` in Sprint 3.
+
+## Verified LightGBM candidate spike and FeatureSpec decision
+
+Sprint 1 completed one explicitly exploratory model-family spike with these locked rules:
+
+- Model family: LightGBM candidate with one fixed CPU configuration and seed `20260727`.
+- Cohort: every customer-destination fraud `CASH_OUT`/`TRANSFER` row plus at most 5,000
+  deterministic non-fraud rows per temporal split and transaction type.
+- Split boundaries: train `1–520`, validation `521–631`, test `632–743`.
+- E1: static request features with temporal split.
+- E2: deliberately leaky controls with random split.
+- E3: strict-PIT recipient features with random split.
+- E4: strict-PIT recipient features with temporal split.
+- Threshold: chosen on validation at fixed FPR `0.01`; test is not used for threshold selection.
+- Primary comparison metric: PR-AUC; ROC-AUC and recall at the fixed-FPR threshold are secondary.
+- Tracking: one MLflow parent run, four child runs, and one machine-readable local manifest.
+
+Because the cohort samples non-fraud rows, absolute PR-AUC is not a production-prevalence
+estimate. E2 is never deployable. The verified E4 evidence informed ADR-003 and the frozen
+`paysim-fraud-recipient-v1` FeatureSpec. E4 cannot become a champion until the Silver-based clean
+temporal baseline and Sprint 2 promotion gates exist.
+
+The FeatureSpec decision freezes:
+
+- three request-time fields and nine strict-PIT destination-history fields;
+- 1h, 24h and 168h windows with `prior_step < current_step`;
+- label/policy/balance exclusions;
+- ordered model-vector semantics, cold defaults and `score_then_update`;
+- a canonical contract checksum that must be carried by downstream artifacts.
+
+## PaySim application source path
+
+M018 implements the source tables named by ADR-003:
+
+```text
+raw PaySim snapshot
+  -> bronze.paysim_transactions
+  -> silver.paysim_transactions
+  -> silver.paysim_labels
+```
+
+The Silver transaction table excludes labels, policy output and balance fields. The application
+manifest binds exact Delta versions to the raw snapshot, entity/feature versions, canonical
+FeatureSpec checksum, code state, quality-gate observations and local resource evidence. Fixture
+and full-data execution remain user-run gates; no M018 runtime result is predeclared.

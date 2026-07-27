@@ -16,13 +16,22 @@ Project kéo dài 6 tuần, solo, gồm 3 sprint. Cloud deployment và TypeScrip
 
 ## 2. Trạng thái bàn giao
 
-- Proposal và implementation guide đã được thiết kế chi tiết trong repo cũ.
-- Chưa có implementation cho project PIT: chưa có dataset snapshot, code pipeline, Makefile, tests, Compose, model artifact hoặc experiment report.
-- Project mới phải được xem là **greenfield implementation**.
-- Không migrate source code VLM/FinChart cũ sang project này; chỉ copy tài liệu liên quan nếu cần.
-- Sprint 1 được phép dùng JupyterLab để khám phá, nhưng correctness logic phải được extract vào `src/` và `tests/`.
+- M001–M017 đã triển khai foundation, synthetic temporal oracle, PaySim EDA/ADR, destination
+  PIT prototype, LightGBM candidate spike và FeatureSpec
+  `paysim-fraud-recipient-v1`; các milestone này đã được user verify.
+- Dataset snapshot đang khóa là `paysim1:16910f90577b0d98`, 6.362.620 dòng, step 1–743.
+- M018 đã implement application path
+  `raw CSV -> bronze.paysim_transactions -> silver.paysim_transactions +
+  silver.paysim_labels`; full PaySim build đã verified với ba Delta v0 table, mỗi table
+  6.362.620 dòng, 8/8 gate pass, 56,29 giây và 31 partition. Artifact ghi đúng dirty boundary.
+- Notebook chỉ là EDA/experiment surface. Correctness, model và lakehouse logic nằm trong `src/`
+  và `tests/`.
+- Redis/MLflow Compose mới là service boundary; Feast, Gold, backfill, materialization, serving,
+  replay parity và promotion vẫn thuộc Sprint 2.
+- Mọi command execution thuộc user; agent viết code, kiểm tra tĩnh và verify output do user gửi.
 
-Tài liệu nguồn trong workspace cũ: `C:/workspace/vlm-fintech/point-in-time-feature-store-proposal.md` và thư mục `C:/workspace/vlm-fintech/docs/feature-store/` (ba sprint guide cùng reference architecture comparison).
+Tài liệu triển khai authoritative nằm trong `docs/feature-store/`, ADR trong `docs/adr/`, report
+trong `docs/reports/` và audit trail trong `artifacts/changelog/`.
 
 ## 3. Câu hỏi nghiên cứu
 
@@ -115,6 +124,24 @@ Quyết định đã khóa ngày 2026-07-27 qua `docs/adr/002-paysim-dataset-ent
 - recipient history chủ yếu có ý nghĩa cho `CASH_OUT`; fraud `TRANSFER` phải hỗ trợ cold-start;
 - IEEE-CIS chỉ là optional viability spike nếu về sau mở rộng thesis/model-utility scope, không
   phải dataset thay thế trong MVP.
+
+Sprint 1 có một LightGBM candidate spike độc lập qua `model-spike`/notebook 04. Spike chạy
+E1–E4 trên cohort deterministic đã oversample fraud và log vào local SQLite-backed MLflow với
+artifact directory tách riêng. Đây là evidence để quyết định model/FeatureSpec, không phải final
+baseline, production metric hoặc model được phép promotion.
+
+FeatureSpec PaySim đã khóa ngày 2026-07-27 qua ADR-003:
+
+- contract `paysim-fraud-recipient-v1`, service `paysim-fraud-scoring-v1`;
+- entity `destination_entity_id`, definition `paysim-destination-customer-v1`;
+- scoring scope v1 là `CASH_OUT`/`TRANSFER` có destination kind `CUSTOMER`;
+- source `silver.paysim_transactions`, label source `silver.paysim_labels`;
+- vector 12 fields: 3 request-time + count/sum/history flag tại 1h, 24h, 168h;
+- strict `prior_step < current_step`; same-step bị loại khỏi model feature;
+- `source_row_number` chỉ là replay/tie-break, không cho phép đọc cùng step;
+- cấm label, policy output và bốn balance columns;
+- online bắt buộc `read -> score -> update`;
+- mọi thay đổi semantics/order/dtype/default phải bump version và backfill lại.
 
 ## 7. Stack đã chốt
 
@@ -281,6 +308,7 @@ doctor | bootstrap | lab | data-sample | data | profile | build-lakehouse
 test-temporal | features | backfill | time-travel-check | materialize | train
 promote | rollback | serve | replay | test-e2e | benchmark | report
 deploy-cloud | export-onnx | serve-ts | benchmark-serving  # optional
+model-spike | lab-training  # Sprint 1 exploratory commands, not promotion path
 ```
 
 ## 11. Scope guards

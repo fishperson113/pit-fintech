@@ -64,6 +64,54 @@ class LakehouseManifest(BaseModel):
     tables: tuple[DeltaTableSnapshot, ...]
 
 
+class DataQualityGateResult(BaseModel):
+    """One publish-blocking application-data assertion."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: str
+    status: Literal["pass"]
+    observed: int
+    expected: int
+
+
+class LakehouseBuildResources(BaseModel):
+    """Lightweight local feasibility evidence; RSS values are not sampled peaks."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    wall_seconds: float
+    raw_bytes: int
+    delta_parquet_bytes: int
+    rows_per_second: float
+    process_rss_before_bytes: int
+    process_rss_after_bytes: int
+    event_day_partitions: int
+    arrow_batch_size: int
+    target_file_size_bytes: int
+
+
+class ApplicationLakehouseManifest(BaseModel):
+    """Exact PaySim Bronze/Silver versions published for one raw snapshot."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: Literal["completed"]
+    pipeline_version: str
+    dataset: Literal["paysim1"]
+    dataset_snapshot_id: str
+    source_manifest_path: str
+    raw_file_sha256: str
+    source_rows: int
+    entity_definition_version: str
+    feature_definition_version: str
+    feature_contract_checksum: str
+    code_commit: str
+    resources: LakehouseBuildResources
+    quality_gates: tuple[DataQualityGateResult, ...]
+    tables: tuple[DeltaTableSnapshot, ...]
+
+
 class BackfillManifest(BaseModel):
     """Schema reserved for Sprint 2; no backfill state machine is claimed yet."""
 
@@ -79,3 +127,67 @@ class BackfillManifest(BaseModel):
     cutoff_end: datetime
     source_checksum: str
     output_checksum: str | None = None
+
+
+class ModelCandidateResult(BaseModel):
+    """One exploratory model result inside a pre-contract experiment matrix."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    experiment_id: Literal["E1", "E2", "E3", "E4"]
+    feature_set: Literal["static", "leaky", "pit"]
+    split_policy: Literal["random", "temporal"]
+    feature_names: tuple[str, ...]
+    train_rows: int
+    validation_rows: int
+    test_rows: int
+    train_fraud_rate: float
+    validation_fraud_rate: float
+    test_fraud_rate: float
+    validation_threshold: float
+    validation_threshold_policy: Literal[
+        "max-tpr-within-fpr",
+        "zero-positive-fallback",
+    ]
+    test_pr_auc: float
+    test_roc_auc: float
+    test_recall_at_fixed_fpr: float
+    test_precision_at_fixed_fpr: float
+    test_observed_fpr: float
+    best_iteration: int
+    training_seconds: float
+    process_rss_before_bytes: int
+    process_rss_after_bytes: int
+    training_dataset_checksum: str
+    mlflow_run_id: str
+    model_uri: str
+
+
+class ModelCandidateManifest(BaseModel):
+    """Machine-readable evidence for the standalone LightGBM candidate spike."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: Literal["completed"]
+    spike_version: str
+    run_id: str
+    created_at: datetime
+    dataset_snapshot_id: str
+    dataset_file_sha256: str
+    entity_definition_version: str
+    candidate_feature_version: str
+    model_family: Literal["lightgbm"]
+    seed: int
+    fixed_fpr: float
+    nonfraud_sample_per_group: int
+    cohort_rows: int
+    cohort_fraud_rows: int
+    candidate_table_checksum: str
+    cohort_sampling_policy: str
+    code_commit: str
+    dependency_lock_sha256: str
+    dependency_versions: dict[str, str]
+    mlflow_tracking_uri: str
+    mlflow_parent_run_id: str
+    claim_boundary: tuple[str, ...]
+    experiments: tuple[ModelCandidateResult, ...]

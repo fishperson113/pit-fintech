@@ -22,9 +22,9 @@ class Settings(BaseSettings):
     artifact_root: Path = Path("./artifacts")
     dataset: str = "sample"
     paysim_csv: Path | None = None
-    entity_definition_version: str = "entity-application-candidate-v0"
-    feature_definition_version: str = "fraud-history-v1"
-    feature_service_version: str = "fraud-scoring-v1"
+    entity_definition_version: str = "paysim-destination-customer-v1"
+    feature_definition_version: str = "paysim-fraud-recipient-v1"
+    feature_service_version: str = "paysim-fraud-scoring-v1"
     float_tolerance: float = Field(default=1e-6, gt=0)
     redis_url: str = "redis://localhost:6379/0"
     mlflow_tracking_uri: str = "http://localhost:5000"

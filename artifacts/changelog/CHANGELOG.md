@@ -1,5 +1,128 @@
 # Project changelog
 
+## 2026-07-27 — M018: PaySim application Bronze/Silver lakehouse
+
+- Started the Sprint 1 application path from the immutable PaySim CSV snapshot to versioned
+  Bronze transactions, label-free Silver transactions and separate Silver labels.
+- Fixed the implementation boundary to DuckDB/Arrow streaming, deterministic snapshot and row
+  lineage, synthetic-day partitioning, exact Delta versions and ADR-003 checksum linkage.
+- Kept the synthetic oracle builder independent and deferred multi-table atomic backfill to
+  Sprint 2.
+- Added eight publish-blocking source/schema/value gates and deterministic source-row lineage.
+- Added DuckDB ordered record-batch streaming into snapshot-scoped, synthetic-day-partitioned
+  Delta tables without constructing a full PyArrow table in Python.
+- Added an application manifest carrying raw/feature/code lineage, exact Delta versions,
+  schema/ordered-stream checksums, gate observations and lightweight resource evidence.
+- Rehashes the raw file after Delta writes and suppresses manifest publication if the source
+  changed during execution.
+- Added immutable per-version manifests plus an atomically replaced latest-manifest.
+- Wired `build-lakehouse` and `lakehouse-history` for PaySim through CLI, Make and PowerShell.
+- Added fixture integration contracts for schema, forbidden-field isolation, deterministic
+  rerun, version increment, old-version time travel, manifest history and publish-blocking bad
+  amounts.
+- Added the human-readable application-lakehouse report and refreshed the Sprint 1 gate/handoff.
+- User-run unit verification passed 30/30 in 3.55 seconds; fixture lakehouse verification passed
+  3/3 in 4.10 seconds, both with exit code `0`.
+- The fixture run exposed six non-blocking warnings from deprecated DuckDB
+  `fetch_record_batch()`. Migrated the streaming boundary to
+  `to_arrow_reader(batch_size)`.
+- Clean user rerun then passed all three integration tests in 3.35 seconds with exit code `0`
+  and no warnings. The fixture gate is verified; full-data execution remains pending.
+- Full user-run build passed the 23-test temporal prerequisite and published three Delta v0
+  tables, each containing all 6,362,620 PaySim rows, with 8/8 quality gates passing.
+- Recorded 56.29 seconds, 113,030 rows/s, 649,248,646 active Delta bytes, 31 partitions and
+  process RSS growth from 74,981,376 to 519,098,368 bytes.
+- Read back and validated the completed manifest, full schema/logical checksums, three Delta
+  roots and immutable v0 manifest. The recorded `115e98d...-dirty` boundary is accepted for
+  feasibility evidence but not a final clean baseline.
+- Status: verified. No runtime command was executed by the agent; all runtime evidence came from
+  the user's commands and persisted manifest.
+- During the authorized combined M016–M018 commit, pre-commit Ruff fixed four lint findings and
+  formatted nine Python/notebook files, correctly stopping the first attempt for review/restage;
+  all non-Ruff safety and milestone guards passed.
+- Detail: [M018 log](milestones/M018-paysim-application-lakehouse.md).
+
+## 2026-07-27 — M017: Freeze PaySim FeatureSpec v1
+
+- Added a separate PaySim application contract without mutating the synthetic
+  `fraud-history-v1` temporal-oracle contract.
+- Frozen `paysim-fraud-recipient-v1` and service `paysim-fraud-scoring-v1` for
+  `CASH_OUT`/`TRANSFER` rows with customer destinations.
+- Locked the ordered 12-field E4-safe vector: three request-time fields plus destination count,
+  amount sum and cold-start indicators at 1h, 24h and 168h.
+- Locked `prior_step < current_step`, same-step exclusion, `source_row_number` tie-break lineage
+  and `read -> score -> update`.
+- Excluded label, policy output, all balance fields and every E2 leaky control.
+- Added a validated cross-feature contract, canonical checksum, public feature-repository
+  exports, aligned application configuration and LightGBM feature-order reuse.
+- Added `pit features show`, `make features` and `.\make.ps1 features`, plus unit contracts for
+  identity, ordering, windows, forbidden inputs, checksum sensitivity and CLI output.
+- Added ADR-003 and a human-readable FeatureSpec report.
+- User-run `.\make.ps1 features` passed with 12 feature rows, contract version
+  `paysim-fraud-recipient-v1` and checksum
+  `5b4e2b6db613f28dd6da209c50a5c3beb82969247e0248d39007bea9c9c26cf4`.
+- User-run temporal verification passed 23/23 in 1.97 seconds, and notebook verification passed
+  notebooks 01–04 with exit code `0`. Kernel/ZMQ messages were non-blocking local warnings.
+- The first unit run had 29 passes and one failure in the CLI smoke test because Rich wrapped a
+  long feature name under `CliRunner` capture. Added stable `feature_count: 12` CLI metadata and
+  changed the smoke assertion to that scalar.
+- The user confirmed the corrected `.\make.ps1 test-unit` suite passed. Together with the
+  contract CLI, temporal and four-notebook results, this verifies M017. Exact unit count and
+  duration were not supplied and are intentionally not inferred.
+- Detail: [M017 log](milestones/M017-paysim-feature-contract-v1.md).
+
+## 2026-07-27 — M016: Standalone PaySim LightGBM candidate spike
+
+- Added a reusable, CPU-only PaySim LightGBM workflow for the predeclared E1–E4 matrix:
+  static/temporal, leaky/random, PIT/random and PIT/temporal.
+- Reused the verified destination-centric PIT computation and kept label, balances and the
+  existing policy output outside E1/E3/E4 model inputs.
+- Fixed the diagnostic cohort policy to all eligible fraud plus at most 5,000 deterministic
+  non-fraud rows per split/type; documented that oversampling invalidates production-prevalence
+  metric claims.
+- Added validation-threshold selection at fixed FPR, PR-AUC/ROC-AUC/recall/precision evidence,
+  deterministic LightGBM parameters and process time/RSS fields.
+- Added local SQLite-backed MLflow tracking with one parent and four child runs, a separate local
+  model-artifact directory, feature lists and a validated JSON manifest carrying
+  dataset/code/lock/dependency versions.
+- Added `pit model spike`, `model-spike`, `lab-training` and their PowerShell equivalents without
+  requiring Redis, Docker or a running MLflow server.
+- Added notebook 04 as a thin review/manual-execution surface; reusable logic remains in `src/`.
+- Added unit contracts for the experiment matrix, forbidden lineage, recipient candidate table
+  and manifest discovery/round-trip.
+- Recorded the first user runtime attempt, which stopped before training with a missing
+  `resolve_project_root` CLI import; added the import and a regression smoke test that exercises
+  command wiring through dataset discovery.
+- Recorded the second user runtime attempt, which reached MLflow initialization but exposed the
+  current MLflow rejection of legacy filesystem tracking stores. Replaced the standalone default
+  with `artifacts/mlflow/tracking.db` (SQLite) plus an explicit local artifact directory; no
+  environment opt-out or service container is required.
+- Recorded the third user runtime attempt, which initialized SQLite and began LightGBM but found
+  no finite positive-prediction threshold within the 1% validation FPR budget. Added a finite
+  zero-positive fallback with an explicit manifest/MLflow policy and a regression test; also
+  migrated validation data to LightGBM's installed `eval_X`/`eval_y` API.
+- Recorded the fourth user runtime attempt, which trained the first candidate but was rejected
+  at MLflow model serialization because `skops` requires explicit trust for third-party
+  LightGBM types. Kept pickle-free serialization and added a minimal three-type allowlist plus
+  a unit contract; no global or wildcard trust bypass was introduced.
+- User-run `.\make.ps1 model-spike` then completed E1–E4 with exit code `0`, parent run
+  `0407debd24294c01a1d040f6aa33cc95` and a validated manifest for 38,213 cohort rows / 8,213
+  fraud rows on snapshot `paysim1:16910f90577b0d98`.
+- Verified all four child run IDs and logged `skops` model directories. E4 PIT/temporal reached
+  PR-AUC `0.324524`, ROC-AUC `0.714972`, recall `0.202875` and observed test FPR `0.001500`;
+  these remain sampled-cohort candidate metrics rather than production-prevalence claims.
+- M016 standalone model-spike runtime and evidence contract are verified. FeatureSpec v1,
+  PaySim Bronze/Silver and the clean locked baseline remain Sprint 1 work.
+- Rewrote notebook 04 after a successful manual run had been saved with training enabled and
+  verbose non-blocking warnings. The checked-in notebook is now review-first, defaults to
+  `RUN_TRAINING=False`, contains no saved runtime output, explains the E1–E4 comparisons and
+  exposes manifest lineage/resource evidence. A subsequent user-run notebook verifier passed
+  notebooks 01–04 with exit code `0`.
+- Updated the research protocol, README and handoff rules. No model, notebook, test, formatter,
+  linter or pipeline command was executed by the agent during that rewrite; user-run model and
+  notebook evidence now keep M016 verified.
+- Detail: [M016 log](milestones/M016-lightgbm-candidate-spike.md).
+
 ## 2026-07-27 — M015: Destination-centric PaySim leakage prototype
 
 - Replaced notebook 03's sparse `nameOrig` comparison with ADR-002-aligned customer-destination

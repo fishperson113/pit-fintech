@@ -12,21 +12,18 @@ from typing import Final
 import duckdb
 import pyarrow as pa
 
-PAYSIM_RECIPIENT_FEATURE_VERSION: Final = "paysim-recipient-v1"
+from pit_fintech.features.paysim_specs import (
+    PAYSIM_FEATURE_DEFINITION_VERSION,
+    PAYSIM_HISTORY_FEATURE_NAMES,
+)
+
+PAYSIM_RECIPIENT_FEATURE_VERSION: Final = PAYSIM_FEATURE_DEFINITION_VERSION
 LEAKAGE_WINDOWS_STEPS: Final = (1, 24, 168)
 PAYSIM_TRAIN_END_STEP: Final = 520
 PAYSIM_VALIDATION_END_STEP: Final = 631
 TARGET_TABLE: Final = "paysim_leakage_targets"
 VECTOR_TABLE: Final = "paysim_recipient_leakage_vectors"
-STRICT_PIT_FEATURE_COLUMNS: Final = tuple(
-    column
-    for window_steps in LEAKAGE_WINDOWS_STEPS
-    for column in (
-        f"pit_prior_count_{window_steps}h",
-        f"pit_prior_amount_{window_steps}h",
-        f"recipient_has_history_{window_steps}h",
-    )
-)
+STRICT_PIT_FEATURE_COLUMNS: Final = PAYSIM_HISTORY_FEATURE_NAMES
 POSITIVE_CONTROL_COLUMNS: Final = (
     *(
         column

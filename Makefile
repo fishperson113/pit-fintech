@@ -5,6 +5,9 @@ HOST ?= 127.0.0.1
 PORT ?= 8000
 JUPYTER_PORT ?= 8888
 DATASET ?= sample
+MODEL_NONFRAUD_SAMPLE ?= 5000
+MODEL_SEED ?= 20260727
+MODEL_FIXED_FPR ?= 0.01
 
 help: ## Show implemented targets and their purpose
 	@awk 'BEGIN {FS = ":.*?## "}; /^[a-zA-Z0-9_.-]+:.*?## / {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -18,6 +21,9 @@ doctor: ## Inspect Python, Docker, resources, ports, Delta and credentials
 
 lab: ## Start JupyterLab locally with the project kernel
 	uv run --group dev jupyter lab --ip=$(HOST) --port=$(JUPYTER_PORT) --no-browser
+
+lab-training: ## Start JupyterLab with development and model-training dependencies
+	uv run --group dev --group training jupyter lab --ip=$(HOST) --port=$(JUPYTER_PORT) --no-browser
 
 lab-container: ## Start the isolated JupyterLab Compose profile
 	docker compose --profile lab up --build jupyter
@@ -34,8 +40,11 @@ profile: data-sample ## Generate the decision-oriented profile for DATASET
 build-lakehouse: test-temporal ## Build versioned Bronze/Silver Delta tables for the verified dataset
 	uv run pit data build-lakehouse --dataset $(DATASET)
 
-lakehouse-history: ## Inspect local Bronze/Silver Delta commit history
-	uv run pit data lakehouse-history
+lakehouse-history: ## Inspect local Bronze/Silver Delta history for DATASET
+	uv run pit data lakehouse-history --dataset $(DATASET)
+
+features: ## Inspect the frozen PaySim FeatureSpec v1 and checksum
+	uv run pit features show --dataset paysim
 
 test-temporal: data-sample ## Run exhaustive point-in-time correctness tests
 	uv run pytest -q -m temporal tests/temporal
@@ -43,11 +52,17 @@ test-temporal: data-sample ## Run exhaustive point-in-time correctness tests
 test-unit: ## Run fast non-temporal unit tests
 	uv run pytest -q tests/unit
 
-test-lakehouse: data-sample ## Run Delta snapshot, idempotency, and time-travel tests
-	uv run pytest -q tests/integration/test_sample_lakehouse.py
+test-lakehouse: data-sample ## Run fixture Delta snapshot, schema, quality, and time-travel tests
+	uv run pytest -q tests/integration
 
 test-notebooks: data-sample ## Execute all Sprint 1 notebooks in memory
 	uv run --group dev pit notebooks verify
+
+model-spike: ## Run the standalone PaySim LightGBM E1-E4 candidate matrix
+	uv run --group training pit model spike --dataset paysim \
+		--nonfraud-sample-per-group $(MODEL_NONFRAUD_SAMPLE) \
+		--seed $(MODEL_SEED) \
+		--fixed-fpr $(MODEL_FIXED_FPR)
 
 test: data-sample ## Run the complete local test suite
 	uv run pytest -q
@@ -80,4 +95,4 @@ logs: ## Follow core service logs
 down: ## Stop services without deleting data volumes
 	docker compose down
 
-.PHONY: help bootstrap doctor lab lab-container data-sample data-snapshot profile build-lakehouse lakehouse-history test-temporal test-unit test-lakehouse test-notebooks test lint format check changelog-check lock up-core status logs down
+.PHONY: help bootstrap doctor lab lab-training lab-container data-sample data-snapshot profile build-lakehouse lakehouse-history features test-temporal test-unit test-lakehouse test-notebooks model-spike test lint format check changelog-check lock up-core status logs down

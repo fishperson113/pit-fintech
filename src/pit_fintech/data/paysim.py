@@ -236,14 +236,24 @@ def profile_paysim(csv_path: Path, include_checksum: bool = False) -> dict[str, 
 
 
 def _current_commit(project_root: Path) -> str:
-    completed = subprocess.run(
+    commit = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=project_root,
         check=False,
         capture_output=True,
         text=True,
     )
-    return completed.stdout.strip() if completed.returncode == 0 else "UNCOMMITTED"
+    if commit.returncode != 0:
+        return "UNCOMMITTED"
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=project_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    suffix = "-dirty" if status.returncode != 0 or status.stdout.strip() else ""
+    return f"{commit.stdout.strip()}{suffix}"
 
 
 def _manifest_file_path(csv_path: Path, project_root: Path) -> str:
@@ -260,9 +270,38 @@ def create_paysim_snapshot(
     project_root: Path,
     artifact_root: Path,
 ) -> tuple[DatasetSnapshotManifest, Path]:
-    """Hash and profile the raw CSV, then atomically persist its snapshot manifest."""
+    """Hash the raw CSV, reuse an immutable manifest, or profile and create it once."""
 
     snapshot = inspect_snapshot(csv_path)
+    manifest_path = (
+        artifact_root.resolve()
+        / "datasets"
+        / "paysim1"
+        / snapshot.sha256[:16]
+        / "snapshot-manifest.json"
+    )
+    if manifest_path.exists():
+        existing = DatasetSnapshotManifest.model_validate_json(
+            manifest_path.read_text(encoding="utf-8")
+        )
+        expected_file = DatasetFile(
+            path=_manifest_file_path(csv_path, project_root),
+            bytes=snapshot.size_bytes,
+            sha256=snapshot.sha256,
+        )
+        if (
+            existing.dataset != "paysim1"
+            or existing.dataset_snapshot_id != snapshot.dataset_snapshot_id
+            or existing.source != DATASET_URL
+            or existing.file != expected_file
+            or existing.schema_columns != snapshot.columns
+        ):
+            raise FileExistsError(
+                "immutable PaySim snapshot manifest disagrees with the current raw identity: "
+                f"{manifest_path}"
+            )
+        return existing, manifest_path
+
     profile = profile_paysim(csv_path)
     manifest = DatasetSnapshotManifest(
         dataset="paysim1",
@@ -278,14 +317,6 @@ def create_paysim_snapshot(
         step_min=int(profile["min_step"]),
         step_max=int(profile["max_step"]),
         code_commit=_current_commit(project_root),
-    )
-
-    manifest_path = (
-        artifact_root.resolve()
-        / "datasets"
-        / "paysim1"
-        / snapshot.sha256[:16]
-        / "snapshot-manifest.json"
     )
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = manifest_path.with_suffix(".json.tmp")

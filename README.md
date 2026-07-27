@@ -6,9 +6,10 @@ project is a paper-inspired adaptation for one CPU machine; it does not claim to
 the FeathrPO/Spark speedups from the source paper.
 
 The repository is intentionally milestone-driven. The current implementation establishes
-the Sprint 1 temporal contract and developer platform. Redis/MLflow infrastructure is wired
-for the next vertical slice, while Feast, Gold backfill, training, serving, replay, and cloud
-remain explicitly planned rather than represented by placeholder commands.
+the Sprint 1 temporal contract, PaySim feasibility evidence, and a standalone LightGBM
+candidate-spike path. Redis/MLflow infrastructure is wired for the next vertical slice, while
+Feast, Gold backfill, promoted training, serving, replay, and cloud remain explicitly planned
+rather than represented by placeholder commands.
 
 ## Quick start
 
@@ -58,6 +59,8 @@ make lab
 ```powershell
 .\make.ps1 data-snapshot
 .\make.ps1 profile -Dataset paysim
+.\make.ps1 test-lakehouse
+.\make.ps1 build-lakehouse -Dataset paysim
 .\make.ps1 lab
 ```
 
@@ -65,8 +68,37 @@ make lab
 `artifacts/datasets/paysim1/<checksum-prefix>/snapshot-manifest.json`. It does not copy or mutate
 the raw CSV.
 
+`build-lakehouse -Dataset paysim` streams the frozen CSV through DuckDB/Arrow into
+`bronze.paysim_transactions`, label-free `silver.paysim_transactions`, and the separate
+`silver.paysim_labels` Delta table. It publishes exact table versions and the FeatureSpec
+checksum under the same snapshot artifact directory.
+
 The notebooks do not fall back to synthetic data. Without the PaySim CSV they show setup
 instructions and skip data queries.
+
+### Run the standalone LightGBM candidate spike
+
+The exploratory spike executes the predeclared E1–E4 matrix through reusable code and logs all
+four child runs to a local SQLite-backed MLflow store with a separate local artifact directory.
+It does not require Redis, Docker, or an MLflow server:
+
+```bash
+make model-spike
+```
+
+```powershell
+.\make.ps1 model-spike
+```
+
+The command writes a validated manifest under
+`artifacts/experiments/paysim-lightgbm-spike/<run-id>/manifest.json` and local tracking data under
+`artifacts/mlflow/`. Notebook `04_model_candidate.ipynb` can review the latest result. To execute
+the same reusable workflow interactively, launch `lab-training`, change `RUN_TRAINING` to
+`True`, then Restart Kernel and Run All.
+
+The spike uses a deterministic diagnostic cohort that oversamples fraud. Its metrics compare
+static, leaky and PIT variants within the pinned cohort; they are not production-prevalence
+model-quality claims and cannot promote a model.
 
 ## Implemented command contract
 
@@ -75,15 +107,18 @@ instructions and skip data queries.
 | `bootstrap` | Sync the exact `uv.lock` environment and install pre-commit hooks |
 | `doctor` | Read-only host, dependency, Delta, resource, port, Git, and credential checks |
 | `lab` | Start JupyterLab with project code importable from the locked environment |
+| `lab-training` | Start JupyterLab with the development and training dependency groups |
 | `lab-container` | Start an isolated, localhost-only JupyterLab Compose profile |
 | `data-sample` | Validate hand-calculated vectors and materialize the synthetic Parquet fixture |
 | `data-snapshot` | Hash/profile the PaySim raw CSV and persist its immutable identity manifest |
 | `profile` | Profile the synthetic fixture or real PaySim CSV through the same CLI boundary |
 | `test-temporal` | Exercise future, duplicate, tie, late-arrival, boundary, cold-start, and ordering cases |
-| `build-lakehouse` | Write versioned Bronze/Silver Delta tables after the temporal gate |
-| `lakehouse-history` | Inspect exact local Delta versions and operations |
-| `test-lakehouse` | Verify logical idempotency, label separation, and old-version time travel |
+| `build-lakehouse` | Write sample or PaySim Bronze/Silver Delta tables for `DATASET` |
+| `lakehouse-history` | Inspect exact local Delta versions and operations for `DATASET` |
+| `features` | Inspect the frozen PaySim FeatureSpec v1, model order and checksum |
+| `test-lakehouse` | Verify sample/PaySim-fixture schema, quality, rerun, isolation, and time travel |
 | `test-notebooks` | Execute all Sprint 1 notebooks in memory without storing outputs |
+| `model-spike` | Run the standalone PaySim LightGBM E1–E4 candidate matrix with local MLflow |
 | `lint`, `test`, `check` | Run the same fast quality lane locally and in CI |
 | `changelog-check` | Ensure staged implementation changes update milestone audit logs |
 | `up-core`, `status`, `logs`, `down` | Operate Redis and MLflow without deleting volumes |
@@ -99,7 +134,7 @@ feature_repo/          frozen v1 specs; Feast definitions begin after Sprint 1 g
 data/fixtures/         committed temporal source, hand-calculated vectors, generated Parquet
 tests/temporal/        exhaustive PIT correctness lane
 tests/unit/            deterministic hashing, ordering, specs, artifact tests
-notebooks/             Sprint 1 EDA, temporal analysis, and leakage exploration
+notebooks/             Sprint 1 EDA, temporal/leakage analysis, and candidate model review
 docs/                  ADR, architecture, protocol, access, and reports
 docs/feature-store/    proposal and implementation guides for all three sprints
 artifacts/changelog/   tracked status, cumulative changelog, and milestone implementation logs
@@ -132,6 +167,20 @@ EDA-first application dataset; IEEE-CIS and Home Credit are ADR-gated alternativ
 notebooks must profile temporal/entity viability and leakage before the application contract or
 model family is locked. Raw dataset files are never committed. See
 [data access](docs/data-access.md).
+
+## Frozen PaySim feature contract
+
+ADR-003 freezes `paysim-fraud-recipient-v1`: three request-time fields plus destination-history
+count, amount sum and cold-start indicators at 1h, 24h and 168h. Historical features require
+`prior_step < current_step`; same-step events, labels, policy output and balance fields are
+excluded. Inspect the ordered contract and its canonical checksum with:
+
+```powershell
+.\make.ps1 features
+```
+
+The existing `fraud-history-v1` spec remains the independent synthetic-oracle contract. It is not
+the PaySim serving vector.
 
 ## Scope guard
 

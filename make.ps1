@@ -12,7 +12,10 @@ param(
     [string]$HostAddress = "127.0.0.1",
     [int]$Port = 8000,
     [int]$JupyterPort = 8888,
-    [string]$Dataset = "sample"
+    [string]$Dataset = "sample",
+    [int]$ModelNonfraudSample = 5000,
+    [int]$ModelSeed = 20260727,
+    [double]$ModelFixedFpr = 0.01
 )
 
 $ErrorActionPreference = "Stop"
@@ -38,6 +41,12 @@ switch ($Target) {
             "--ip=$HostAddress", "--port=$JupyterPort", "--no-browser"
         )
     }
+    "lab-training" {
+        Invoke-Checked "uv" @(
+            "run", "--group", "dev", "--group", "training", "jupyter", "lab",
+            "--ip=$HostAddress", "--port=$JupyterPort", "--no-browser"
+        )
+    }
     "lab-container" {
         Invoke-Checked "docker" @("compose", "--profile", "lab", "up", "--build", "jupyter")
     }
@@ -52,10 +61,17 @@ switch ($Target) {
     "build-lakehouse" {
         & $PSCommandPath "test-temporal"
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        Invoke-Checked "uv" @("run", "pit", "data", "build-lakehouse", "--dataset", "sample")
+        Invoke-Checked "uv" @(
+            "run", "pit", "data", "build-lakehouse", "--dataset", $Dataset
+        )
     }
     "lakehouse-history" {
-        Invoke-Checked "uv" @("run", "pit", "data", "lakehouse-history")
+        Invoke-Checked "uv" @(
+            "run", "pit", "data", "lakehouse-history", "--dataset", $Dataset
+        )
+    }
+    "features" {
+        Invoke-Checked "uv" @("run", "pit", "features", "show", "--dataset", "paysim")
     }
     "test-temporal" {
         Invoke-Checked "uv" @("run", "pit", "data", "sample")
@@ -64,11 +80,21 @@ switch ($Target) {
     "test-unit" { Invoke-Checked "uv" @("run", "pytest", "-q", "tests/unit") }
     "test-lakehouse" {
         Invoke-Checked "uv" @("run", "pit", "data", "sample")
-        Invoke-Checked "uv" @("run", "pytest", "-q", "tests/integration/test_sample_lakehouse.py")
+        Invoke-Checked "uv" @("run", "pytest", "-q", "tests/integration")
     }
     "test-notebooks" {
         Invoke-Checked "uv" @("run", "pit", "data", "sample")
         Invoke-Checked "uv" @("run", "--group", "dev", "pit", "notebooks", "verify")
+    }
+    "model-spike" {
+        Invoke-Checked "uv" @(
+            "run", "--group", "training", "pit", "model", "spike",
+            "--dataset", "paysim",
+            "--nonfraud-sample-per-group", "$ModelNonfraudSample",
+            "--seed", "$ModelSeed",
+            "--fixed-fpr",
+            $ModelFixedFpr.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+        )
     }
     "test" {
         Invoke-Checked "uv" @("run", "pit", "data", "sample")
@@ -110,16 +136,19 @@ switch ($Target) {
             @("bootstrap", "install locked dev environment"),
             @("doctor", "inspect local prerequisites without printing secrets"),
             @("lab", "start local JupyterLab"),
+            @("lab-training", "start JupyterLab with LightGBM and MLflow"),
             @("lab-container", "start isolated JupyterLab with Compose"),
             @("data-sample", "build and validate temporal fixture"),
             @("data-snapshot", "freeze PaySim identity and write the snapshot manifest"),
             @("profile", "generate the decision-oriented profile for -Dataset"),
-            @("build-lakehouse", "build sample Bronze/Silver Delta tables after tests"),
-            @("lakehouse-history", "inspect local Delta commit history"),
+            @("build-lakehouse", "build Bronze/Silver Delta tables for -Dataset"),
+            @("lakehouse-history", "inspect Delta history for -Dataset"),
+            @("features", "inspect the frozen PaySim FeatureSpec v1"),
             @("test-temporal", "run PIT correctness suite"),
             @("test-unit", "run fast unit tests"),
             @("test-lakehouse", "run Delta snapshot and time-travel tests"),
             @("test-notebooks", "execute Sprint 1 notebooks in memory"),
+            @("model-spike", "run the PaySim LightGBM E1-E4 candidate matrix"),
             @("test", "run all tests"),
             @("lint", "check source and notebooks"),
             @("format", "apply source formatting"),
