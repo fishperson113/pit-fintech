@@ -441,7 +441,7 @@ def model_train(
     allow_dirty: Annotated[
         bool,
         typer.Option(
-            help="Allow diagnostic training from dirty/mismatched code lineage; never promotable"
+            help="Allow diagnostic training from dirty component lineage; never promotable"
         ),
     ] = False,
 ) -> None:
@@ -528,6 +528,12 @@ def model_train(
     console.print(f"Silver versions: [cyan]{versions}[/]")
     console.print(f"vector checksum: [cyan]{manifest.vector_checksum}[/]")
     console.print(f"future-read violations: [green]{manifest.future_read_violations}[/]")
+    if manifest.training_component_fingerprint:
+        console.print(
+            "training fingerprint: "
+            f"[cyan]{manifest.training_component_fingerprint}[/] "
+            f"({manifest.lineage_policy_version})"
+        )
     console.print(f"MLflow parent run: [cyan]{manifest.mlflow_parent_run_id}[/]")
     console.print(f"manifest: {output_path}")
 

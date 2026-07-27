@@ -1,5 +1,25 @@
 # Project changelog
 
+## 2026-07-27 — M021: Component-scoped lineage guard
+
+- Replaced repository-wide trainer/lakehouse commit equality with exact source-contract checks
+  plus separate component fingerprints.
+- Added explicit lakehouse and training path boundaries, scoped dirty-state guards and
+  repository-wide dirty metadata.
+- Kept legacy clean manifests readable while conservatively rejecting legacy dirty manifests.
+- Updated CLI, notebook 05, ADR-004 and training documentation to explain that documentation-only
+  commits do not require a lakehouse rebuild.
+- Added unit contracts for fingerprint scope, different clean commits and dirty-component
+  rejection; extended the fixture lakehouse contract for new lineage fields.
+- User verification passed unit 39/39, lakehouse 4/4 and notebooks 5/5.
+- Inspected legacy Silver v2 and completed pre-M021 run `6f8859…`; both are clean but correctly
+  lack the new optional fingerprint fields.
+- A later train attempt was correctly blocked because M021 component files were still
+  uncommitted. Status: implemented; post-commit CLI reuse and new fingerprint evidence remain.
+- The first commit attempt passed all guards except Ruff format, which made formatting-only
+  changes to two lineage files and correctly required review/restaging.
+- Detail: [M021 log](milestones/M021-component-lineage-guard.md).
+
 ## 2026-07-27 — M020: Sprint 1 closure
 
 - Reconciled all nine Sprint 1 release gates against the accepted PaySim ADRs, source files,

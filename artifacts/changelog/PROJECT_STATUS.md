@@ -11,7 +11,7 @@ Last updated: 2026-07-27. Status words are strict:
 | Artifact / guard | Status | Evidence |
 |---|---|---|
 | Cumulative changelog | verified | `artifacts/changelog/CHANGELOG.md` |
-| Detailed milestone logs | verified | M001–M020 logs under `artifacts/changelog/milestones/` |
+| Detailed milestone logs | verified | M001–M021 logs under `artifacts/changelog/milestones/` |
 | Milestone pre-commit guard | verified | hook blocked the first M019 attempt after Ruff reformatted four files; the reviewed retry passed Ruff, milestone, large-file, conflict, TOML/YAML, EOF and whitespace guards in commit `6e93e7f` |
 | Human-readable reports location | verified | reports moved to `docs/reports/` |
 | Four-slide PIT proposal deck | verified | slide 2 states the full PIT-Correct Feature Platform for Fraud Detection name, objective, two execution paths (offline training and online serving), the cross-cutting OTel/Prometheus/Grafana observability layer, and four scope anchors; slide 3 embeds the user-authored architecture image; slide 4 now focuses only on the six-week engineering/MLOps outcome and evidence-backed handoff; 4 slides render at 1440x810 without overflow/errors; navigation passes |
@@ -28,6 +28,7 @@ Last updated: 2026-07-27. Status words are strict:
 | M018 PaySim application lakehouse | verified | full snapshot `paysim1:16910f90577b0d98` built into three Delta v0 tables of 6,362,620 rows; 8/8 gates pass; 56.29s, 113,030 rows/s, 649,248,646 active Delta bytes, 31 partitions; fixture 3/3 and unit 30/30 pass; artifact correctly records dirty commit boundary |
 | M019 Silver-based LightGBM baseline | verified | clean Silver v1/code `6e93e7f…`; 322,461 vectors, 8,213 fraud, checksum `c7f075…`, 0 future reads; MLflow parent `e1ebc…`; E1/E4 complete with exact manifests and skops models |
 | M020 Sprint 1 closure | verified | all 9 Sprint 1 gates reconciled in `docs/reports/sprint-1-completion-report.md`; notebook 05 restored output-free; frozen Sprint 2 lineage recorded |
+| M021 component-scoped lineage guard | implemented | unit 39/39, lakehouse 4/4 and notebooks 5/5 pass; commit equality removed and component fields added; post-commit `train` reuse against legacy Silver v2 remains |
 | Ten-minute PIT meetup speaker script | verified | `docs/reports/pit-fintech-meetup-10min-script.md`; compressed four-slide talk track targets 9:20 plus buffer, keeps slide 3 as the technical core, and separates six concise mentor Q&A prompts from the spoken script; four slide headings, four closing claims, six Q&A prompts and required status/architecture claims pass the content scan; `git diff --check` passes |
 | Vietnamese PIT terminology catalog | verified | `docs/reports/catalog.md`; required-term scan, reader-aid structure and `git diff --check` pass |
 
@@ -62,6 +63,10 @@ Thin Feast contract, CLI-built Gold features, full/range/incremental backfill, R
 materialization, local selected-model + MLflow run, gated promotion/rollback, FastAPI/Uvicorn
 scoring, one-producer ordered in-memory replay, offline/online parity, and sample E2E are all
 **planned**. Ray Train/Tune/Serve and external message brokers are out of the Sprint 2 MVP.
+
+Component-scoped lineage implementation gates are **verified** by M021. The milestone remains
+implemented until post-commit `train` reuses legacy Silver v2 without rebuild and emits the new
+fingerprint fields.
 
 ## Sprint 3
 

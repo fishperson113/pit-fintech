@@ -80,7 +80,8 @@ M019 verified the clean Sprint 1 model baseline:
 - test PR-AUC is primary; ROC-AUC, recall, precision and observed FPR are reported together;
 - exact Delta versions/checksums, FeatureSpec checksum, vector checksum, code/lock identity,
   MLflow runs and model URIs are required evidence;
-- clean baseline publication rejects dirty or mismatched trainer/lakehouse Git lineage.
+- component-scoped publication rejects dirty lakehouse/training components; trainer and
+  lakehouse Git commits may differ when exact source and contract checks pass.
 
 Notebook 05 is a thin caller and interpretation surface over the same function exposed by the
 non-notebook `train` command.
@@ -89,3 +90,6 @@ The frozen result uses clean commit `6e93e7f…`, exact Silver v1 and vector che
 E1 test PR-AUC is 0.258342; E4 test PR-AUC is 0.102766. E4's lower PR-AUC and fixed-FPR recall
 are accepted PaySim utility evidence even though its global ROC-AUC is higher. No post-result
 tuning changes this Sprint 1 baseline.
+
+ADR-004 replaces commit equality for later runs with `component-fingerprint-v1`. Git commits
+remain audit fields; exact Delta/contract checks and scoped component dirtiness are the gates.

@@ -134,8 +134,9 @@ Read the mental-model cell before running:
 that normal review never launches a full model run. The notebook verifier additionally forces
 the flag to false for child kernels and restores the caller's environment afterward.
 
-Clean training must not be enabled by editing and saving the notebook: saving would dirty the
-Git tree. Set the environment variable before starting JupyterLab instead.
+Use the environment variable rather than editing the notebook so the source remains reviewable
+and output-free. Documentation/notebook dirtiness is recorded but does not require rebuilding
+Silver unless a declared component path changed.
 
 ### Cell group 3 — Lineage before metrics
 
@@ -144,12 +145,14 @@ Read these values first:
 - `dataset_snapshot_id`;
 - exact Silver versions and their schema/logical checksums;
 - FeatureSpec version and checksum;
-- training and lakehouse Git commits;
+- training and lakehouse Git commits as audit references;
+- lineage policy, training-component fingerprint and scoped dirty state;
 - training-vector checksum;
 - `future_read_violations`.
 
-The baseline is clean only when both commits are identical, neither ends in `-dirty`, and
-future-read violations equal zero.
+The commits no longer need to be identical. The run is valid when the exact source and contract
+checks pass, the lakehouse/training components are clean, the component fingerprint is recorded,
+and future-read violations equal zero.
 
 ### Cell group 4 — Chronological population
 
@@ -193,14 +196,9 @@ Before the clean full-data run, execute the implementation gates:
 .\make.ps1 test-notebooks
 ```
 
-After M019 is committed, rebuild PaySim lakehouse once so its new Delta versions carry the same
-clean commit as the trainer:
-
-```powershell
-.\make.ps1 build-lakehouse -Dataset paysim
-```
-
-Then choose one training surface.
+Do not rebuild the lakehouse for documentation or training-only changes. Rebuild Silver only
+when the raw snapshot, canonicalization, entity/order semantics, Silver schema or required source
+fields change. Otherwise choose one training surface directly.
 
 CLI:
 

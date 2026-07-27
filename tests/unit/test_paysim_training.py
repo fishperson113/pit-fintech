@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from typer.testing import CliRunner
 
 from pit_fintech.cli import app
@@ -23,9 +24,13 @@ from pit_fintech.features.paysim_specs import (
 )
 from pit_fintech.models.paysim_training import (
     CLAIM_BOUNDARY,
+    LINEAGE_POLICY_VERSION,
     LOCKED_EXPERIMENTS,
     SILVER_TRAINING_PIPELINE_VERSION,
+    TRAINING_COMPONENT_PATHS,
     TRAINING_SAMPLING_POLICY,
+    _require_clean_lineage,
+    component_fingerprint,
     feature_importance_rows,
     find_latest_training_manifest,
     load_training_manifest,
@@ -106,6 +111,8 @@ def _manifest() -> SilverTrainingManifest:
         created_at=datetime.now(UTC),
         application_lakehouse_manifest_path="artifacts/lakehouse-manifest.json",
         application_lakehouse_code_commit="abc123",
+        application_lakehouse_component_fingerprint="2" * 64,
+        application_lakehouse_component_dirty=False,
         dataset_snapshot_id="paysim1:fixture",
         raw_file_sha256="d" * 64,
         entity_definition_version="paysim-destination-customer-v1",
@@ -133,6 +140,11 @@ def _manifest() -> SilverTrainingManifest:
         seed=20_260_727,
         fixed_fpr=0.01,
         code_commit="abc123",
+        lineage_policy_version=LINEAGE_POLICY_VERSION,
+        training_component_fingerprint="1" * 64,
+        training_component_paths=TRAINING_COMPONENT_PATHS,
+        training_component_dirty=False,
+        repository_dirty=False,
         dependency_lock_sha256="0" * 64,
         dependency_versions={"lightgbm": "fixture"},
         mlflow_tracking_uri="sqlite:///tracking.db",
@@ -188,6 +200,60 @@ def test_training_manifest_round_trip_summary_and_latest_discovery(tmp_path: Pat
     importance = feature_importance_rows(manifest, experiment_id="E4")
     assert importance[0]["feature"] == PAYSIM_MODEL_FEATURE_ORDER[-1]
     assert abs(sum(item["gain_share"] for item in importance) - 1.0) < 1e-5
+
+
+def test_component_fingerprint_ignores_files_outside_declared_boundary(
+    tmp_path: Path,
+) -> None:
+    component_path = tmp_path / "src" / "trainer.py"
+    component_path.parent.mkdir(parents=True)
+    component_path.write_text("MODEL = 'v1'\n", encoding="utf-8")
+    declared_paths = ("src/trainer.py",)
+
+    baseline = component_fingerprint(tmp_path, declared_paths)
+    docs_path = tmp_path / "docs" / "report.md"
+    docs_path.parent.mkdir()
+    docs_path.write_text("documentation-only change\n", encoding="utf-8")
+
+    assert component_fingerprint(tmp_path, declared_paths) == baseline
+
+    component_path.write_text("MODEL = 'v2'\n", encoding="utf-8")
+    assert component_fingerprint(tmp_path, declared_paths) != baseline
+
+
+def test_lineage_guard_allows_distinct_clean_training_and_lakehouse_commits() -> None:
+    _require_clean_lineage(
+        code_commit="training-commit",
+        lakehouse_commit="lakehouse-commit",
+        lakehouse_component_dirty=False,
+        training_component_dirty=False,
+        allow_dirty=False,
+    )
+
+
+@pytest.mark.parametrize("lakehouse_commit", ["UNCOMMITTED", "abc123-dirty"])
+def test_lineage_guard_rejects_legacy_dirty_lakehouse_artifact(
+    lakehouse_commit: str,
+) -> None:
+    with pytest.raises(RuntimeError, match="clean lakehouse component"):
+        _require_clean_lineage(
+            code_commit="training-commit",
+            lakehouse_commit=lakehouse_commit,
+            lakehouse_component_dirty=None,
+            training_component_dirty=False,
+            allow_dirty=False,
+        )
+
+
+def test_lineage_guard_rejects_dirty_training_component() -> None:
+    with pytest.raises(RuntimeError, match="training component has uncommitted changes"):
+        _require_clean_lineage(
+            code_commit="training-commit",
+            lakehouse_commit="lakehouse-commit",
+            lakehouse_component_dirty=False,
+            training_component_dirty=True,
+            allow_dirty=False,
+        )
 
 
 def test_notebook_verifier_forces_review_only_and_restores_environment(

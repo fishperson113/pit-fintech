@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import subprocess
 import time
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
@@ -32,10 +31,26 @@ from pit_fintech.features.paysim_specs import (
     PAYSIM_FORBIDDEN_MODEL_INPUTS,
     paysim_feature_contract_checksum,
 )
+from pit_fintech.platform.lineage import (
+    COMPONENT_FINGERPRINT_POLICY_VERSION,
+    component_dirty,
+    component_fingerprint,
+    current_git_commit,
+    repository_dirty,
+)
 
 PAYSIM_LAKEHOUSE_PIPELINE_VERSION: Final = "paysim-bronze-silver-v1"
 PAYSIM_ARROW_BATCH_SIZE: Final = 65_536
 PAYSIM_TARGET_FILE_SIZE: Final = 128 * 1024 * 1024
+LAKEHOUSE_COMPONENT_PATHS: Final = (
+    "src/pit_fintech/data/paysim_lakehouse.py",
+    "src/pit_fintech/data/paysim.py",
+    "src/pit_fintech/contracts/manifests.py",
+    "src/pit_fintech/features/paysim_specs.py",
+    "src/pit_fintech/platform/lineage.py",
+    "pyproject.toml",
+    "uv.lock",
+)
 PAYSIM_TRANSACTION_TYPES: Final = (
     "CASH_IN",
     "CASH_OUT",
@@ -102,27 +117,6 @@ def _portable_path(path: Path, project_root: Path) -> str:
 def _resolve_manifest_path(path: str, project_root: Path) -> Path:
     candidate = Path(path)
     return candidate if candidate.is_absolute() else project_root / candidate
-
-
-def _current_commit(project_root: Path) -> str:
-    commit = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=project_root,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if commit.returncode != 0:
-        return "UNCOMMITTED"
-    status = subprocess.run(
-        ["git", "status", "--porcelain"],
-        cwd=project_root,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    suffix = "-dirty" if status.returncode != 0 or status.stdout.strip() else ""
-    return f"{commit.stdout.strip()}{suffix}"
 
 
 def arrow_schema_checksum(schema: pa.Schema) -> str:
@@ -541,7 +535,18 @@ def build_paysim_lakehouse(
         entity_definition_version=PAYSIM_ENTITY_DEFINITION_VERSION,
         feature_definition_version=PAYSIM_FEATURE_DEFINITION_VERSION,
         feature_contract_checksum=paysim_feature_contract_checksum(),
-        code_commit=_current_commit(project_root),
+        code_commit=current_git_commit(project_root),
+        lineage_policy_version=COMPONENT_FINGERPRINT_POLICY_VERSION,
+        lakehouse_component_fingerprint=component_fingerprint(
+            project_root,
+            LAKEHOUSE_COMPONENT_PATHS,
+        ),
+        lakehouse_component_paths=LAKEHOUSE_COMPONENT_PATHS,
+        lakehouse_component_dirty=component_dirty(
+            project_root,
+            LAKEHOUSE_COMPONENT_PATHS,
+        ),
+        repository_dirty=repository_dirty(project_root),
         resources=LakehouseBuildResources(
             wall_seconds=wall_seconds,
             raw_bytes=source_manifest.file.bytes,

@@ -107,6 +107,11 @@ class ApplicationLakehouseManifest(BaseModel):
     feature_definition_version: str
     feature_contract_checksum: str
     code_commit: str
+    lineage_policy_version: Literal["component-fingerprint-v1"] | None = None
+    lakehouse_component_fingerprint: str | None = None
+    lakehouse_component_paths: tuple[str, ...] = ()
+    lakehouse_component_dirty: bool | None = None
+    repository_dirty: bool | None = None
     resources: LakehouseBuildResources
     quality_gates: tuple[DataQualityGateResult, ...]
     tables: tuple[DeltaTableSnapshot, ...]
@@ -247,6 +252,8 @@ class SilverTrainingManifest(BaseModel):
     created_at: datetime
     application_lakehouse_manifest_path: str
     application_lakehouse_code_commit: str
+    application_lakehouse_component_fingerprint: str | None = None
+    application_lakehouse_component_dirty: bool | None = None
     dataset_snapshot_id: str
     raw_file_sha256: str
     entity_definition_version: str
@@ -267,6 +274,11 @@ class SilverTrainingManifest(BaseModel):
     seed: int
     fixed_fpr: float
     code_commit: str
+    lineage_policy_version: Literal["component-fingerprint-v1"] | None = None
+    training_component_fingerprint: str | None = None
+    training_component_paths: tuple[str, ...] = ()
+    training_component_dirty: bool | None = None
+    repository_dirty: bool | None = None
     dependency_lock_sha256: str
     dependency_versions: dict[str, str]
     mlflow_tracking_uri: str

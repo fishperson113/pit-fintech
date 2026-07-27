@@ -92,6 +92,8 @@ The three runtime paths are local, immutable evidence and remain gitignored by d
 - E4 is a baseline candidate, not a promoted production model.
 - MLflow's current sklearn pyfunc surface predicts labels. Sprint 2 must add an explicit
   probability-scoring wrapper and bind its threshold to a deployment manifest.
+- Post-closure ADR-004 replaces coarse Git commit equality with component fingerprints; the
+  frozen M019 result remains valid historical evidence under its original clean-commit policy.
 - CI is implemented as a fast fixture lane; a hosted clean-clone run is not claimed here.
 - Redis materialization, Gold backfill, offline/online parity, serving, replay and
   promotion/rollback are intentionally Sprint 2 work.

@@ -112,8 +112,9 @@ with identical temporal splits and model settings:
 ```
 
 Validation and test retain natural PaySim prevalence. Only train negatives are deterministically
-bounded per transaction type for CPU/RAM feasibility. The command refuses dirty code or a
-lakehouse built from a different commit.
+bounded per transaction type for CPU/RAM feasibility. The command validates exact Silver
+versions/checksums and the FeatureSpec contract, then guards only uncommitted training-component
+changes. A documentation-only commit does not require rebuilding the lakehouse.
 
 Notebook `05_silver_training_baseline.ipynb` calls the same reusable pipeline and explains how
 to read lineage, split health, E1/E4 metrics and feature importance. For an intentional clean

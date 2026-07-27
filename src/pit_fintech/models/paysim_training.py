@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import subprocess
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -61,16 +60,35 @@ from pit_fintech.models.paysim_lightgbm import (
     default_artifact_uri,
     default_tracking_uri,
 )
+from pit_fintech.platform.lineage import (
+    COMPONENT_FINGERPRINT_POLICY_VERSION,
+    component_dirty,
+    component_fingerprint,
+    current_git_commit,
+    repository_dirty,
+)
 
 SILVER_TRAINING_PIPELINE_VERSION: Final = "paysim-silver-lightgbm-v1"
 DEFAULT_SEED: Final = 20_260_727
 DEFAULT_FIXED_FPR: Final = 0.01
 DEFAULT_TRAIN_NONFRAUD_PER_TYPE: Final = 100_000
 DEFAULT_EXPERIMENT_NAME: Final = "pit-fintech-paysim-silver-baseline"
+LINEAGE_POLICY_VERSION: Final = COMPONENT_FINGERPRINT_POLICY_VERSION
 TRANSACTION_SOURCE_VIEW: Final = "paysim_silver_transactions"
 LABEL_SOURCE_VIEW: Final = "paysim_silver_labels"
 TARGET_TABLE: Final = "paysim_training_targets"
 VECTOR_TABLE: Final = "paysim_training_vectors"
+TRAINING_COMPONENT_PATHS: Final = (
+    "src/pit_fintech/models/paysim_training.py",
+    "src/pit_fintech/models/paysim_lightgbm.py",
+    "src/pit_fintech/contracts/manifests.py",
+    "src/pit_fintech/data/paysim_lakehouse.py",
+    "src/pit_fintech/features/paysim_recipient.py",
+    "src/pit_fintech/features/paysim_specs.py",
+    "src/pit_fintech/platform/lineage.py",
+    "pyproject.toml",
+    "uv.lock",
+)
 
 TRAINING_SAMPLING_POLICY: Final = (
     "all eligible train fraud plus at most N deterministic train non-fraud rows per transaction "
@@ -827,6 +845,9 @@ def _train_experiment(
                 "vector_checksum": vectors.checksum,
                 "training_dataset_checksum": training_dataset_checksum,
                 "code_commit": lineage["code_commit"],
+                "lineage_policy_version": lineage["lineage_policy_version"],
+                "training_component_fingerprint": lineage["training_component_fingerprint"],
+                "repository_dirty": lineage["repository_dirty"],
                 "dependency_lock_sha256": lineage["dependency_lock_sha256"],
                 "promotion_allowed": "false",
                 "purpose": spec.purpose,
@@ -907,49 +928,31 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _current_commit(project_root: Path) -> str:
-    commit = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=project_root,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if commit.returncode != 0:
-        return "UNCOMMITTED"
-    status = subprocess.run(
-        ["git", "status", "--porcelain"],
-        cwd=project_root,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    suffix = "-dirty" if status.returncode != 0 or status.stdout.strip() else ""
-    return f"{commit.stdout.strip()}{suffix}"
-
-
 def _require_clean_lineage(
     *,
     code_commit: str,
     lakehouse_commit: str,
+    lakehouse_component_dirty: bool | None,
+    training_component_dirty: bool,
     allow_dirty: bool,
 ) -> None:
     if allow_dirty:
         return
-    dirty_values = [
-        value
-        for value in (code_commit, lakehouse_commit)
-        if value == "UNCOMMITTED" or value.endswith("-dirty")
-    ]
-    if dirty_values:
+    if code_commit == "UNCOMMITTED":
         raise RuntimeError(
-            "clean training requires committed code and a clean lakehouse build; "
-            "commit M019, rebuild PaySim lakehouse, then retry"
+            "component-guarded training requires a Git commit for the training implementation"
         )
-    if code_commit != lakehouse_commit:
+    legacy_lakehouse_dirty = lakehouse_component_dirty is None and (
+        lakehouse_commit == "UNCOMMITTED" or lakehouse_commit.endswith("-dirty")
+    )
+    if lakehouse_component_dirty is True or legacy_lakehouse_dirty:
         raise RuntimeError(
-            "training code commit must equal application lakehouse code commit; "
-            f"{code_commit} != {lakehouse_commit}"
+            "training requires a lakehouse manifest produced from a clean lakehouse component"
+        )
+    if training_component_dirty:
+        raise RuntimeError(
+            "training component has uncommitted changes; commit the training/contract/lock "
+            "files, then retry. Documentation-only changes do not trigger this guard"
         )
 
 
@@ -995,10 +998,15 @@ def run_paysim_silver_training(
     application_manifest = ApplicationLakehouseManifest.model_validate_json(
         manifest_path.read_text(encoding="utf-8")
     )
-    code_commit = _current_commit(project_root)
+    code_commit = current_git_commit(project_root)
+    training_fingerprint = component_fingerprint(project_root, TRAINING_COMPONENT_PATHS)
+    training_component_dirty = component_dirty(project_root, TRAINING_COMPONENT_PATHS)
+    worktree_dirty = repository_dirty(project_root)
     _require_clean_lineage(
         code_commit=code_commit,
         lakehouse_commit=application_manifest.code_commit,
+        lakehouse_component_dirty=application_manifest.lakehouse_component_dirty,
+        training_component_dirty=training_component_dirty,
         allow_dirty=allow_dirty,
     )
 
@@ -1030,6 +1038,9 @@ def run_paysim_silver_training(
         "silver_transactions_version": str(sources.transactions_snapshot.version),
         "silver_labels_version": str(sources.labels_snapshot.version),
         "code_commit": code_commit,
+        "lineage_policy_version": LINEAGE_POLICY_VERSION,
+        "training_component_fingerprint": training_fingerprint,
+        "repository_dirty": str(worktree_dirty).lower(),
         "dependency_lock_sha256": dependency_lock_sha256,
     }
     model_parameters = _model_parameters(seed)
@@ -1044,6 +1055,9 @@ def run_paysim_silver_training(
                 "model_family": "lightgbm",
                 "promotion_allowed": "false",
                 "code_commit": code_commit,
+                "lineage_policy_version": LINEAGE_POLICY_VERSION,
+                "training_component_fingerprint": training_fingerprint,
+                "repository_dirty": str(worktree_dirty).lower(),
             }
         )
         dependencies.mlflow.log_params(
@@ -1063,6 +1077,13 @@ def run_paysim_silver_training(
                     manifest_path,
                     project_root,
                 ),
+                "application_lakehouse_code_commit": sources.manifest.code_commit,
+                "application_lakehouse_component_fingerprint": (
+                    sources.manifest.lakehouse_component_fingerprint
+                ),
+                "application_lakehouse_component_dirty": (
+                    sources.manifest.lakehouse_component_dirty
+                ),
                 "source_tables": [
                     item.model_dump(mode="json")
                     for item in (
@@ -1073,6 +1094,10 @@ def run_paysim_silver_training(
                 "partitions": [item.model_dump(mode="json") for item in vectors.partitions],
                 "vector_checksum": vectors.checksum,
                 "future_read_violations": vectors.future_read_violations,
+                "lineage_policy_version": LINEAGE_POLICY_VERSION,
+                "training_component_fingerprint": training_fingerprint,
+                "training_component_paths": list(TRAINING_COMPONENT_PATHS),
+                "repository_dirty": worktree_dirty,
             },
             "silver-lineage.json",
         )
@@ -1099,6 +1124,10 @@ def run_paysim_silver_training(
                 project_root,
             ),
             application_lakehouse_code_commit=sources.manifest.code_commit,
+            application_lakehouse_component_fingerprint=(
+                sources.manifest.lakehouse_component_fingerprint
+            ),
+            application_lakehouse_component_dirty=(sources.manifest.lakehouse_component_dirty),
             dataset_snapshot_id=sources.manifest.dataset_snapshot_id,
             raw_file_sha256=sources.manifest.raw_file_sha256,
             entity_definition_version=sources.manifest.entity_definition_version,
@@ -1122,6 +1151,11 @@ def run_paysim_silver_training(
             seed=seed,
             fixed_fpr=fixed_fpr,
             code_commit=code_commit,
+            lineage_policy_version=LINEAGE_POLICY_VERSION,
+            training_component_fingerprint=training_fingerprint,
+            training_component_paths=TRAINING_COMPONENT_PATHS,
+            training_component_dirty=training_component_dirty,
+            repository_dirty=worktree_dirty,
             dependency_lock_sha256=dependency_lock_sha256,
             dependency_versions={
                 package: _package_version(package)

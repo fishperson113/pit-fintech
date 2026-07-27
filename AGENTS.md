@@ -37,6 +37,9 @@ Project kéo dài 6 tuần, solo, gồm 3 sprint. Cloud deployment và TypeScrip
   `docs/reports/sprint-1-completion-report.md`. Notebook 05 đã được trả về trạng thái output-free;
   manifest và MLflow artifacts mới là evidence authoritative.
 - Sprint 2 bắt đầu từ exact Silver v1 và phải thêm probability-scoring wrapper trước serving.
+- M021 đang thay guard commit-equality bằng `component-fingerprint-v1`: exact Delta/contract là
+  source gate, training và lakehouse có fingerprint/dirty state riêng; docs-only commit không
+  yêu cầu rebuild Silver. Code đã implement nhưng user gates chưa chạy.
 - Notebook chỉ là EDA/experiment surface. Correctness, model và lakehouse logic nằm trong `src/`
   và `tests/`.
 - Redis/MLflow Compose mới là service boundary; Feast, Gold, backfill, materialization, serving,
@@ -149,10 +152,12 @@ M019 triển khai clean baseline riêng qua `train`/notebook 05:
 - chỉ chạy E1 static/temporal và E4 PIT/temporal;
 - train non-fraud có thể downsample deterministic theo transaction type;
 - validation/test luôn giữ natural prevalence;
-- yêu cầu Git commit của trainer và application lakehouse giống nhau và không dirty;
-- log FeatureSpec/Delta/vector/code/lock lineage vào MLflow và manifest;
-- hiện chỉ ở trạng thái implemented; user chưa chạy fixture gates, clean lakehouse rebuild hoặc
-  full-data training.
+- kiểm exact Delta versions/schema/logical checksum và FeatureSpec checksum;
+- dùng component fingerprint thay vì yêu cầu trainer/lakehouse cùng Git commit;
+- chặn uncommitted change trong training/lakehouse component nhưng không chặn docs-only change;
+- log FeatureSpec/Delta/vector/component/code/lock lineage vào MLflow và manifest;
+- verified baseline lịch sử dùng clean Silver v1/commit `6e93e7f…`; M021 policy mới chưa được
+  user verify.
 
 FeatureSpec PaySim đã khóa ngày 2026-07-27 qua ADR-003:
 

@@ -87,6 +87,11 @@ def test_paysim_delta_build_is_versioned_contract_safe_and_time_travelable(
     assert first.entity_definition_version == PAYSIM_ENTITY_DEFINITION_VERSION
     assert first.feature_definition_version == PAYSIM_FEATURE_DEFINITION_VERSION
     assert first.feature_contract_checksum == paysim_feature_contract_checksum()
+    assert first.lineage_policy_version == "component-fingerprint-v1"
+    assert len(first.lakehouse_component_fingerprint or "") == 64
+    assert first.lakehouse_component_paths
+    assert first.lakehouse_component_dirty is True
+    assert first.repository_dirty is True
     assert len(first.quality_gates) == 8
     assert all(gate.status == "pass" for gate in first.quality_gates)
     assert all(snapshot.rows == 12 for snapshot in first.tables)
