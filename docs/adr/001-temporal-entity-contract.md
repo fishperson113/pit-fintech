@@ -1,7 +1,11 @@
 # ADR-001: Temporal and entity contract
 
-- Status: accepted for the synthetic oracle; provisional for the application dataset
+- Status: accepted for the synthetic oracle; application-dataset portion superseded by ADR-002
 - Date: 2026-07-21
+
+The synthetic-oracle contract below remains accepted. The provisional IEEE-CIS application
+assumptions are retained as historical context but are superseded by
+[ADR-002](002-paysim-dataset-entity-scope.md).
 
 ## Decision
 

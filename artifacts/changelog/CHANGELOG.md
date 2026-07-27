@@ -1,5 +1,87 @@
 # Project changelog
 
+## 2026-07-27 — M015: Destination-centric PaySim leakage prototype
+
+- Replaced notebook 03's sparse `nameOrig` comparison with ADR-002-aligned customer-destination
+  history over conservative 1h/24h/168h windows.
+- Separated strict PIT, current-inclusive update-before-score, future contribution, centered
+  leaky control and lifetime full-history control so current and future leakage are measurable
+  independently.
+- Added reusable DuckDB computation in `src/`, a safe strict-PIT projection, explicit cold-start
+  indicators, fixed PaySim split defaults and multi-field target/vector identity guards.
+- Added a hand-calculated recipient temporal fixture and nine test functions covering same-step
+  exclusion, inclusive lower boundary, cold defaults, repeated-origin isolation, deterministic
+  reruns, split assignment, positive controls, safe lineage and invalid input.
+- Rewrote notebook 03 as 16 cells with compact JSON evidence, a guaranteed non-empty example and
+  an explanatory ±168-hour timeline.
+- Initial static JSON/style/semantic reviews found no blocker; runtime verification was delegated
+  to the user as required by the project workflow.
+- User-run `.\make.ps1 test-temporal` cleanly completed 23/23 temporal tests in 2.11 seconds with
+  exit code `0` after replacing the deprecated DuckDB call.
+- User-run `.\make.ps1 test-notebooks` passed notebooks 01–03 with exit code `0`. The Windows
+  ZMQ/TCP kernel messages are runtime warnings rather than notebook failures.
+- Saved notebook 03 evidence covers 38,213 deterministic cohort rows, records zero strict-PIT
+  cutoff violations for 1h/24h/168h, and detects future contributions in
+  4.3755%/23.5731%/40.2376% of rows respectively.
+- The notebook also preserves a non-empty cutoff example and all four timeline relations:
+  `PIT_PRIOR`, `TARGET_CURRENT`, `SAME_STEP_EXCLUDED` and `FUTURE_UNAVAILABLE`.
+- M015 is verified. Static/PIT model training and MLflow evidence remain a separate Sprint 1
+  deliverable.
+- Detail: [M015 log](milestones/M015-destination-leakage-prototype.md).
+
+## 2026-07-27 — M014: Keep PaySim as the primary pipeline workload
+
+- Accepted `docs/adr/002-paysim-dataset-entity-scope.md` after the user confirmed the project is
+  engineering/pipeline-first rather than an attempt to maximize fraud-model accuracy.
+- Locked PaySim status as `AMBER_CORRECTNESS_ONLY`: suitable for PIT correctness, reproducible
+  backfill, replay, parity and serving evidence, without claiming stable historical-feature model
+  lift across the complete population.
+- Locked hourly `step`, deterministic `(step, source_row_number)` ordering, conservative
+  strict-step model-utility evidence, customer destination history, 1h/24h/168h windows and
+  chronological splits 1-520 / 521-631 / 632-743.
+- Kept static request features and explicit cold-start behavior for all transactions; recipient
+  history is primarily a `CASH_OUT` experiment while fraud `TRANSFER` remains a cold path.
+- IEEE-CIS is now an optional thesis/model-utility viability spike, not an MVP replacement.
+- Marked M009 PaySim EDA and the dataset/entity ADR verified; persisted the decision in
+  `AGENTS.md`.
+- Detail: [M014 log](milestones/M014-paysim-application-decision.md).
+
+## 2026-07-27 — M009 refinement: cross-role PaySim account-history EDA
+
+- Confirmed from user-run commands that the full PaySim snapshot is available and reproducible:
+  `paysim1:16910f90577b0d98`, 493,534,783 bytes, 6,362,620 rows and steps 1–743.
+- Confirmed that the pre-refinement versions of all three PaySim notebooks executed successfully
+  on the full snapshot with exit code `0`.
+- Extended notebook 02 beyond separate `nameOrig`/`nameDest` cardinality. It now unifies `C...`
+  customer identities across sender and receiver roles while keeping `M...` merchants separate.
+- Added account-role overlap, row-level prior-history coverage by transaction type/fraud label,
+  and a diagnostic test for a linkable `TRANSFER -> CASH_OUT` mule sequence.
+- Kept `isFraud` restricted to retrospective coverage analysis; it is explicitly prohibited from
+  deployable feature computation.
+- User-run `Restart Kernel and Run All` completed all 10 code cells without errors. Only 1,769
+  customer accounts (0.0256%) appear in both roles; prior history for the current origin remains
+  approximately 0.15–0.27% across transaction/label groups.
+- The diagnostic found 0 of 4,116 fraudulent cash-outs with a linkable earlier incoming transfer.
+  This falsifies a linkable mule-chain assumption for this CSV but does not disprove the simulator
+  scenario itself.
+- Added the final PaySim dataset gate: current-destination history at conservative 1-hour,
+  24-hour and 7-day windows, separated by destination kind, transaction type, label and temporal
+  split. The table also quantifies how much same-hour CSV ordering would inflate coverage.
+- Predeclared a GREEN/AMBER/RED decision over customer `CASH_OUT`/`TRANSFER` slices before seeing
+  the outputs: keep PaySim as primary, retain it only for correctness/engineering evidence, or
+  trigger an IEEE-CIS viability spike.
+- User-run `Restart Kernel and Run All` completed all 13 code cells in order with no saved error
+  or traceback. Fraud `CASH_OUT` has 7-day warm counts 2,058/186/101 and coverage
+  70.9655%/31.5254%/16.1342% across train/validation/test, so it is AMBER under the frozen rule.
+- Fraud `TRANSFER` has only 4/0/0 warm rows and 0.1388%/0%/0% coverage, so it is RED. With no
+  GREEN slice and one AMBER slice, the deterministic dataset result is
+  `AMBER_CORRECTNESS_ONLY`: retain PaySim for PIT/MLOps correctness, but do not claim stable
+  historical-feature model value across the full fraud problem.
+- The saved Arrow representation truncates the literal final gate columns, but the visible
+  numeric inputs uniquely determine the classifications above; a compact machine-readable
+  decision artifact remains a later evidence improvement.
+- Detail: [M009 log](milestones/M009-paysim-eda-notebooks.md).
+
 ## 2026-07-24 — M013: Proposal deck title consistency
 
 - Synchronized the slide 1 title with slide 2 as `PIT-Correct Feature Platform for Fraud

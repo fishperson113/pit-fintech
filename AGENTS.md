@@ -107,6 +107,15 @@ hợp với feature-store research question.
 
 Nếu dùng PaySim, review leakage trước khi dùng các balance columns; ưu tiên `step`, transaction attributes và explicit origin/destination entity history.
 
+Quyết định đã khóa ngày 2026-07-27 qua `docs/adr/002-paysim-dataset-entity-scope.md`:
+
+- giữ PaySim làm application workload chính cho pipeline;
+- dataset gate là `AMBER_CORRECTNESS_ONLY`: phù hợp để chứng minh PIT/MLOps correctness nhưng
+  không đủ để claim historical features cải thiện fraud model ổn định trên toàn population;
+- recipient history chủ yếu có ý nghĩa cho `CASH_OUT`; fraud `TRANSFER` phải hỗ trợ cold-start;
+- IEEE-CIS chỉ là optional viability spike nếu về sau mở rộng thesis/model-utility scope, không
+  phải dataset thay thế trong MVP.
+
 ## 7. Stack đã chốt
 
 | Layer | Công nghệ |

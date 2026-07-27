@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-07-24. Status words are strict:
+Last updated: 2026-07-27. Status words are strict:
 
 - **planned**: present in the six-week guide, with no claim that code exists;
 - **implemented**: code/artifact exists but the relevant gate may not have run;
@@ -11,7 +11,7 @@ Last updated: 2026-07-24. Status words are strict:
 | Artifact / guard | Status | Evidence |
 |---|---|---|
 | Cumulative changelog | verified | `artifacts/changelog/CHANGELOG.md` |
-| Detailed milestone logs | verified | M001–M010 logs under `artifacts/changelog/milestones/` |
+| Detailed milestone logs | verified | M001–M015 logs under `artifacts/changelog/milestones/` |
 | Milestone pre-commit guard | verified | four unit cases pass; installed at `.git/hooks/pre-commit` |
 | Human-readable reports location | verified | reports moved to `docs/reports/` |
 | Four-slide PIT proposal deck | verified | slide 2 states the full PIT-Correct Feature Platform for Fraud Detection name, objective, two execution paths (offline training and online serving), the cross-cutting OTel/Prometheus/Grafana observability layer, and four scope anchors; slide 3 embeds the user-authored architecture image; slide 4 now focuses only on the six-week engineering/MLOps outcome and evidence-backed handoff; 4 slides render at 1440x810 without overflow/errors; navigation passes |
@@ -21,6 +21,8 @@ Last updated: 2026-07-24. Status words are strict:
 | M006 reusable project self-review checklist | verified | `docs/reports/project-self-review-checklist.md`; 13 non-negotiable hard gates plus a 100-point evidence-based scorecard across data, correctness, SWE, MLOps, serving, operations and scale reasoning |
 | M011 knowledge defense checklist | verified | `docs/reports/knowledge-defense-checklist.md`; D0–D4 depth rubric, closed-note review protocol, detailed per-sprint knowledge gates, unseen-case drills, 24 final oral-defense prompts and shallow-understanding red flags |
 | M013 proposal deck title consistency | verified | Slide 1 and slide 2 now use the exact same project name: `PIT-Correct Feature Platform for Fraud Detection` |
+| M014 PaySim application decision | verified | ADR-002 accepts PaySim as the primary engineering workload with `AMBER_CORRECTNESS_ONLY`; IEEE-CIS remains an optional thesis/model-utility spike |
+| M015 destination-centric leakage prototype | verified | user-run `test-temporal` passed 23/23 in 2.11s with exit code `0`; user-run `test-notebooks` passed all three notebooks, and notebook 03 saved 8 sequential code-cell executions with 0 cutoff violations |
 | Ten-minute PIT meetup speaker script | verified | `docs/reports/pit-fintech-meetup-10min-script.md`; compressed four-slide talk track targets 9:20 plus buffer, keeps slide 3 as the technical core, and separates six concise mentor Q&A prompts from the spoken script; four slide headings, four closing claims, six Q&A prompts and required status/architecture claims pass the content scan; `git diff --check` passes |
 | Vietnamese PIT terminology catalog | verified | `docs/reports/catalog.md`; required-term scan, reader-aid structure and `git diff --check` pass |
 
@@ -31,15 +33,15 @@ Last updated: 2026-07-24. Status words are strict:
 | Project skeleton, lock policy, ignore/env files | verified | `uv sync --frozen --group dev` |
 | Make/PowerShell command boundary | verified | CLI commands exercised in this workspace |
 | Read-only environment doctor | verified | `pit doctor`; only expected Delta-extension/Kaggle/Git warnings |
-| Synthetic temporal source and hand-calculated vectors | verified | snapshot `synthetic-temporal-v1:c0909688e0e26e20` |
+| Synthetic temporal source and hand-calculated vectors | verified | current generated snapshot `synthetic-temporal-v1:1ef70772400a1d8e` |
 | Independent pre-decision PIT oracle | verified | 0 future reads across 12 temporal tests |
-| Temporal/unit test suite | verified | 12 temporal + 10 unit + 1 integration test pass |
+| Temporal/unit test suite | verified | user-run `.\make.ps1 test-temporal`: 23 passed in 2.11s, exit code `0`, with the deprecated DuckDB warning removed |
 | CI fixture lane | implemented | `.github/workflows/ci.yml` |
-| JupyterLab and three Sprint 1 notebooks | verified | all three target the real PaySim schema, never fall back to the synthetic oracle, resolve the repository root even when kernels start in `notebooks/`, and execute against the schema fixture; DuckDB query cells pass |
+| JupyterLab and three Sprint 1 notebooks | verified | user-run `.\make.ps1 test-notebooks`: PASS for notebooks 01–03 and exit code `0`; notebook 03 full-data output has 8 sequential code cells, no errors and zero PIT cutoff violations for 1h/24h/168h |
 | Redis + MLflow local service boundary | implemented | Compose config passes; image build hit host timeout and remains unverified |
-| PaySim access/checksum and EDA | implemented | PaySim discovery/schema validation, optional full SHA-256, DuckDB CLI profile, and three real-data EDA notebooks exist; full Kaggle snapshot is not present, so application row counts/checksum/EDA conclusions remain unverified |
-| PaySim raw snapshot command | verified | `make data-snapshot` and `.\make.ps1 data-snapshot` call the same CLI boundary; schema, SHA-256, row/step profile and atomic manifest persistence pass fixture unit tests; PowerShell help exposes the target, the current full 28-test suite passes, and execution on the full user-downloaded CSV remains pending |
-| Dataset/entity ADR | planned | PaySim first; IEEE-CIS and Home Credit are alternatives |
+| PaySim access/checksum and EDA | verified | full snapshot/profile, cross-role analysis and destination gate outputs are verified; `CASH_OUT` is AMBER with 7-day warm fraud counts 2,058/186/101 across train/validation/test, `TRANSFER` is RED with 4/0/0, yielding accepted status `AMBER_CORRECTNESS_ONLY` |
+| PaySim raw snapshot command | verified | user-run `.\make.ps1 data-snapshot` froze `paysim1:16910f90577b0d98`, 493,534,783 bytes, 6,362,620 rows and steps 1–743 in `artifacts/datasets/paysim1/16910f90577b0d98/snapshot-manifest.json` |
+| Dataset/entity ADR | verified | `docs/adr/002-paysim-dataset-entity-scope.md`; PaySim retained for engineering/PIT evidence, IEEE-CIS optional only if thesis/model-utility scope expands |
 | Bronze/Silver Delta sample | verified | 8 Bronze rows, 7 Silver rows, separated label table; 1 integration/time-travel test passes |
 | Model-family gate and static/PIT baseline | planned | lock after PaySim EDA; LightGBM is a candidate only |
 
