@@ -21,6 +21,35 @@
   temporal oracle evidence, application path, honest E1/E4 result and Sprint 2 handoff.
 - Added a closed-note ten-question knowledge review with D0–D4 scoring, hard-invariant flags and
   explicit pass criteria.
+- Interview Q1 scored D2: the three invariant intents and no-release decision were correct, but
+  evidence mapping, vector-parity wording and atomic/idempotent backfill lineage were incomplete.
+- Interview Q2 scored D2: eligible history, count, sum and late/entity exclusions were correct;
+  canonicalization, dedup retention, recency and post-score state were incomplete.
+- Interview Q3 scored D1: the late row was correctly excluded as unknowable at decision time,
+  but event/knowledge/processing time definitions, watermark and same-cutoff rebuild were missing.
+- Interview Q4 scored D2: origin sparsity, destination choice and AMBER engineering scope were
+  understood; additional quantitative evidence and a precise no-model-lift claim remain.
+- Interview Q5 scored D2: full-history leakage surviving any split boundary and the future-read
+  violation were correctly named, and the initial positive-control inversion was self-corrected;
+  leakage taxonomy (within-row vs across-split), the training/serving parity consequence and
+  control-logic reasoning under a changed assumption remain incomplete.
+- Interview Q6 scored D2: the `<`-to-`<=` mutation and its violation were correctly named;
+  oracle-as-store framing, missing non-clock divergence causes and no boundary test design
+  remain.
+- Interview Q7 scored D2: the raw-to-Gold flow and DuckDB/Delta/Parquet capability split were
+  correct; the Gold grain shift, the Parquet columnar model and the Delta-as-transaction-log
+  relationship remain incomplete.
+- Interview Q8 scored D2: Git commit, Delta version, snapshot ID and checksum were correctly
+  named; the fingerprint's lineage role, the ADR-004 rationale and the coordinates-versus-
+  detectors split remain incomplete.
+- Interview Q9 scored D2: E4's higher ROC-AUC and the PIT-feasibility framing were correct; the
+  FPR/precision mechanism, the correct E1/E4 subset relation and the PaySim static signal remain
+  missing.
+- Interview Q10 scored D1: the unknown-evidence caveat was honest, but the zero-history failure
+  case, its exact offset and a regression test were not produced.
+- Interview complete at 10/10 assessed (total 18/40). Hard-invariant questions Q1, Q2, Q3, Q5,
+  Q6 and Q10 remain below D3, so the Sprint 1 knowledge gate does not pass; remediation is
+  required.
 - Static structure and evidence reconciliation pass; direct `file://` browser rendering was
   policy-blocked, so visual confirmation and the interactive user interview remain.
 - Detail: [M022 log](milestones/M022-sprint-1-report-and-knowledge-review.md).
