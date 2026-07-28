@@ -1,7 +1,8 @@
 # M023 — CI dev-lane numpy dependency
 
 - Date: 2026-07-27
-- Status: implemented; green CI run pending user execution
+- Updated: 2026-07-28
+- Status: verified
 
 ## Scope and acceptance
 
@@ -67,7 +68,13 @@ Pending user execution:
 
 ## Known gaps and next step
 
-- Verification depends on the remote CI run turning green after `uv.lock` is committed; until
-  then this milestone stays implemented, not verified.
 - If a future unit test needs another `training`-only transitive dependency at import time, it
   must either mock it or be added to the `dev` group under the same reasoning.
+
+## CI confirmed green (2026-07-28)
+
+User confirmed by visual inspection that the GitHub Actions `fast-fixture-ci` workflow is green
+after `uv.lock` and `pyproject.toml` were pushed, including the "Unit tests" step that previously
+failed with `ModuleNotFoundError: No module named 'numpy'`. No command was executed by the agent.
+
+Status: verified.

@@ -60,3 +60,8 @@ Sample evidence:
 
 Verify IEEE-CIS access, run candidate entity sensitivity by Day 2, finalize ADR-001, and only
 then implement full-data lakehouse/profile and static/PIT model baselines.
+
+## Redis + MLflow compose verified (2026-07-28)
+
+docker compose up run on 2026-07-28; redis and mlflow healthchecks both pass (confirmed by
+repository owner).

@@ -1,7 +1,8 @@
 # M021 — Component-scoped lineage guard
 
 - Date: 2026-07-27
-- Status: implemented; implementation gates verified; post-commit CLI reuse pending
+- Updated: 2026-07-28
+- Status: verified
 
 ## Scope and acceptance
 
@@ -101,5 +102,34 @@ review and restaging; the changes were formatting-only.
 - Existing verified training manifests do not retroactively gain a component fingerprint; they
   remain valid historical evidence under their original clean-commit policy.
 - Fingerprint path sets are explicit and must be updated if component imports move.
-- Full CLI training reuse and new manifest fingerprint evidence are pending user execution after
-  the implementation is committed.
+
+## Post-commit reuse verified (2026-07-28)
+
+User-run `.\make.ps1 train`, no command executed by the agent. Manifest inspected:
+`artifacts/experiments/paysim-silver-training/5705bd4d1ceb4337b87f77059e99af79/manifest.json`.
+
+All three fields this milestone requires are present:
+
+```text
+training_component_fingerprint: f34ba2bd849e70c42a56ab9effd43acb9419cf7a8c6aedd99b81590071619f8b
+training_component_dirty: false
+repository_dirty: true
+```
+
+`repository_dirty: true` is expected, not a defect: at run time the repository had other
+uncommitted changes outside the training component's declared path set (this same M024 test
+work), and ADR-004 records repository-wide dirty state for transparency only — it is not the
+gate. The gate is `training_component_dirty`, which is `false`.
+
+`source_tables` in the same manifest show `silver.paysim_transactions` and `silver.paysim_labels`
+still at Delta `version: 2`, while `application_lakehouse_code_commit` remains the older
+`729d85fd38852e7c54eb8eb7681a3c8da1adf8ec` — the trainer ran from code commit `ba360fbabfd...`
+without rebuilding the lakehouse, which is exactly the post-commit reuse this milestone was
+pending on.
+
+The run also reproduced the frozen M019 result from an independent invocation: E1 test PR-AUC
+`0.258342`, E4 test PR-AUC `0.102766`, both matching the M019 manifest exactly; vector checksum
+`4713896b68a3021e116e8d887f93d39d2ce50446f0c6f160d448c4a3cf3f0cbd`; future-read violations `0`;
+MLflow parent run `5705bd4d1ceb4337b87f77059e99af79`.
+
+Status: verified.

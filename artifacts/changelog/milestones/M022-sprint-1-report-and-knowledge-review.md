@@ -1,7 +1,8 @@
 # M022 — Sprint 1 report deck and knowledge review
 
 - Date: 2026-07-27
-- Status: implemented; visual verification and interview pending
+- Updated: 2026-07-28
+- Status: implemented; deck visual verification passed, knowledge gate does not pass
 
 ## Scope and acceptance
 
@@ -107,6 +108,17 @@ Acceptance:
   criteria (no hard-invariant answer below D3, and temporal calculation confirmed on two
   different fixtures — only one fixture has been run). Remediation is required before Sprint 1
   can be called knowledge-pass.
-- Next: user still needs to open the deck for final visual confirmation; rebuild layers 2 and 3
-  first — boundary fixture for Q6, zero-history fixture for Q10 and control logic for Q5 — then
-  re-test Q1, Q2 and Q3 with evidence and a second temporal fixture.
+- Next: rebuild layers 2 and 3 first — boundary fixture for Q6, zero-history fixture for Q10 and
+  control logic for Q5 — then re-test Q1, Q2 and Q3 with evidence and a second temporal fixture.
+
+## Deck visual verification (2026-07-28)
+
+User confirmed by direct visual inspection that
+`docs/reports/pit-fintech-sprint-1-report-slides.html` renders correctly: no overflow, no
+console errors. This closes the deck half of this milestone's acceptance.
+
+The knowledge-review half is unaffected by this confirmation: the interview remains complete at
+10/10 assessed (18/40) with Q1, Q2, Q3, Q5, Q6 and Q10 below D3, so the Sprint 1 knowledge gate
+still does not pass. M024 has since added the test artifacts that Q5/Q6/Q10 remediation asked
+for (see `artifacts/changelog/milestones/M024-knowledge-review-remediation-tests.md`), but the
+interview itself has not been re-scored and this conclusion is intentionally left unchanged here.

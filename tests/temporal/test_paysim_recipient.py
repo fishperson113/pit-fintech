@@ -6,6 +6,7 @@ import pytest
 
 from pit_fintech.data.paysim import (
     BALANCE_COLUMNS,
+    EXPECTED_COLUMNS,
     LABEL_COLUMNS,
     POLICY_OUTPUT_COLUMNS,
     connect_paysim,
@@ -20,6 +21,7 @@ from pit_fintech.features.paysim_recipient import (
     recipient_leakage_window_gate,
     recipient_strict_pit_features,
 )
+from pit_fintech.models.paysim_lightgbm import EXPERIMENT_MATRIX
 
 pytestmark = pytest.mark.temporal
 
@@ -35,6 +37,10 @@ def _materialized_connection():
         validation_end_step=170,
     )
     return connection
+
+
+def _write_recipient_csv(path: Path, *rows: str) -> None:
+    path.write_text(",".join(EXPECTED_COLUMNS) + "\n" + "\n".join(rows) + "\n", encoding="utf-8")
 
 
 def test_strict_recipient_history_excludes_same_step_current_and_future() -> None:
@@ -116,6 +122,18 @@ def test_positive_controls_are_detectable_without_pit_cutoff_violations() -> Non
     assert gate[168]["future_read_rows"] > 0
 
 
+def test_e2_feature_set_uses_leaky_columns_not_pit_cutoff_columns() -> None:
+    e2 = next(spec for spec in EXPERIMENT_MATRIX if spec.experiment_id == "E2")
+
+    # E2 is the deliberately leaky positive control: its feature set must read the
+    # current-inclusive/future/lifetime columns (which see beyond the cutoff), never the
+    # `pit_prior_*` columns that E3/E4 use as their cutoff-safe reference. If someone
+    # accidentally repoints E2 at `PIT_FEATURE_COLUMNS`, this must fail.
+    assert not any(name.startswith("pit_prior_") for name in e2.feature_names)
+    assert "future_amount_168h" in e2.feature_names
+    assert "leaky_lifetime_amount" in e2.feature_names
+
+
 def test_example_and_timeline_are_nonempty_and_deterministic() -> None:
     connection = _materialized_connection()
     example = recipient_leakage_example(connection).to_pylist()
@@ -153,6 +171,59 @@ def test_repeated_origin_does_not_create_recipient_history() -> None:
     assert [row["pit_prior_count_168h"] for row in rows] == [0, 0]
     assert [row["pit_prior_amount_168h"] for row in rows] == [0.0, 0.0]
     assert [row["recipient_has_history_168h"] for row in rows] == [0, 0]
+
+
+def test_unseen_entity_is_cold_start_then_appears_in_next_transactions_history(
+    tmp_path: Path,
+) -> None:
+    """Guards read-history-before-update-state: no entity may keep an empty history forever.
+
+    If the serving order is inverted into update-state -> read-history -> score, a destination's
+    very first transaction would already see itself, turning a cold-start entity into one with
+    history of 1 on its own first row. The break this test traps is an exact plus-one offset on
+    that single unseen-entity row, distinct from the n-row window-boundary shift a `<`-to-`<=`
+    mutation would cause.
+    """
+    csv_path = tmp_path / "zero_history.csv"
+    _write_recipient_csv(
+        csv_path,
+        "10,TRANSFER,25.0,C_ZERO_A,100.0,75.0,C_ZERO,0.0,25.0,0,0",
+        "11,CASH_OUT,40.0,C_ZERO_B,100.0,60.0,C_ZERO,25.0,65.0,0,0",
+    )
+    connection = connect_paysim(csv_path)
+    materialize_recipient_leakage_vectors(connection)
+    rows = (
+        connection.sql(
+            """
+        SELECT
+            step,
+            pit_prior_count_1h, pit_prior_amount_1h, recipient_has_history_1h,
+            pit_prior_count_24h, pit_prior_amount_24h, recipient_has_history_24h,
+            pit_prior_count_168h, pit_prior_amount_168h, recipient_has_history_168h
+        FROM paysim_recipient_leakage_vectors
+        WHERE destination_entity_id = 'C_ZERO'
+        ORDER BY step
+        """
+        )
+        .to_arrow_table()
+        .to_pylist()
+    )
+
+    # Step 1 -- pre-score: the first-ever transaction to this destination must be cold-start on
+    # every window; it cannot see itself.
+    first = rows[0]
+    for hours in ("1h", "24h", "168h"):
+        assert first[f"pit_prior_count_{hours}"] == 0
+        assert first[f"pit_prior_amount_{hours}"] == 0.0
+        assert first[f"recipient_has_history_{hours}"] == 0
+
+    # Step 2 -- post-score: only after the first transaction has been scored may the second
+    # transaction to the same destination see it in its prior history.
+    second = rows[1]
+    for hours in ("1h", "24h", "168h"):
+        assert second[f"pit_prior_count_{hours}"] == 1
+        assert second[f"pit_prior_amount_{hours}"] == 25.0
+        assert second[f"recipient_has_history_{hours}"] == 1
 
 
 def test_explicit_split_contract_is_applied() -> None:

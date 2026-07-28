@@ -1,5 +1,66 @@
 # Project changelog
 
+## 2026-07-28 — M024: Knowledge-review remediation tests
+
+- Added 8 oracle boundary/mutation tests to `tests/temporal/test_reference_oracle.py`: four
+  fixtures pin the eligibility boundary (exactly-at-cutoff, strictly-before-cutoff,
+  outside-window, same-instant-different-entity), and four mutation/differential tests prove the
+  suite goes red if `order_key <` is weakened to `<=` or `created_timestamp <=` is tightened to
+  `<`, all via `monkeypatch` with no `src/` changes.
+- Added 2 tests to `tests/temporal/test_paysim_recipient.py`: a zero-history regression test that
+  separates pre-score (cold-start) from post-score (history now visible) assertions for an unseen
+  PaySim destination entity, and a feature-set regression test that fails if `E2`'s
+  `EXPERIMENT_MATRIX` entry ever picks up a `pit_prior_*` column instead of the leaky columns.
+- This closes the code/test half of the Q5/Q6/Q10 remediation recorded in
+  `docs/reports/sprint-1-knowledge-review.md`; it does not re-score the interview, and Q1, Q2,
+  Q3, Q5, Q6 and Q10 remain below D3 there.
+- An earlier draft of the E2 test compared a materialized column against itself and was rejected
+  during review for being tautologically green regardless of correctness; it was rewritten to
+  assert directly against `EXPERIMENT_MATRIX` in `src/pit_fintech/models/paysim_lightgbm.py`.
+- User-run `.\make.ps1 lint` passed (`ruff check`/`ruff format --check` clean) and
+  `.\make.ps1 test-temporal` went from 23 to 33 passed, matching the 10 new tests with none
+  skipped.
+- Detail: [M024 log](milestones/M024-knowledge-review-remediation-tests.md).
+
+## 2026-07-28 — M021 refinement: post-commit training reuse verified
+
+- User-run `.\make.ps1 train` reused Silver v2 without rebuilding the lakehouse
+  (`application_lakehouse_code_commit` stayed at the older `729d85f` while the trainer ran from
+  `ba360fb…`), closing the item M021 was left pending on.
+- Confirmed the manifest carries all three required fields: `training_component_fingerprint`
+  (`f34ba2bd…`), `training_component_dirty` (`false`), `repository_dirty` (`true`, expected since
+  other files were uncommitted at run time; the training component itself was clean).
+- E1/E4 reproduced the frozen M019 metrics exactly from an independent run (MLflow parent
+  `5705bd4d…`, vector checksum `4713896b…`, 0 future-read violations), proving reproducibility.
+- Status: verified.
+- Detail: [M021 log](milestones/M021-component-lineage-guard.md).
+
+## 2026-07-28 — M022 refinement: deck visual verification passed
+
+- User confirmed by direct visual inspection that
+  `docs/reports/pit-fintech-sprint-1-report-slides.html` renders with no overflow or console
+  errors, closing the deck half of M022's acceptance.
+- The knowledge-review half is unchanged: the interview remains complete at 10/10 assessed
+  (18/40) with Q1, Q2, Q3, Q5, Q6 and Q10 below D3, so the Sprint 1 knowledge gate still does not
+  pass. M024 added the Q5/Q6/Q10 remediation test artifacts on the same date, but the interview
+  itself was not re-scored.
+- Status: implemented; deck visual verification passed, knowledge gate does not pass.
+- Detail: [M022 log](milestones/M022-sprint-1-report-and-knowledge-review.md).
+
+## 2026-07-28 — M023 refinement: CI green run confirmed
+
+- User confirmed by visual inspection that the GitHub Actions `fast-fixture-ci` workflow is green
+  after `uv.lock`/`pyproject.toml` were pushed, including the "Unit tests" step that previously
+  failed with `ModuleNotFoundError: No module named 'numpy'`.
+- Status: verified.
+- Detail: [M023 log](milestones/M023-ci-dev-numpy-dependency.md).
+
+## 2026-07-28 — M001 refinement: Redis + MLflow compose verified
+
+- docker compose up run on 2026-07-28; redis and mlflow healthchecks both pass (confirmed by
+  repository owner).
+- Detail: [M001 log](milestones/M001-sprint-1-foundation.md).
+
 ## 2026-07-27 — M023: CI dev-lane numpy dependency
 
 - Diagnosed a CI-only `make test-unit` failure (`ModuleNotFoundError: No module named 'numpy'`)
