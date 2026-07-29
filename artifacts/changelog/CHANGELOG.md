@@ -1,5 +1,19 @@
 # Project changelog
 
+## 2026-07-29 — M025: ADR-005 knowledge_step and FeatureSpec v2 (proposed)
+
+- Added `docs/adr/005-knowledge-step-and-featurespec-v2.md`, copied verbatim from the prepared
+  draft, proposing a derived Bronze `knowledge_step` column (`knowledge_step = step`, raw CSV and
+  snapshot checksum unchanged) so the knowledge-time half of the temporal predicate
+  (`prior.created_time <= current.created_time`) can finally be exercised on the PaySim
+  application path, alongside a frozen `paysim-fraud-recipient-v2` FeatureSpec.
+- ADR-005 status is `proposed`, not `accepted`. This milestone is documentation only: no change to
+  `src/`, `tests/`, Bronze, Silver or the feature contract module.
+- Remaining steps before any of this is implemented: accept the ADR, freeze FeatureSpec v2, run a
+  no-op regression proving clean-data E1/E4 still reproduce exactly `0.258342`/`0.102766` from
+  M019, then add the hand-chosen knowledge-time boundary fixture.
+- Detail: [M025 log](milestones/M025-knowledge-step-and-featurespec-v2-adr.md).
+
 ## 2026-07-28 — M024: Knowledge-review remediation tests
 
 - Added 8 oracle boundary/mutation tests to `tests/temporal/test_reference_oracle.py`: four
