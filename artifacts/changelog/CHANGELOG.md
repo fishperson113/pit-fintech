@@ -1,5 +1,24 @@
 # Project changelog
 
+## 2026-07-29 — M026 refinement: clean-data no-op regression verified
+
+- User-run `build-lakehouse` then `train` on 2026-07-29 against rebuilt Silver
+  (`silver.paysim_transactions=v4`, `silver.paysim_labels=v4`) reproduced the M019 baseline
+  **bit-exact**: E1 PR-AUC `0.258342`, ROC-AUC `0.601620`, recall@FPR `0.275559`; E4 PR-AUC
+  `0.102766`, ROC-AUC `0.784978`, recall@FPR `0.036741`; 0 future-read violations.
+- Vector checksum `ff52681f1f6b06627b8f8c027a9277fc0bbcc0ab32fb90047effb5e578cc0ee7`, training
+  fingerprint `381de46fb8e3cfea2c2f7ae31f2eb88d50059d74429a9888e47293fa8b498377`, MLflow parent
+  run `d9d142db739243299cc1cb59184216a6`.
+- This is the regression required by ADR-005 decision 6: it proves, not just claims, that adding
+  `prior.knowledge_step <= current.knowledge_step` to both PIT engines' eligibility predicate
+  changes nothing on clean PaySim data.
+- The floating-point summation-order risk noted when M026 moved from window aggregates to hash
+  `GROUP BY`/`FILTER` aggregates did not materialize on this run (bit-exact match), but remains
+  unguarded by any test; a future checksum divergence between two runs on the same Silver version
+  is the first thing to check against it.
+- Status: verified.
+- Detail: [M026 log](milestones/M026-paysim-featurespec-v2-implementation.md).
+
 ## 2026-07-29 — M026: Implement ADR-005 knowledge_step and PaySim FeatureSpec v2
 
 - Bronze now emits a derived `knowledge_step BIGINT NOT NULL` column

@@ -1,7 +1,7 @@
 # M026 — Implement ADR-005: knowledge_step and PaySim FeatureSpec v2
 
 - Date: 2026-07-29
-- Status: implemented
+- Status: verified
 
 ## Scope and acceptance
 
@@ -74,10 +74,25 @@ User-confirmed clean on 2026-07-29 (agent did not execute these commands):
 
 Exact pass counts were not reported by the user and are not fabricated here.
 
-**Not run:** `build-lakehouse`, `train`, `test-lakehouse`. No Bronze/Silver rebuild and no model
-run have happened against this code. The clean-data no-op regression required by ADR-005 decision
-6 (E1 `0.258342` / E4 `0.102766` reproduced exactly) has **not** been executed and is therefore
-unverified.
+User-run evidence, 2026-07-29 (`build-lakehouse` then `train` against the rebuilt Silver):
+
+```text
+Silver versions: silver.paysim_transactions=v4, silver.paysim_labels=v4
+vector checksum: ff52681f1f6b06627b8f8c027a9277fc0bbcc0ab32fb90047effb5e578cc0ee7
+training fingerprint: 381de46fb8e3cfea2c2f7ae31f2eb88d50059d74429a9888e47293fa8b498377
+MLflow parent run: d9d142db739243299cc1cb59184216a6
+
+E1  PR-AUC 0.258342  ROC-AUC 0.601620  recall@FPR 0.275559
+E4  PR-AUC 0.102766  ROC-AUC 0.784978  recall@FPR 0.036741
+
+future-read violations: 0
+```
+
+E1 and E4 match the M019 baseline **bit-exact**. This is the regression required by ADR-005
+decision 6: it proves, not merely claims, that the knowledge-time condition
+(`prior.knowledge_step <= current.knowledge_step`) is a no-op on clean PaySim data, since adding
+it to both PIT engines' eligibility predicate changed neither metric from the pre-ADR-005 M019
+values.
 
 ## Files changed
 
@@ -101,31 +116,25 @@ unverified.
 
 ## Known gaps and next steps
 
-1. **The clean-data no-op regression has not been run.** Until `train` reproduces exactly
-   `0.258342` (E1) and `0.102766` (E4) from M019, the claim "the knowledge-time condition is a
-   no-op on clean data" is a design intent, not evidence.
-2. **`train` will be blocked until `build-lakehouse` runs again.** The Silver tables currently on
-   disk were built before `knowledge_step` existed, and the component-lineage guard
-   (`platform/lineage.py`, ADR-004) requires the manifest to come from a clean, matching component
-   fingerprint — a stale Silver cannot satisfy that gate.
-3. **Known numerical risk:** `sum(amount)` moved from a window aggregate to a hash-based
-   `GROUP BY`/`FILTER` aggregate, which does not guarantee the same floating-point summation
-   order. `pit_prior_amount_*h` may differ from the pre-M026 values in the last ulp, and E4 could
-   in principle shift in a far decimal place. E1 does not read through this path at all, so its
-   metric must match bit-exact; any E1 drift would indicate a real regression, not summation
-   order.
-4. **No knowledge-time boundary fixture or mutation test yet** — step 4 of the ADR-005 plan
+1. **No knowledge-time boundary fixture or mutation test yet** — step 4 of the ADR-005 plan
    (hand-chosen late-arrival fixture with a row exactly on the `<=` boundary, plus boundary/
    mutation coverage mirroring what M024 already did for event time) is still outstanding.
-5. **Two pre-existing, unintended differences between the two PIT engines remain**, unrelated to
+2. **Two pre-existing, unintended differences between the two PIT engines remain**, unrelated to
    this milestone's change and not introduced by it:
    - scope-rule source: `paysim_recipient.py` hardcodes `starts_with(nameDest, 'C')` and an
      inline transaction-type list, while `paysim_training.py` reads scope from
      `PAYSIM_FEATURE_CONTRACT`;
    - dtype: `recipient_has_history_*` is typed differently between the two paths (`INTEGER` vs
      `BIGINT`).
-6. **Not done: extract a shared `features/pit_sql.py`.** The prior-window predicate
+3. **Not done: extract a shared `features/pit_sql.py`.** The prior-window predicate
    (`prior_window_predicate()`) and the aggregate-column builder (`pit_window_aggregates()`) now
    exist as two hand-synchronized, textually identical copies in `paysim_recipient.py` and
    `paysim_training.py`. A shared module plus a differential test that runs both paths against the
    same fixture would remove the duplication and make future drift impossible to miss silently.
+4. **The floating-point summation-order risk did not materialize on this run, but nothing guards
+   it.** `sum(amount)` moved from a window aggregate to a hash-based `GROUP BY`/`FILTER`
+   aggregate, which does not guarantee the same summation order as the pre-M026 window path; E1
+   and E4 matched M019 bit-exact this time, so no drift occurred on this Silver/this DuckDB
+   version. There is still no test pinning summation order or checksums across repeated runs. If
+   `vector_checksum` ever differs between two runs against the same Silver version, this
+   aggregation-order change is the first suspect to check.
