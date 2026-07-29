@@ -13,6 +13,7 @@ import duckdb
 import pyarrow as pa
 
 from pit_fintech.features.paysim_specs import (
+    PAYSIM_AMOUNT_DECIMAL_TYPE,
     PAYSIM_FEATURE_DEFINITION_VERSION,
     PAYSIM_HISTORY_FEATURE_NAMES,
 )
@@ -102,7 +103,7 @@ def _window_columns(window_steps: int) -> str:
         (count(s.source_row_number) FILTER (WHERE {prior}))::BIGINT
             AS pit_prior_count_{window_steps}h,
         coalesce(
-            sum(s.amount) FILTER (WHERE {prior}),
+            sum(CAST(s.amount AS {PAYSIM_AMOUNT_DECIMAL_TYPE})) FILTER (WHERE {prior}),
             0.0
         )::DOUBLE AS pit_prior_amount_{window_steps}h,
         (max(s.step) FILTER (WHERE {prior}))::BIGINT
@@ -110,23 +111,35 @@ def _window_columns(window_steps: int) -> str:
         (count(s.source_row_number) FILTER (WHERE {future}))::BIGINT
             AS future_count_{window_steps}h,
         coalesce(
-            sum(s.amount) FILTER (WHERE {future}),
+            sum(CAST(s.amount AS {PAYSIM_AMOUNT_DECIMAL_TYPE})) FILTER (WHERE {future}),
             0.0
         )::DOUBLE AS future_amount_{window_steps}h
     """
 
 
 def _derived_window_columns(window_steps: int) -> str:
+    """Derive the control columns, adding money in DECIMAL so the sums stay exact.
+
+    Scalar addition of a fixed operand list is already order-stable, so these columns were never
+    the source of checksum drift. They are added in DECIMAL anyway: mixing an exact aggregate with
+    a rounding scalar addition would reintroduce a last-ulp difference between
+    ``current_inclusive_amount`` and the ``pit_prior_amount`` it is compared against in the
+    leakage gate.
+    """
+
+    prior_amount = f"CAST(pit_prior_amount_{window_steps}h AS {PAYSIM_AMOUNT_DECIMAL_TYPE})"
+    future_amount = f"CAST(future_amount_{window_steps}h AS {PAYSIM_AMOUNT_DECIMAL_TYPE})"
+    current = f"CAST(current_amount AS {PAYSIM_AMOUNT_DECIMAL_TYPE})"
     return f"""
         CASE WHEN pit_prior_count_{window_steps}h > 0 THEN 1 ELSE 0 END
             AS recipient_has_history_{window_steps}h,
         pit_prior_count_{window_steps}h + 1
             AS current_inclusive_count_{window_steps}h,
-        pit_prior_amount_{window_steps}h + current_amount
+        ({prior_amount} + {current})::DOUBLE
             AS current_inclusive_amount_{window_steps}h,
         pit_prior_count_{window_steps}h + 1 + future_count_{window_steps}h
             AS leaky_centered_count_{window_steps}h,
-        pit_prior_amount_{window_steps}h + current_amount + future_amount_{window_steps}h
+        ({prior_amount} + {current} + {future_amount})::DOUBLE
             AS leaky_centered_amount_{window_steps}h
     """
 
@@ -242,7 +255,7 @@ def materialize_recipient_leakage_vectors(
                 count(*) OVER (
                     PARTITION BY destination_entity_id
                 )::BIGINT AS leaky_lifetime_count,
-                sum(amount) OVER (
+                sum(CAST(amount AS {PAYSIM_AMOUNT_DECIMAL_TYPE})) OVER (
                     PARTITION BY destination_entity_id
                 )::DOUBLE AS leaky_lifetime_amount
             FROM scoped_history
@@ -396,9 +409,15 @@ def recipient_leakage_window_gate(
                 WHEN abs(leaky_centered_amount - pit_prior_amount) > 1e-9
                 THEN 1 ELSE 0
             END) AS positive_control_changed_rows,
-            round(avg(current_inclusive_amount - pit_prior_amount), 2)
-                AS mean_current_contribution,
-            round(avg(future_amount), 2) AS mean_future_contribution
+            round(
+                avg(
+                    CAST(current_inclusive_amount AS {PAYSIM_AMOUNT_DECIMAL_TYPE})
+                    - CAST(pit_prior_amount AS {PAYSIM_AMOUNT_DECIMAL_TYPE})
+                ),
+                2
+            )::DOUBLE AS mean_current_contribution,
+            round(avg(CAST(future_amount AS {PAYSIM_AMOUNT_DECIMAL_TYPE})), 2)::DOUBLE
+                AS mean_future_contribution
         FROM comparison
         GROUP BY window_hours
         ORDER BY window_hours
@@ -432,9 +451,15 @@ def recipient_leakage_breakdown(
                 WHEN abs(leaky_centered_amount - pit_prior_amount) > 1e-9
                 THEN 1 ELSE 0
             END) AS positive_control_changed_rows,
-            round(avg(current_inclusive_amount - pit_prior_amount), 2)
-                AS mean_current_contribution,
-            round(avg(future_amount), 2) AS mean_future_contribution
+            round(
+                avg(
+                    CAST(current_inclusive_amount AS {PAYSIM_AMOUNT_DECIMAL_TYPE})
+                    - CAST(pit_prior_amount AS {PAYSIM_AMOUNT_DECIMAL_TYPE})
+                ),
+                2
+            )::DOUBLE AS mean_current_contribution,
+            round(avg(CAST(future_amount AS {PAYSIM_AMOUNT_DECIMAL_TYPE})), 2)::DOUBLE
+                AS mean_future_contribution
         FROM comparison
         GROUP BY window_hours, split, transaction_type, target_label
         ORDER BY

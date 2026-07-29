@@ -42,6 +42,7 @@ from pit_fintech.features.paysim_recipient import (
     PAYSIM_VALIDATION_END_STEP,
 )
 from pit_fintech.features.paysim_specs import (
+    PAYSIM_AMOUNT_DECIMAL_TYPE,
     PAYSIM_ENTITY_DEFINITION_VERSION,
     PAYSIM_FEATURE_CONTRACT,
     PAYSIM_FEATURE_DEFINITION_VERSION,
@@ -421,7 +422,7 @@ def _window_columns(window_steps: int) -> str:
         (count(s.source_row_number) FILTER (WHERE {prior}))::BIGINT
             AS pit_prior_count_{window_steps}h,
         coalesce(
-            sum(s.amount) FILTER (WHERE {prior}),
+            sum(CAST(s.amount AS {PAYSIM_AMOUNT_DECIMAL_TYPE})) FILTER (WHERE {prior}),
             0.0
         )::DOUBLE AS pit_prior_amount_{window_steps}h,
         (max(s.step) FILTER (WHERE {prior}))::BIGINT

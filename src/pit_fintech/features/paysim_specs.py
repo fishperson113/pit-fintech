@@ -20,6 +20,15 @@ PAYSIM_LABEL_SOURCE: Final = "silver.paysim_labels"
 PAYSIM_ENTITY: Final = "destination_entity_id"
 PAYSIM_ENTITY_DEFINITION_VERSION: Final = "paysim-destination-customer-v1"
 
+# Money is summed as this DECIMAL type, never as DOUBLE. Integer-scaled addition is exact,
+# associative and commutative, so a parallel hash aggregate produces the same value no matter how
+# partial sums are merged; DOUBLE addition does not, which made vector_checksum drift between runs
+# of identical code. Only the final projection casts back to the DOUBLE dtype the contract
+# declares, so this is a numeric-stability decision, not a contract change. PaySim tops out near
+# 9.2e7 per row and ~1.1e12 for a full-history sum, four orders below the ~1e16 ceiling. Enforced
+# at lakehouse build time by the `amount_decimal_roundtrip_failures` quality gate.
+PAYSIM_AMOUNT_DECIMAL_TYPE: Final = "DECIMAL(18,2)"
+
 PAYSIM_STATIC_FEATURE_NAMES: Final = (
     "current_amount",
     "event_step",

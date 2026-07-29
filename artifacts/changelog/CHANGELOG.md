@@ -1,5 +1,65 @@
 # Project changelog
 
+## 2026-07-29 — M027 refinement: determinism fix verified
+
+- User-run 2026-07-29: two separate, consecutive `train` runs against rebuilt Silver
+  (`silver.paysim_transactions=v6`, `silver.paysim_labels=v6`) produced the **same**
+  `vector_checksum` (`ce88d250000ec529e42c03a201991ae8f69cb3e3607ad7ac4301a1d4f3216247`), training
+  fingerprint `a005f4ea7dac09c19b82be2c95ac5f4afbd9d174ac19826d1a1662694dfafeef`, MLflow runs
+  `d398b7e5fc474b4cb707cc7d97eda5b2` and `6d250b52cc574db9880cfd80e8aa7db2`.
+- E1 PR-AUC `0.258342`, ROC-AUC `0.601620`, recall@FPR `0.275559`, precision@FPR `0.541601`; E4
+  PR-AUC `0.102766`, ROC-AUC `0.784978`, recall@FPR `0.036741`, precision@FPR `0.243386`; 0
+  future-read violations. Neither metric moved from the M019/M026 baseline despite the underlying
+  arithmetic changing from `DOUBLE` to `DECIMAL(18,2)`.
+- `.\make.ps1 test-temporal`: 47 passed (up from 33; the 14 new cases are the 7 new money-
+  arithmetic/knowledge-time tests in `test_injected_pit_fixtures.py` parametrized over both PIT
+  engines). `.\make.ps1 test-unit`: 39 passed.
+- Notable: the old DOUBLE rounding error was small enough to never cross a LightGBM histogram-bin
+  boundary — invisible to every reported metric — yet large enough to change the last bit of the
+  summation and therefore `vector_checksum`. That gap is exactly why `vector_checksum` exists as
+  an independent reproducibility signal rather than trusting metrics alone.
+- This confirms the pass criterion M027 was left on: two separate `train` processes against the
+  same Silver version now agree byte-for-byte. Confirmed on one machine/core count only; a
+  different core count (which would exercise a different hash-aggregate thread/partial-sum count)
+  has not yet been tried.
+- Status: verified.
+- Detail: [M027 log](milestones/M027-decimal-money-sums-checksum-fix.md).
+
+## 2026-07-29 — M027: fix non-deterministic vector_checksum (sum money in DECIMAL)
+
+- Diagnosed why three `train` runs against the same Silver v4 produced three different
+  `vector_checksum` values (`ff52681f…`/`4790cffe…`/`28c5d63d…`) while E1/E4 metrics stayed
+  bit-exact and `future_read_violations` stayed 0 every time: runs 2 and 3 shared the same commit
+  and training component fingerprint yet still disagreed, ruling out a code/contract cause.
+- Root cause: `sum(amount)` over `DOUBLE` is not order-independent, and the M026 refactor from
+  `OVER (PARTITION BY ... ORDER BY step)` window frames to range-join `GROUP BY`/`FILTER`
+  aggregates removed the implicit `ORDER BY` that had been pinning summation order. DuckDB's
+  parallel hash `GROUP BY` merges partial sums in a run-to-run order, so rounding plus
+  non-deterministic order combined for the first time. This is a regression from the M026
+  refactor, not a pre-existing defect.
+- Fix: added `PAYSIM_AMOUNT_DECIMAL_TYPE = "DECIMAL(18,2)"`
+  (`src/pit_fintech/features/paysim_specs.py`) and moved every money `sum()` in both PIT engines
+  (`features/paysim_recipient.py`, `models/paysim_training.py`) to sum in that DECIMAL type,
+  casting to `DOUBLE` only at the final projection. Fixed-point addition is exact, associative and
+  commutative, so a hash aggregate cannot disagree with itself regardless of merge order. Chosen
+  over locking summation order, which would only constrain *how* the sum runs rather than remove
+  the rounding sensitivity. Contract dtype stays `float64`; no version bump (no semantics/order/
+  dtype/default changed under ADR-003's change policy).
+- Added a 9th publish-blocking quality gate, `amount_decimal_roundtrip_failures`
+  (`src/pit_fintech/data/paysim_lakehouse.py`): every raw `amount` must round-trip through
+  `DECIMAL(18,2)` back to `DOUBLE` unchanged, or the build fails loudly instead of silently
+  rounding money. `tests/integration/test_paysim_lakehouse.py` gate-count assertion moved 8 -> 9.
+- Replaced `tests/temporal/test_knowledge_time_predicate.py` with
+  `tests/temporal/test_injected_pit_fixtures.py` (same knowledge-time boundary/mutation coverage
+  carried over), and added `test_money_sums_equal_the_exact_decimal_total` (asserts every money
+  column against an independently computed `decimal.Decimal` exact total — the load-bearing
+  regression test) and `test_materializing_twice_produces_identical_vectors` (weaker same-process
+  reproducibility check), both parametrized over the `recipient`/`training` engines.
+- Status: implemented, not verified — `build-lakehouse`/`train` have not been re-run since this
+  fix was written; the pass criterion is two separate `train` runs producing an identical
+  `vector_checksum`.
+- Detail: [M027 log](milestones/M027-decimal-money-sums-checksum-fix.md).
+
 ## 2026-07-29 — M026 refinement: clean-data no-op regression verified
 
 - User-run `build-lakehouse` then `train` on 2026-07-29 against rebuilt Silver

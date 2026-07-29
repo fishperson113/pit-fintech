@@ -26,6 +26,7 @@ from pit_fintech.data.paysim import (
     sha256_file,
 )
 from pit_fintech.features.paysim_specs import (
+    PAYSIM_AMOUNT_DECIMAL_TYPE,
     PAYSIM_ENTITY_DEFINITION_VERSION,
     PAYSIM_FEATURE_DEFINITION_VERSION,
     PAYSIM_FORBIDDEN_MODEL_INPUTS,
@@ -51,6 +52,9 @@ LAKEHOUSE_COMPONENT_PATHS: Final = (
     "pyproject.toml",
     "uv.lock",
 )
+# Publish-blocking gate: every raw amount must round-trip through PAYSIM_AMOUNT_DECIMAL_TYPE
+# without changing value, because every downstream money sum is computed in that DECIMAL type.
+AMOUNT_DECIMAL_GATE: Final = "amount_decimal_roundtrip_failures"
 PAYSIM_TRANSACTION_TYPES: Final = (
     "CASH_IN",
     "CASH_OUT",
@@ -280,7 +284,12 @@ def _quality_gates(
             )::BIGINT AS invalid_label_rows,
             count(*) FILTER (
                 WHERE isFlaggedFraud IS NULL OR isFlaggedFraud NOT IN (0, 1)
-            )::BIGINT AS invalid_policy_rows
+            )::BIGINT AS invalid_policy_rows,
+            count(*) FILTER (
+                WHERE CAST(
+                    TRY_CAST(amount AS {PAYSIM_AMOUNT_DECIMAL_TYPE}) AS DOUBLE
+                ) IS DISTINCT FROM amount
+            )::BIGINT AS {AMOUNT_DECIMAL_GATE}
         FROM paysim
         """
     ).fetchone()
@@ -296,14 +305,29 @@ def _quality_gates(
         "invalid_entity_rows",
         "invalid_label_rows",
         "invalid_policy_rows",
+        AMOUNT_DECIMAL_GATE,
     )
     observed = tuple(int(value) for value in result)
-    expected = (expected_source_rows, 0, 0, 0, 0, 0, 0, 0)
+    expected = (expected_source_rows, 0, 0, 0, 0, 0, 0, 0, 0)
     failures = {
         name: {"observed": actual, "expected": wanted}
         for name, actual, wanted in zip(names, observed, expected, strict=True)
         if actual != wanted
     }
+    if AMOUNT_DECIMAL_GATE in failures:
+        raise ValueError(
+            "PaySim amount values do not survive the "
+            f"{PAYSIM_AMOUNT_DECIMAL_TYPE} round trip that makes money sums deterministic: "
+            f"{failures[AMOUNT_DECIMAL_GATE]['observed']} of {observed[0]} source rows change "
+            f"value when cast to {PAYSIM_AMOUNT_DECIMAL_TYPE} and back to DOUBLE. "
+            "Feature money columns are summed as DECIMAL precisely so that addition is exact and "
+            "independent of the order a parallel aggregate merges partial sums; a row needing "
+            "more than 2 decimal places, or exceeding the DECIMAL range, would be silently "
+            "rounded here instead. "
+            "Fix: raise the scale or precision of PAYSIM_AMOUNT_DECIMAL_TYPE in "
+            "features/paysim_specs.py to cover the observed values, then rebuild Bronze/Silver "
+            "and re-run the training baseline so the recorded checksums match the new arithmetic."
+        )
     if failures:
         raise ValueError(
             "PaySim publish-blocking quality gates failed: " + json.dumps(failures, sort_keys=True)

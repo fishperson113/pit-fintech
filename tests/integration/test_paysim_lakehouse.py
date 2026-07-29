@@ -92,7 +92,7 @@ def test_paysim_delta_build_is_versioned_contract_safe_and_time_travelable(
     assert first.lakehouse_component_paths
     assert first.lakehouse_component_dirty is True
     assert first.repository_dirty is True
-    assert len(first.quality_gates) == 8
+    assert len(first.quality_gates) == 9
     assert all(gate.status == "pass" for gate in first.quality_gates)
     assert all(snapshot.rows == 12 for snapshot in first.tables)
     assert first_manifest_path == second_manifest_path
