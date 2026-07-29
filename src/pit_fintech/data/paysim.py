@@ -171,6 +171,7 @@ def connect_paysim(csv_path: Path) -> duckdb.DuckDBPyConnection:
         SELECT
             row_number() OVER ()::BIGINT AS source_row_number,
             step::BIGINT AS step,
+            step::BIGINT AS knowledge_step,
             type::VARCHAR AS type,
             amount::DOUBLE AS amount,
             nameOrig::VARCHAR AS nameOrig,

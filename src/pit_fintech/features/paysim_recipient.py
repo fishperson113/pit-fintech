@@ -19,6 +19,7 @@ from pit_fintech.features.paysim_specs import (
 
 PAYSIM_RECIPIENT_FEATURE_VERSION: Final = PAYSIM_FEATURE_DEFINITION_VERSION
 LEAKAGE_WINDOWS_STEPS: Final = (1, 24, 168)
+MAX_LEAKAGE_WINDOW_STEPS: Final = max(LEAKAGE_WINDOWS_STEPS)
 PAYSIM_TRAIN_END_STEP: Final = 520
 PAYSIM_VALIDATION_END_STEP: Final = 631
 TARGET_TABLE: Final = "paysim_leakage_targets"
@@ -68,37 +69,48 @@ def _require_vectors(connection: duckdb.DuckDBPyConnection) -> None:
         ) from exc
 
 
+def _prior_window_predicate(window_steps: int) -> str:
+    """Range-join form of ``RANGE BETWEEN {w} PRECEDING AND 1 PRECEDING`` plus knowledge time.
+
+    Both step bounds are inclusive and ``c.step - 1`` excludes every same-step row, matching
+    ADR-003. The trailing knowledge-time condition is the ADR-005 addition; on clean data
+    ``knowledge_step = step``, so it is implied by ``s.step <= c.step - 1`` and changes nothing.
+    """
+
+    return (
+        f"s.step >= c.step - {window_steps}"
+        " AND s.step <= c.step - 1"
+        " AND s.knowledge_step <= c.knowledge_step"
+    )
+
+
+def _future_window_predicate(window_steps: int) -> str:
+    """Range-join form of ``RANGE BETWEEN 1 FOLLOWING AND {w} FOLLOWING``.
+
+    The knowledge-time condition is deliberately omitted: ``future_*`` are the E2 positive
+    controls whose only purpose is to read across the cutoff, so restricting what they may know
+    would destroy the control.
+    """
+
+    return f"s.step >= c.step + 1 AND s.step <= c.step + {window_steps}"
+
+
 def _window_columns(window_steps: int) -> str:
+    prior = _prior_window_predicate(window_steps)
+    future = _future_window_predicate(window_steps)
     return f"""
-        count(*) OVER (
-            PARTITION BY destination_entity_id
-            ORDER BY step
-            RANGE BETWEEN {window_steps} PRECEDING AND 1 PRECEDING
-        )::BIGINT AS pit_prior_count_{window_steps}h,
+        (count(s.source_row_number) FILTER (WHERE {prior}))::BIGINT
+            AS pit_prior_count_{window_steps}h,
         coalesce(
-            sum(amount) OVER (
-                PARTITION BY destination_entity_id
-                ORDER BY step
-                RANGE BETWEEN {window_steps} PRECEDING AND 1 PRECEDING
-            ),
+            sum(s.amount) FILTER (WHERE {prior}),
             0.0
         )::DOUBLE AS pit_prior_amount_{window_steps}h,
-        max(step) OVER (
-            PARTITION BY destination_entity_id
-            ORDER BY step
-            RANGE BETWEEN {window_steps} PRECEDING AND 1 PRECEDING
-        )::BIGINT AS max_pit_source_step_{window_steps}h,
-        count(*) OVER (
-            PARTITION BY destination_entity_id
-            ORDER BY step
-            RANGE BETWEEN 1 FOLLOWING AND {window_steps} FOLLOWING
-        )::BIGINT AS future_count_{window_steps}h,
+        (max(s.step) FILTER (WHERE {prior}))::BIGINT
+            AS max_pit_source_step_{window_steps}h,
+        (count(s.source_row_number) FILTER (WHERE {future}))::BIGINT
+            AS future_count_{window_steps}h,
         coalesce(
-            sum(amount) OVER (
-                PARTITION BY destination_entity_id
-                ORDER BY step
-                RANGE BETWEEN 1 FOLLOWING AND {window_steps} FOLLOWING
-            ),
+            sum(s.amount) FILTER (WHERE {future}),
             0.0
         )::DOUBLE AS future_amount_{window_steps}h
     """
@@ -131,6 +143,10 @@ def materialize_recipient_leakage_vectors(
     The target cohort includes every customer-destination fraud row for ``CASH_OUT`` and
     ``TRANSFER`` plus a bounded deterministic non-fraud sample per temporal split and type.
     History is computed before the target join, over every event for each selected destination.
+
+    History uses a single range self-join rather than window frames, because the FeatureSpec v2
+    eligibility predicate compares two columns (``step`` and ``knowledge_step``) between source
+    and cutoff and ``RANGE BETWEEN`` can only order by one.
     """
 
     _validate_sample_size(nonfraud_sample_per_group)
@@ -206,6 +222,7 @@ def materialize_recipient_leakage_vectors(
             SELECT
                 event.source_row_number,
                 event.step,
+                event.knowledge_step,
                 event.type AS source_transaction_type,
                 event.nameOrig AS origin_entity_id,
                 event.nameDest AS destination_entity_id,
@@ -213,15 +230,15 @@ def materialize_recipient_leakage_vectors(
             FROM paysim AS event
             SEMI JOIN target_destinations
                 ON target_destinations.destination_entity_id = event.nameDest
-        ), windowed AS (
+        ), cutoffs AS (
             SELECT
                 source_row_number,
                 step,
+                knowledge_step,
                 source_transaction_type,
                 origin_entity_id,
                 destination_entity_id,
                 amount,
-                {window_columns},
                 count(*) OVER (
                     PARTITION BY destination_entity_id
                 )::BIGINT AS leaky_lifetime_count,
@@ -229,6 +246,33 @@ def materialize_recipient_leakage_vectors(
                     PARTITION BY destination_entity_id
                 )::DOUBLE AS leaky_lifetime_amount
             FROM scoped_history
+        ), windowed AS (
+            SELECT
+                c.source_row_number,
+                c.step,
+                c.source_transaction_type,
+                c.origin_entity_id,
+                c.destination_entity_id,
+                c.amount,
+                {window_columns},
+                c.leaky_lifetime_count,
+                c.leaky_lifetime_amount
+            FROM cutoffs AS c
+            LEFT JOIN scoped_history AS s
+                ON s.destination_entity_id = c.destination_entity_id
+                AND s.step >= c.step - {MAX_LEAKAGE_WINDOW_STEPS}
+                AND s.step <= c.step + {MAX_LEAKAGE_WINDOW_STEPS}
+                AND s.step <> c.step
+            GROUP BY
+                c.source_row_number,
+                c.step,
+                c.knowledge_step,
+                c.source_transaction_type,
+                c.origin_entity_id,
+                c.destination_entity_id,
+                c.amount,
+                c.leaky_lifetime_count,
+                c.leaky_lifetime_amount
         ), target_vectors AS (
             SELECT
                 '{PAYSIM_RECIPIENT_FEATURE_VERSION}' AS feature_definition_version,

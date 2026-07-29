@@ -44,7 +44,7 @@ build-lakehouse: test-temporal ## Build versioned Bronze/Silver Delta tables for
 lakehouse-history: ## Inspect local Bronze/Silver Delta history for DATASET
 	uv run pit data lakehouse-history --dataset $(DATASET)
 
-features: ## Inspect the frozen PaySim FeatureSpec v1 and checksum
+features: ## Inspect the frozen PaySim FeatureSpec v2 and checksum
 	uv run pit features show --dataset paysim
 
 test-temporal: data-sample ## Run exhaustive point-in-time correctness tests

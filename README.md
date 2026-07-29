@@ -143,7 +143,7 @@ lineage. See the [M019 reading guide](docs/reports/paysim-silver-training-baseli
 | `test-temporal` | Exercise future, duplicate, tie, late-arrival, boundary, cold-start, and ordering cases |
 | `build-lakehouse` | Write sample or PaySim Bronze/Silver Delta tables for `DATASET` |
 | `lakehouse-history` | Inspect exact local Delta versions and operations for `DATASET` |
-| `features` | Inspect the frozen PaySim FeatureSpec v1, model order and checksum |
+| `features` | Inspect the frozen PaySim FeatureSpec v2, model order and checksum |
 | `test-lakehouse` | Verify sample/PaySim-fixture schema, quality, rerun, isolation, and time travel |
 | `test-notebooks` | Execute all Sprint 1 notebooks in memory without storing outputs |
 | `model-spike` | Run the standalone PaySim LightGBM E1–E4 candidate matrix with local MLflow |
@@ -199,7 +199,7 @@ model family is locked. Raw dataset files are never committed. See
 
 ## Frozen PaySim feature contract
 
-ADR-003 freezes `paysim-fraud-recipient-v1`: three request-time fields plus destination-history
+ADR-003, amended by ADR-005, freezes `paysim-fraud-recipient-v2`: three request-time fields plus destination-history
 count, amount sum and cold-start indicators at 1h, 24h and 168h. Historical features require
 `prior_step < current_step`; same-step events, labels, policy output and balance fields are
 excluded. Inspect the ordered contract and its canonical checksum with:

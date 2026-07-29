@@ -154,7 +154,7 @@ switch ($Target) {
             @("profile", "generate the decision-oriented profile for -Dataset"),
             @("build-lakehouse", "build Bronze/Silver Delta tables for -Dataset"),
             @("lakehouse-history", "inspect Delta history for -Dataset"),
-            @("features", "inspect the frozen PaySim FeatureSpec v1"),
+            @("features", "inspect the frozen PaySim FeatureSpec v2"),
             @("test-temporal", "run PIT correctness suite"),
             @("test-unit", "run fast unit tests"),
             @("test-lakehouse", "run Delta snapshot and time-travel tests"),

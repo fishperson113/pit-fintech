@@ -1,6 +1,6 @@
 # ADR-005: Add a derived knowledge_step column and freeze PaySim FeatureSpec v2
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-07-29
 - Depends on: [ADR-002](002-paysim-dataset-entity-scope.md), [ADR-003](003-paysim-feature-contract-v1.md)
 
@@ -44,27 +44,30 @@ Add a derived `knowledge_step` column at the Bronze layer and freeze a new featu
 
 1. Bronze gains `knowledge_step BIGINT NOT NULL`. For every row ingested from the frozen snapshot,
    `knowledge_step = step`.
-2. The raw snapshot is not modified. `dataset_snapshot_id: paysim1:16910f90577b0d98` and its
+2. `knowledge_step` must carry through to `silver.paysim_transactions` unchanged. ADR-003 fixes
+   `feature source: silver.paysim_transactions`, so if Silver drops the column the knowledge-time
+   predicate has nothing to read from and cannot be evaluated at the feature layer.
+3. The raw snapshot is not modified. `dataset_snapshot_id: paysim1:16910f90577b0d98` and its
    sha256 remain unchanged, and no column is written back to the source CSV.
-3. `knowledge_step` is a derived column of the same class as `source_row_number`: produced during
+4. `knowledge_step` is a derived column of the same class as `source_row_number`: produced during
    ingestion, recorded in lineage, and never presented as a source field of PaySim.
-4. Historical eligibility becomes:
+5. Historical eligibility becomes:
 
    ```text
    prior.step           <  current.step
    AND prior.knowledge_step <= current.knowledge_step
    ```
 
-5. On clean data the second predicate is implied by the first and changes no value. This must be
+6. On clean data the second predicate is implied by the first and changes no value. This must be
    proven, not assumed: a regression run on the existing Silver must reproduce exactly
    `0.258342` (E1) and `0.102766` (E4) from M019.
-6. Late arrivals exist only in labelled test fixtures. Every value is chosen by hand so that at
+7. Late arrivals exist only in labelled test fixtures. Every value is chosen by hand so that at
    least one row sits exactly on the `<=` boundary. Late arrivals are never generated randomly,
    never written into the main dataset, and never tied to the train/validation/test split.
-7. Freeze `paysim-fraud-recipient-v2`. The twelve features keep their names, order, dtypes and
+8. Freeze `paysim-fraud-recipient-v2`. The twelve features keep their names, order, dtypes and
    defaults; only the cutoff semantics change. A new canonical checksum is issued, per the change
    policy in ADR-003.
-8. `knowledge_step` is never null. A null knowledge time would make the eligibility predicate
+9. `knowledge_step` is never null. A null knowledge time would make the eligibility predicate
    evaluate to unknown under three-valued logic and drop rows silently.
 
 ### What this decision does not claim

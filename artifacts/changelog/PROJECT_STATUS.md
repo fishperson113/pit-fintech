@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-07-29. Status words are strict:
+Last updated: 2026-07-29 (M026). Status words are strict:
 
 - **planned**: present in the six-week guide, with no claim that code exists;
 - **implemented**: code/artifact exists but the relevant gate may not have run;
@@ -33,6 +33,7 @@ Last updated: 2026-07-29. Status words are strict:
 | M022 Sprint 1 report and knowledge review | implemented | seven-slide HTML evidence deck and ten-question D0–D4 interview complete, 10/10 assessed, total 18/40; user confirmed on 2026-07-28 by direct visual inspection that the deck renders with no overflow/console errors; Q1/Q2/Q4/Q5/Q6/Q7/Q8/Q9 D2 and Q3/Q10 D1: hard-invariant questions Q1/Q2/Q3/Q5/Q6/Q10 remain below D3 so the Sprint 1 knowledge gate still does not pass; M024 added the Q5/Q6/Q10 remediation test artifacts, but the interview itself has not been re-scored |
 | M024 knowledge-review remediation tests | verified | user-run `test-temporal` went from 23 to 33 passed (10 new, none skipped): 8 oracle boundary/mutation tests in `test_reference_oracle.py` (4 boundary fixtures plus 4 mutation/differential tests via `monkeypatch`, no `src/` changes) and 2 tests in `test_paysim_recipient.py` (zero-history pre/post-score regression, E2 feature-set-vs-`PIT_FEATURE_COLUMNS` regression); `lint` clean |
 | M025 ADR-005 knowledge_step and FeatureSpec v2 | implemented | `docs/adr/005-knowledge-step-and-featurespec-v2.md` proposes a derived Bronze `knowledge_step` column and a frozen `paysim-fraud-recipient-v2` FeatureSpec; ADR status is `proposed`, not `accepted`; no `src/`, `tests/`, Bronze or Silver change exists yet — accept, spec v2, no-op regression and knowledge-time fixture remain outstanding |
+| M026 implement ADR-005 knowledge_step and FeatureSpec v2 | implemented | ADR-005 accepted; Bronze emits derived `knowledge_step`, propagated unchanged into `silver.paysim_transactions`; `PAYSIM_FEATURE_DEFINITION_VERSION` bumped to `paysim-fraud-recipient-v2`, `created_time_policy` is `derived_knowledge_step_lte_cutoff`; both PIT engines moved from `RANGE BETWEEN` window functions to range self-joins so the two-column eligibility predicate can be expressed; user-confirmed clean `lint`/`test-temporal`/`test-unit` on 2026-07-29 (agent did not run these); `build-lakehouse`/`train`/`test-lakehouse` not run, so the ADR-005 clean-data no-op regression (E1 `0.258342`/E4 `0.102766`) is unverified; known `sum(amount)` summation-order risk and missing knowledge-time boundary fixture remain open |
 | Ten-minute PIT meetup speaker script | verified | `docs/reports/pit-fintech-meetup-10min-script.md`; compressed four-slide talk track targets 9:20 plus buffer, keeps slide 3 as the technical core, and separates six concise mentor Q&A prompts from the spoken script; four slide headings, four closing claims, six Q&A prompts and required status/architecture claims pass the content scan; `git diff --check` passes |
 | Vietnamese PIT terminology catalog | verified | `docs/reports/catalog.md`; required-term scan, reader-aid structure and `git diff --check` pass |
 

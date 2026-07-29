@@ -59,7 +59,11 @@ class FeatureSetContract(BaseModel):
     tie_break_columns: tuple[str, ...]
     cutoff_policy: Literal["strict_prior_event_time"]
     same_time_policy: Literal["exclude_same_event_time"]
-    created_time_policy: Literal["source_has_no_created_time", "created_time_required"]
+    created_time_policy: Literal[
+        "source_has_no_created_time",
+        "created_time_required",
+        "derived_knowledge_step_lte_cutoff",
+    ]
     online_update_policy: Literal["score_then_update"]
     feature_specs: tuple[FeatureSpec, ...]
     model_feature_order: tuple[str, ...]

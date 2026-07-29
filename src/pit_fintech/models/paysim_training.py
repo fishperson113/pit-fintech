@@ -37,6 +37,7 @@ from pit_fintech.data.paysim_lakehouse import (
 )
 from pit_fintech.features.paysim_recipient import (
     LEAKAGE_WINDOWS_STEPS,
+    MAX_LEAKAGE_WINDOW_STEPS,
     PAYSIM_TRAIN_END_STEP,
     PAYSIM_VALIDATION_END_STEP,
 )
@@ -397,26 +398,34 @@ def _source_quality_gate(
         )
 
 
+def _prior_window_predicate(window_steps: int) -> str:
+    """Range-join form of ``RANGE BETWEEN {w} PRECEDING AND 1 PRECEDING`` plus knowledge time.
+
+    Kept word-for-word identical to ``paysim_recipient._prior_window_predicate`` so the evidence
+    path and the diagnostic path cannot drift apart. Both step bounds are inclusive and
+    ``c.step - 1`` excludes every same-step row, matching ADR-003. The knowledge-time condition is
+    the ADR-005 addition; on clean data ``knowledge_step = step``, so it is implied by
+    ``s.step <= c.step - 1`` and changes nothing.
+    """
+
+    return (
+        f"s.step >= c.step - {window_steps}"
+        " AND s.step <= c.step - 1"
+        " AND s.knowledge_step <= c.knowledge_step"
+    )
+
+
 def _window_columns(window_steps: int) -> str:
+    prior = _prior_window_predicate(window_steps)
     return f"""
-        count(*) OVER (
-            PARTITION BY destination_entity_id
-            ORDER BY step
-            RANGE BETWEEN {window_steps} PRECEDING AND 1 PRECEDING
-        )::BIGINT AS pit_prior_count_{window_steps}h,
+        (count(s.source_row_number) FILTER (WHERE {prior}))::BIGINT
+            AS pit_prior_count_{window_steps}h,
         coalesce(
-            sum(amount) OVER (
-                PARTITION BY destination_entity_id
-                ORDER BY step
-                RANGE BETWEEN {window_steps} PRECEDING AND 1 PRECEDING
-            ),
+            sum(s.amount) FILTER (WHERE {prior}),
             0.0
         )::DOUBLE AS pit_prior_amount_{window_steps}h,
-        max(step) OVER (
-            PARTITION BY destination_entity_id
-            ORDER BY step
-            RANGE BETWEEN {window_steps} PRECEDING AND 1 PRECEDING
-        )::BIGINT AS max_pit_source_step_{window_steps}h
+        (max(s.step) FILTER (WHERE {prior}))::BIGINT
+            AS max_pit_source_step_{window_steps}h
     """
 
 
@@ -526,6 +535,7 @@ def _materialize_vector_table(
                 event.source_row_number,
                 event.source_record_id,
                 event.step,
+                event.knowledge_step,
                 event.transaction_type,
                 event.destination_entity_id,
                 event.amount
@@ -534,14 +544,27 @@ def _materialize_vector_table(
                 USING (destination_entity_id)
         ), windowed AS (
             SELECT
-                source_row_number,
-                source_record_id,
-                step,
-                transaction_type,
-                destination_entity_id,
-                amount,
+                c.source_row_number,
+                c.source_record_id,
+                c.step,
+                c.transaction_type,
+                c.destination_entity_id,
+                c.amount,
                 {window_columns}
-            FROM scoped_history
+            FROM scoped_history AS c
+            LEFT JOIN scoped_history AS s
+                ON s.destination_entity_id = c.destination_entity_id
+                AND s.step >= c.step - {MAX_LEAKAGE_WINDOW_STEPS}
+                AND s.step <= c.step - 1
+                AND s.knowledge_step <= c.knowledge_step
+            GROUP BY
+                c.source_row_number,
+                c.source_record_id,
+                c.step,
+                c.knowledge_step,
+                c.transaction_type,
+                c.destination_entity_id,
+                c.amount
         ), target_vectors AS (
             SELECT
                 '{PAYSIM_FEATURE_DEFINITION_VERSION}'::VARCHAR

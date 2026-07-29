@@ -1,5 +1,35 @@
 # Project changelog
 
+## 2026-07-29 — M026: Implement ADR-005 knowledge_step and PaySim FeatureSpec v2
+
+- Bronze now emits a derived `knowledge_step BIGINT NOT NULL` column
+  (`knowledge_step = step`); it propagates unchanged into `silver.paysim_transactions` since
+  ADR-003 fixes `feature source: silver.paysim_transactions`.
+- Bumped `PAYSIM_FEATURE_DEFINITION_VERSION` from `paysim-fraud-recipient-v1` to
+  `paysim-fraud-recipient-v2`, and `created_time_policy` from `"source_has_no_created_time"` to
+  the new `"derived_knowledge_step_lte_cutoff"` literal on `FeatureSetContract`.
+- Moved both PIT engines (`features/paysim_recipient.py` and `models/paysim_training.py`) from
+  `RANGE BETWEEN ... PRECEDING/FOLLOWING` window functions to an explicit range self-join with
+  `GROUP BY`/`FILTER (WHERE ...)` aggregates, because a `RANGE` window frame can only order by one
+  column and the v2 eligibility predicate needs two independent conditions
+  (`prior.step < current.step AND prior.knowledge_step <= current.knowledge_step`) evaluated
+  between the same row pair.
+- Updated all live references to the frozen version string and "PaySim FeatureSpec v1" display
+  text (`config.py`, `.env.example`, `cli.py`, `README.md`, `CLAUDE.md`, `Makefile`, `make.ps1`,
+  and the corresponding unit tests); dated changelog/milestone/ADR-003 history was left unchanged
+  as the record of what was frozen under v1.
+- User-confirmed clean on 2026-07-29: `lint`, `test-temporal`, `test-unit` (agent did not execute
+  these commands; exact pass counts were not reported and are not fabricated here).
+- **Not run:** `build-lakehouse`, `train`, `test-lakehouse`. The clean-data no-op regression
+  required by ADR-005 (E1 reproducing exactly `0.258342`, E4 `0.102766` from M019) has not been
+  executed and remains unverified. `train` will also be blocked until `build-lakehouse` rebuilds
+  Silver with `knowledge_step`, since the on-disk Silver predates this column.
+- Known risk: `sum(amount)` moved from a window aggregate to a hash `GROUP BY`/`FILTER`
+  aggregate, which does not guarantee the same floating-point summation order; `pit_prior_amount_*`
+  may shift in the last ulp. E1 does not read through this path and must still match bit-exact.
+- Status: implemented, not verified.
+- Detail: [M026 log](milestones/M026-paysim-featurespec-v2-implementation.md).
+
 ## 2026-07-29 — M025: ADR-005 knowledge_step and FeatureSpec v2 (proposed)
 
 - Added `docs/adr/005-knowledge-step-and-featurespec-v2.md`, copied verbatim from the prepared

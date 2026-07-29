@@ -1,4 +1,4 @@
-"""Frozen PaySim application FeatureSpec v1."""
+"""Frozen PaySim application FeatureSpec v2."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ HOUR_SECONDS: Final = 60 * 60
 DAY_SECONDS: Final = 24 * HOUR_SECONDS
 WEEK_SECONDS: Final = 7 * DAY_SECONDS
 
-PAYSIM_FEATURE_DEFINITION_VERSION: Final = "paysim-fraud-recipient-v1"
+PAYSIM_FEATURE_DEFINITION_VERSION: Final = "paysim-fraud-recipient-v2"
 PAYSIM_FEATURE_SERVICE_VERSION: Final = "paysim-fraud-scoring-v1"
 PAYSIM_FEATURE_CONTRACT_NAME: Final = "paysim-fraud-recipient-features"
 PAYSIM_FEATURE_SOURCE: Final = "silver.paysim_transactions"
@@ -208,7 +208,7 @@ PAYSIM_FEATURE_CONTRACT: Final = FeatureSetContract(
     tie_break_columns=("source_row_number",),
     cutoff_policy="strict_prior_event_time",
     same_time_policy="exclude_same_event_time",
-    created_time_policy="source_has_no_created_time",
+    created_time_policy="derived_knowledge_step_lte_cutoff",
     online_update_policy="score_then_update",
     feature_specs=PAYSIM_FEATURE_SPECS,
     model_feature_order=PAYSIM_MODEL_FEATURE_ORDER,

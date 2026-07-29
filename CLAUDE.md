@@ -110,7 +110,7 @@ fixture is the correctness ground truth**; PaySim fraud labels are only model-ev
 ## Frozen contracts (do not change without an ADR + version bump)
 
 - **Dataset snapshot:** `paysim1:16910f90577b0d98`, 6,362,620 rows, steps 1–743.
-- **FeatureSpec `paysim-fraud-recipient-v1`** (ADR-003): entity `destination_entity_id`; scope
+- **FeatureSpec `paysim-fraud-recipient-v2`** (ADR-003, amended by ADR-005): entity `destination_entity_id`; scope
   `CASH_OUT`/`TRANSFER` with destination kind `CUSTOMER`; 12 fields (3 request-time + count/sum/
   history-flag at 1h/24h/168h); strict `prior_step < current_step`. Any semantics/order/dtype/
   default change bumps the version and requires a backfill.

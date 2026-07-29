@@ -299,7 +299,7 @@ def features_show(
     console.print(f"checksum: [cyan]{paysim_feature_contract_checksum()}[/]")
     console.print(f"feature_count: {len(contract.feature_specs)}")
 
-    table = Table(title="PaySim FeatureSpec v1")
+    table = Table(title="PaySim FeatureSpec v2")
     table.add_column("Feature")
     table.add_column("Availability")
     table.add_column("Window")

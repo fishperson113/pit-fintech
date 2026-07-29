@@ -116,7 +116,7 @@ def _manifest() -> SilverTrainingManifest:
         dataset_snapshot_id="paysim1:fixture",
         raw_file_sha256="d" * 64,
         entity_definition_version="paysim-destination-customer-v1",
-        feature_definition_version="paysim-fraud-recipient-v1",
+        feature_definition_version="paysim-fraud-recipient-v2",
         feature_contract_checksum="e" * 64,
         source_tables=(
             _source_snapshot("paysim_transactions", 1),

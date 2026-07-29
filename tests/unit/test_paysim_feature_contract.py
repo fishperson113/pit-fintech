@@ -35,7 +35,7 @@ from pit_fintech.models.paysim_lightgbm import PIT_FEATURE_COLUMNS, STATIC_FEATU
 def test_paysim_feature_contract_identity_and_temporal_policy_are_frozen() -> None:
     contract = PAYSIM_FEATURE_CONTRACT
 
-    assert contract.version == "paysim-fraud-recipient-v1"
+    assert contract.version == "paysim-fraud-recipient-v2"
     assert contract.service_version == "paysim-fraud-scoring-v1"
     assert contract.dataset == "paysim1"
     assert contract.entity == "destination_entity_id"
@@ -50,7 +50,7 @@ def test_paysim_feature_contract_identity_and_temporal_policy_are_frozen() -> No
     assert contract.tie_break_columns == ("source_row_number",)
     assert contract.cutoff_policy == "strict_prior_event_time"
     assert contract.same_time_policy == "exclude_same_event_time"
-    assert contract.created_time_policy == "source_has_no_created_time"
+    assert contract.created_time_policy == "derived_knowledge_step_lte_cutoff"
     assert contract.online_update_policy == "score_then_update"
     assert contract.float_tolerance == 1e-6
 
@@ -148,6 +148,6 @@ def test_features_cli_exposes_frozen_paysim_contract() -> None:
     assert result.exit_code == 0
     assert PAYSIM_FEATURE_DEFINITION_VERSION in result.stdout
     assert paysim_feature_contract_checksum() in result.stdout
-    assert "PaySim FeatureSpec v1" in result.stdout
+    assert "PaySim FeatureSpec v2" in result.stdout
     assert "feature_count: 12" in result.stdout
     assert "isFraud" in result.stdout

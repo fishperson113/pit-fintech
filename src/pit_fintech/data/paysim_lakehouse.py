@@ -62,6 +62,7 @@ PAYSIM_TRANSACTION_TYPES: Final = (
 PAYSIM_BRONZE_COLUMNS: Final = (
     "source_row_number",
     "step",
+    "knowledge_step",
     "type",
     "amount",
     "nameOrig",
@@ -80,6 +81,7 @@ PAYSIM_BRONZE_COLUMNS: Final = (
 PAYSIM_SILVER_TRANSACTION_COLUMNS: Final = (
     "source_row_number",
     "step",
+    "knowledge_step",
     "transaction_type",
     "amount",
     "origin_entity_id",
@@ -172,6 +174,7 @@ def _bronze_query(dataset_snapshot_id: str, raw_file_sha256: str) -> str:
         SELECT
             source_row_number::BIGINT AS source_row_number,
             step::BIGINT AS step,
+            knowledge_step::BIGINT AS knowledge_step,
             type::VARCHAR AS type,
             amount::DOUBLE AS amount,
             nameOrig::VARCHAR AS nameOrig,
@@ -196,6 +199,7 @@ def _silver_transactions_query(dataset_snapshot_id: str, raw_file_sha256: str) -
         SELECT
             source_row_number::BIGINT AS source_row_number,
             step::BIGINT AS step,
+            knowledge_step::BIGINT AS knowledge_step,
             upper(type)::VARCHAR AS transaction_type,
             amount::DOUBLE AS amount,
             nameOrig::VARCHAR AS origin_entity_id,
