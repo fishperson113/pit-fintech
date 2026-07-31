@@ -39,12 +39,25 @@ training = [
 tracking = [
     "mlflow>=3.5,<4",
 ]
+feast = [
+    # Kept out of the main dependencies: Feast is a control-plane contract (ADR-006), never a
+    # runtime dependency of the correctness path, so a Feast resolution failure must not be able
+    # to break `test-temporal` / `test-unit`. Feast is pre-1.0, so a minor bump may break; the cap
+    # is the next unreviewed minor. The duckdb/redis extras are required because the offline store
+    # is DuckDB and the online store is Redis.
+    # uv resolves ALL dependency-groups into a single universe, so a version this group requires
+    # constrains every other group too -- there is no per-group override. In particular every
+    # Feast release pins uvicorn[standard]>=0.30.6,<=0.34.0 transitively via this extra, which caps
+    # what the "serving" group below may request (see ADR-006).
+    "feast[duckdb,redis]>=0.65,<0.66",
+]
 serving = [
     "fastapi>=0.118,<1",
     "httpx>=0.28,<1",
     "prometheus-client>=0.23,<1",
     "redis>=6.4,<8",
-    "uvicorn[standard]>=0.37,<1",
+    # Pinned by Feast: every Feast release caps uvicorn transitively at <=0.34.0 (see ADR-006).
+    "uvicorn[standard]==0.34.0",
 ]
 
 [build-system]

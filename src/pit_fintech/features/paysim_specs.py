@@ -13,7 +13,7 @@ DAY_SECONDS: Final = 24 * HOUR_SECONDS
 WEEK_SECONDS: Final = 7 * DAY_SECONDS
 
 PAYSIM_FEATURE_DEFINITION_VERSION: Final = "paysim-fraud-recipient-v2"
-PAYSIM_FEATURE_SERVICE_VERSION: Final = "paysim-fraud-scoring-v1"
+PAYSIM_FEATURE_SERVICE_VERSION: Final = "paysim-fraud-scoring-v2"
 PAYSIM_FEATURE_CONTRACT_NAME: Final = "paysim-fraud-recipient-features"
 PAYSIM_FEATURE_SOURCE: Final = "silver.paysim_transactions"
 PAYSIM_LABEL_SOURCE: Final = "silver.paysim_labels"

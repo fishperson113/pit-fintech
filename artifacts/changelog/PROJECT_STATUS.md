@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-07-29 (M027). Status words are strict:
+Last updated: 2026-07-31 (M028). Status words are strict:
 
 - **planned**: present in the six-week guide, with no claim that code exists;
 - **implemented**: code/artifact exists but the relevant gate may not have run;
@@ -35,6 +35,7 @@ Last updated: 2026-07-29 (M027). Status words are strict:
 | M025 ADR-005 knowledge_step and FeatureSpec v2 | implemented | `docs/adr/005-knowledge-step-and-featurespec-v2.md` proposes a derived Bronze `knowledge_step` column and a frozen `paysim-fraud-recipient-v2` FeatureSpec; ADR status is `proposed`, not `accepted`; no `src/`, `tests/`, Bronze or Silver change exists yet — accept, spec v2, no-op regression and knowledge-time fixture remain outstanding |
 | M026 implement ADR-005 knowledge_step and FeatureSpec v2 | verified | ADR-005 accepted; Bronze emits derived `knowledge_step`, propagated unchanged into `silver.paysim_transactions`; `PAYSIM_FEATURE_DEFINITION_VERSION` bumped to `paysim-fraud-recipient-v2`, `created_time_policy` is `derived_knowledge_step_lte_cutoff`; both PIT engines moved from `RANGE BETWEEN` window functions to range self-joins so the two-column eligibility predicate can be expressed; user-run `build-lakehouse`/`train` on 2026-07-29 against rebuilt Silver v4 reproduced E1 PR-AUC `0.258342`/ROC-AUC `0.601620`/recall `0.275559` and E4 PR-AUC `0.102766`/ROC-AUC `0.784978`/recall `0.036741` bit-exact vs M019, 0 future-read violations, vector checksum `ff52681f…`, training fingerprint `381de46f…`, MLflow parent `d9d142db…` — proving the knowledge-time predicate is a no-op on clean data; missing knowledge-time boundary fixture and shared `pit_sql.py` extraction remain open |
 | M027 fix non-deterministic vector_checksum (DECIMAL money sums) | verified | root cause: `sum(amount)` over `DOUBLE` plus the M026 range-join refactor's unordered hash `GROUP BY` combined to make summation order non-deterministic across `train` runs; fix sums money as `PAYSIM_AMOUNT_DECIMAL_TYPE = DECIMAL(18,2)` in both PIT engines, casting to `DOUBLE` only at the final projection; added 9th publish-blocking quality gate `amount_decimal_roundtrip_failures`; contract dtype/version unchanged (no v3 bump); user-run 2026-07-29: two separate consecutive `train` runs against rebuilt Silver v6 produced the SAME `vector_checksum` `ce88d250…`, training fingerprint `a005f4ea…`, E1 PR-AUC `0.258342`/ROC-AUC `0.601620`/recall `0.275559`/precision `0.541601`, E4 PR-AUC `0.102766`/ROC-AUC `0.784978`/recall `0.036741`/precision `0.243386` — unchanged from M019/M026 despite the DOUBLE->DECIMAL arithmetic change, showing the old rounding error was model-invisible but checksum-visible; 0 future-read violations; `test-temporal` 47 passed (33->47, +14 = 7 new tests x 2 engines) and `test-unit` 39 passed; determinism confirmed on one machine/core-count only, a different core count is not yet tested |
+| M028 ADR-006 Feast time mapping and service v2 | verified | `docs/adr/006-feast-time-mapping-and-service-v2.md` proposes `EPOCH_0 = 2020-01-01T00:00:00Z` with `event_timestamp = EPOCH_0 + step hours` / `created_timestamp = EPOCH_0 + knowledge_step hours` as Feast-layer-only derived columns (bijective, order-preserving, no invariant touched; cutoff order and tie-break stay on `(step, source_row_number)` per ADR-001/003/005), and a `paysim-fraud-scoring-v1 -> v2` service bump with the twelve fields unchanged; `pyproject.toml` declares `feast[duckdb,redis]>=0.65,<0.66` in its own optional group, with the `serving` group's `uvicorn[standard]` pinned to `==0.34.0` because every Feast release caps uvicorn transitively at `<=0.34.0`; the frozen `requires-python`/`pyarrow`/`duckdb` pins are untouched; ADR status is `proposed`; the v1 service string moved to v2 in 5 of the 6 listed call sites (`paysim_specs.py`, `config.py`, `.env.example`, `test_paysim_feature_contract.py`, `AGENTS.md`), with `docs/reports/paysim-feature-contract-v1.md` intentionally left at v1 as a historical record; project owner ran on 2026-07-31: `uv lock` resolved 234 packages in 2ms (`uv.lock` now in sync with `pyproject.toml`, including the `feast`/`uvicorn==0.34.0` pins); `.\make.ps1 lint` clean (`ruff check`: all checks passed, `ruff format --check`: 48 files already formatted); `.\make.ps1 test-unit` 39 passed in 2.17s; `.\make.ps1 test-temporal` 47 passed in 3.25s (the `pit data sample` fixture regeneration step left `git status --short` clean, confirming it is deterministic); ADR-006 is now **accepted**; project owner ran `.\make.ps1 features` on 2026-07-31 and re-emitted the canonical `paysim-fraud-recipient-v2`/`paysim-fraud-scoring-v2` contract checksum `01bba24cc79be8729ec66557bb68828fbb66a17bfefdb601aaedc1a6cee575de` (12 features); project owner also ran `uv sync --group feast --group serving` on 2026-07-31, materializing `feast==0.65.0`/`redis==7.4.1`/`uvicorn==0.34.0` etc., but that scoped sync uninstalled the `training` group (`lightgbm`, `mlflow`, `scikit-learn`, ...) — a full dev environment requires `uv sync --all-groups` |
 | Ten-minute PIT meetup speaker script | verified | `docs/reports/pit-fintech-meetup-10min-script.md`; compressed four-slide talk track targets 9:20 plus buffer, keeps slide 3 as the technical core, and separates six concise mentor Q&A prompts from the spoken script; four slide headings, four closing claims, six Q&A prompts and required status/architecture claims pass the content scan; `git diff --check` passes |
 | Vietnamese PIT terminology catalog | verified | `docs/reports/catalog.md`; required-term scan, reader-aid structure and `git diff --check` pass |
 
@@ -73,6 +74,23 @@ scoring, one-producer ordered in-memory replay, offline/online parity, and sampl
 Component-scoped lineage is **verified** by M021, including the post-commit `train` reuse of
 legacy Silver v2 without rebuild and the new fingerprint fields recorded in the 2026-07-28
 manifest.
+
+T1 (Feast repository, S2-A1, gate G1) had two blocking decisions, both resolved in ADR-006 (M028),
+**accepted** 2026-07-31: the `EPOCH_0`-based derived timestamp columns Feast requires, and the
+`paysim-fraud-scoring-v2` service bump. The `feast` and `serving` dependency groups are declared;
+the project owner ran `uv lock` on 2026-07-31 (`Resolved 234 packages in 2ms`), so `uv.lock` is now
+in sync with `pyproject.toml`, including the `feast[duckdb,redis]>=0.65,<0.66` and
+`uvicorn[standard]==0.34.0` pins. `.\make.ps1 lint`, `.\make.ps1 test-unit` (39 passed) and
+`.\make.ps1 test-temporal` (47 passed) all ran clean the same day. The project owner then ran
+`uv sync --group feast --group serving` on 2026-07-31, materializing `feast==0.65.0`,
+`redis==7.4.1`, `hiredis==3.4.0`, `uvicorn==0.34.0` and related packages — note that this scoped
+`uv sync` uninstalled the `training`/tracking group (`lightgbm`, `mlflow`, `scikit-learn`, `scipy`,
+`joblib`, `matplotlib`, `skops`, ...), since `uv sync` matches the environment exactly to the named
+groups; a full dev environment needs `uv sync --all-groups`. The project owner also ran
+`.\make.ps1 features` on 2026-07-31, re-emitting the canonical `paysim-fraud-recipient-v2`/
+`paysim-fraud-scoring-v2` contract checksum
+`01bba24cc79be8729ec66557bb68828fbb66a17bfefdb601aaedc1a6cee575de` (12 features). No Feast
+registry, feature view or `feature_repo/` code exists yet.
 
 ## Sprint 3
 

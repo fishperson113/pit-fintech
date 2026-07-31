@@ -161,7 +161,7 @@ M019 triển khai clean baseline riêng qua `train`/notebook 05:
 
 FeatureSpec PaySim đã khóa ngày 2026-07-27 qua ADR-003:
 
-- contract `paysim-fraud-recipient-v1`, service `paysim-fraud-scoring-v1`;
+- contract `paysim-fraud-recipient-v1`, service `paysim-fraud-scoring-v2`;
 - entity `destination_entity_id`, definition `paysim-destination-customer-v1`;
 - scoring scope v1 là `CASH_OUT`/`TRANSFER` có destination kind `CUSTOMER`;
 - source `silver.paysim_transactions`, label source `silver.paysim_labels`;

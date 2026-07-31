@@ -36,7 +36,7 @@ def test_paysim_feature_contract_identity_and_temporal_policy_are_frozen() -> No
     contract = PAYSIM_FEATURE_CONTRACT
 
     assert contract.version == "paysim-fraud-recipient-v2"
-    assert contract.service_version == "paysim-fraud-scoring-v1"
+    assert contract.service_version == "paysim-fraud-scoring-v2"
     assert contract.dataset == "paysim1"
     assert contract.entity == "destination_entity_id"
     assert contract.entity_definition_version == "paysim-destination-customer-v1"

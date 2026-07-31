@@ -1,5 +1,60 @@
 # Project changelog
 
+## 2026-07-31 — M028: ADR-006 Feast time mapping and feature service v2 (proposed)
+
+- Sprint 2 T1 (Feast repository, S2-A1, gate G1) is blocked on two decisions that get baked into
+  the registry checksum and the online key namespace the moment the first artifact exists, so both
+  are frozen in an ADR before any code.
+- **Time mapping.** Feast `FileSource` requires `timestamp_field`/`created_timestamp_column` to
+  name real timestamp columns; PaySim only has `step`/`knowledge_step` as `BIGINT` hour ordinals.
+  Decision: derive `event_timestamp = EPOCH_0 + step hours` and
+  `created_timestamp = EPOCH_0 + knowledge_step hours` with `EPOCH_0 = 2020-01-01T00:00:00Z`
+  (Unix `1577836800`), mapping the frozen range 1–743 onto `2020-01-01T01:00:00Z` ..
+  `2020-01-31T23:00:00Z`. The map is bijective and strictly order-preserving, so every PIT
+  comparison is preserved; `EPOCH_0` is a presentation convention, not a claim that `step` is a
+  business timestamp (ADR-002 decision 1 stands). Cutoff order and tie-break stay on
+  `(step, source_row_number)` per ADR-001/003/005 and must not be re-expressed as timestamp
+  comparison — hour-resolution timestamps cannot represent the tie-break at all.
+  `features/reference.py` remains the correctness authority.
+- **Service version.** `paysim-fraud-scoring-v1` -> `paysim-fraud-scoring-v2`, matching the
+  FeatureSpec bump from ADR-005/M026. The twelve fields, their order, dtypes and defaults do not
+  change; only the version string, and the canonical contract checksum that includes it.
+- Rejected: reusing the `fraud-history-v1` synthetic fixture as the T1 target (different entity
+  `card_entity_id`, 13 different features — T1 would be deleted at T2); configuring Feast to take
+  an integer event time (no documented support, pre-1.0 internals); keeping v1 with a footnote.
+- `pyproject.toml` gains a `feast` dependency group with `feast[duckdb,redis]>=0.65,<0.66`, kept
+  out of the main `dependencies` so a Feast resolution failure cannot break the correctness test
+  lanes. `requires-python >=3.11,<3.13`, `pyarrow>=21,<23` and `duckdb>=1.4,<2` are untouched.
+  Every Feast release caps `uvicorn[standard]` transitively at `<=0.34.0`, so the `serving` group's
+  `uvicorn[standard]` is pinned to `==0.34.0` to fit inside that shared resolution universe.
+- The v1 service string moved to `paysim-fraud-scoring-v2` in 5 of the 6 listed call sites
+  (`paysim_specs.py`, `config.py`, `.env.example`, `test_paysim_feature_contract.py`, `AGENTS.md`);
+  `docs/reports/paysim-feature-contract-v1.md` is intentionally left at v1 as a historical record
+  of what was frozen under v1.
+- Status: verified. **ADR-006 accepted 2026-07-31.** Project owner ran, on 2026-07-31: `uv lock`
+  (`Resolved 234 packages in 2ms`, so `uv.lock` is now in sync with `pyproject.toml`, including the
+  `feast[duckdb,redis]>=0.65,<0.66` and `uvicorn[standard]==0.34.0` pins); `.\make.ps1 lint`
+  (`ruff check`: all checks passed, `ruff format --check`: 48 files already formatted);
+  `.\make.ps1 test-unit` (39 passed in 2.17s); `.\make.ps1 test-temporal` (`pit data sample`
+  validated 7 canonical events from 8 rows, snapshot `synthetic-temporal-v1:1ef70772400a1d8e`, then
+  47 passed in 3.25s). `git status --short` stayed clean after the fixture-regenerating
+  `test-temporal` run, confirming that fixture step is deterministic.
+- Project owner then ran, also on 2026-07-31: `uv sync --group feast --group serving`
+  (`Resolved 234 packages, Prepared 30, Uninstalled 54, Installed 33` — materializing
+  `feast==0.65.0`, `redis==7.4.1`, `hiredis==3.4.0`, `ibis-framework==12.0.0`, `uvicorn==0.34.0`
+  (replacing `uvicorn==0.51.0`), `gunicorn`, `uvicorn-worker`, `watchfiles`, `websockets`, `dask`,
+  `sqlglot`, and uninstalling `lightgbm==4.7.0`, `mlflow==3.14.0` (+skinny/tracing),
+  `scikit-learn==1.9.0`, `scipy`, `joblib`, `threadpoolctl`, `matplotlib`, `skops` and their
+  dependents); and `.\make.ps1 features` (`uv run pit features show --dataset paysim`), which
+  re-emitted the canonical `paysim-fraud-recipient-v2`/`paysim-fraud-scoring-v2` contract checksum
+  `01bba24cc79be8729ec66557bb68828fbb66a17bfefdb601aaedc1a6cee575de` (12 features) — replacing the
+  `PENDING` placeholder above.
+- **Operational note:** `uv sync --group feast --group serving` uninstalled the `training`/tracking
+  group even though nothing intended to drop it, because `uv sync` makes the environment match
+  exactly the groups named on the command line. The correct command for a full dev environment
+  (including `training`) is `uv sync --all-groups`.
+- Detail: [M028 log](milestones/M028-adr-006-feast-time-mapping-and-service-v2.md).
+
 ## 2026-07-29 — M027 refinement: determinism fix verified
 
 - User-run 2026-07-29: two separate, consecutive `train` runs against rebuilt Silver
