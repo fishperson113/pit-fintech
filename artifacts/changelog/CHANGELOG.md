@@ -1,5 +1,117 @@
 # Project changelog
 
+## 2026-08-03 — M029: PaySim oracle/SQL parity lane and real-Silver fixture builder
+
+- `src/pit_fintech/features/reference.py:3-5` has required since Sprint 1 that a DuckDB
+  implementation "must match this oracle before it is accepted". For the PaySim application
+  contract that comparison had never been written: the oracle and the two DuckDB paths were
+  independent code paths, all green, with nothing binding them. This milestone is the first time
+  the PaySim DuckDB path is compared field by field against an independent Python oracle.
+- **New oracle.** `src/pit_fintech/features/paysim_reference.py` implements
+  `paysim-fraud-recipient-v2` in pure Python — no DuckDB, no SQL, no library window function —
+  with eligibility `prior.step < current.step AND prior.knowledge_step <= current.knowledge_step`
+  (ADR-003 as amended by ADR-005), window `[current_step - window_hours, current_step)`, money in
+  `Decimal` at `DECIMAL(18,2)` with `Inexact`/`Rounded` trapped, and the twelve fields in contract
+  order. It fails at import if the frozen spec stops matching.
+- **New parity lane.** `tests/temporal/test_paysim_oracle_sql_parity.py` drives one fixture
+  (`PARITY_ROWS`) through three engines — the oracle, the diagnostic SQL in
+  `features/paysim_recipient.py`, and the evidence SQL in `models/paysim_training.py` — comparing
+  all twelve fields in contract order for every scored row. Agreement alone is not accepted: a
+  second test pins the step-400 cutoff to a vector derived by hand, so parity means parity with the
+  contract rather than two paths agreeing on the same wrong answer.
+- **Finding: the same-step policy is enforced in the JOIN on *both* engines, not in the FILTER.**
+  `paysim_recipient.py:278` uses `s.step <> c.step` and `paysim_training.py:565` uses
+  `s.step <= c.step - 1`, both inside the `LEFT JOIN`, before any `FILTER` runs; the `FILTER`
+  repeats the same bound (`paysim_recipient.py:83`, `paysim_training.py:414`) and the oracle
+  enforces it again at `paysim_reference.py:371`. Consequence: **no single-clause mutation can go
+  red on either engine.** An earlier draft of the lane asserted the opposite asymmetry (training
+  FILTER unmasked, recipient FILTER masked); that asymmetry does not exist and the assertion built
+  on it could never have failed. The lane now keeps two `*_is_masked_by_the_*` tests that record,
+  as a stated limitation, which half absorbs which mutation, plus
+  `test_admitting_same_step_rows_breaks_parity`, which removes both guards at once and requires
+  parity to break. Reaching the join needed a new seam (`_SqlRewrite` + a `_RewritingConnection`
+  proxy that rewrites statement text and raises if the rewrite never matched), because that clause
+  is an SQL literal that `monkeypatch.setattr` cannot reach. The policy itself is unchanged and
+  still enforced twice on each SQL path.
+- **Three expected values corrected — arithmetic errors in the test, not defects in the SQL.** Each
+  was recomputed by hand from `PARITY_ROWS` and the ADR-003 window definition, with the arithmetic
+  written beside the assertion; no number was adjusted to match observed output and `PARITY_ROWS`
+  was not touched. (a) Removing the knowledge-time clause leaks row 8 at `step 398`, which the 1h
+  window `[399, 399]` cannot admit, so the assertions moved to 24h (`9644.93`) and 168h
+  (`20756.03`) and 1h is now asserted unchanged. (b) Deleting the FILTER lower bound had omitted
+  row 3 (`step 231`, `4444.44`) — the one row that bound was solely guarding — corrected to
+  `24089.36`. (c) Admitting same-step rows also lets the cutoff row join to itself once the join
+  bound is gone, so 1h is `500.50 + 3333.33 + 0.01 = 3833.84`.
+- **False comment removed from production.** `src/pit_fintech/models/paysim_training.py:557-562`
+  claimed the join was a "widest-window prune only" with eligibility living "entirely in the FILTER
+  predicate". The join carries the event-time upper bound `c.step - 1`, i.e. half of the
+  eligibility rule. Comment prose only — no SQL clause, literal or predicate changed, so no
+  training metric or checksum can move because of it.
+- **Fixture builder wired.** `src/pit_fintech/data/paysim_fixture.py` extracts a small
+  deterministic fixture from the real Silver `paysim_transactions` Delta table (zero-history
+  destination, a destination separately populating 1h/24h/168h, a same-step pair) and scores it
+  with the pure-Python oracle, never with SQL — expectations computed in SQL would only compare the
+  SQL against itself. Exposed as `pit data build-fixture --dataset paysim` (`cli.py:266-299`),
+  `Makefile:47-48` and `make.ps1:74-75`, guarded by `tests/unit/test_paysim_fixture.py` (missing
+  manifest and non-paysim dataset both exit 2 with an actionable message) and
+  `tests/integration/test_paysim_fixture.py` (real path when a local manifest exists, loud skip
+  when not, since the PaySim CSV is not committed and CI cannot produce it).
+- **Two bugs the first real run exposed, both fixed.** (a) *The destination picker could not back
+  out.* `_pick_rich_destination` committed to one destination on a loose criterion, then
+  `_pick_rich_cutoff_step` applied a strictly harder one — a cutoff step with a prior row in each
+  of three disjoint offset bands — and raised with no fallback, so an unlucky first pick killed the
+  build (`destination C1000004940 never reaches a cutoff step where all three history windows are
+  simultaneously distinguishable`). The band criterion was **not** relaxed: without a prior row in
+  each of `[1,1]`, `[2,24]` and `[25,168]` step offsets the three windows can return equal counts
+  and equal sums, and a swapped window or a bound off by one would pass unnoticed. Instead the
+  bands are derived once from `PAYSIM_WINDOW_STEPS` and read by both SQL and Python; the exact band
+  predicates are pushed into a bounded SQL self-join that returns candidates ordered by
+  `destination_entity_id`; and the first candidate confirmed in Python wins, capped by
+  `RICH_CANDIDATE_LIMIT = 8`. Both failure messages now report how many candidates were walked and
+  why each was rejected. (b) *The integration test asserted an equality that must never hold.*
+  `{event.source_row_number for event in events} == set(expected)` cannot be true: the fixture
+  carries every row of the chosen destinations because history is unfiltered by transaction type,
+  while `compute_paysim_feature_vectors` scores only rows in scoring scope, so the expectation file
+  is a proper subset by construction. The builder's `_verify_round_trip` cannot catch drift here
+  because it applies the same scope filter to both sides. Replaced with three stricter assertions —
+  `set(expected) == in_scope`, `set(expected) < all_row_numbers`, and `assert history_only` so the
+  fixture cannot degenerate into in-scope rows only — with the derivation written beside them.
+- Status: verified within the scope run. Project owner ran on 2026-08-03: `.\make.ps1 format`
+  (`ruff check --fix`:
+  All checks passed; `ruff format`: 1 file reformatted, 52 files left unchanged); `.\make.ps1 lint`
+  (`ruff check`: All checks passed; `ruff format --check`: 53 files already formatted);
+  `.\make.ps1 test-unit` (41 passed in 1.97s, up from 39 — the new CLI guards);
+  `.\make.ps1 test-temporal` (`pit data sample` validated 7 canonical events from 8 rows, snapshot
+  `synthetic-temporal-v1:1ef70772400a1d8e`, then 73 passed in 4.52s, up from 47 — the parity module
+  is the whole of that increase, and the unchanged snapshot id shows the synthetic ground truth was
+  not disturbed).
+- **Real run, after the two fixes.** On a machine holding PaySim Silver the project owner re-ran
+  `.\make.ps1 lint` (`ruff check` all checks passed; `ruff format --check` 53 files already
+  formatted), `.\make.ps1 test-unit` (41 passed), `.\make.ps1 test-temporal` (73 passed) and
+  `uv run pytest -q -rs -m integration tests/integration/test_paysim_fixture.py` (1 passed) — the
+  first execution of the builder's success path and of the integration lane. `.\make.ps1
+  build-fixture` was then run twice independently: both runs reported 15 source rows and produced
+  byte-identical files, `data/fixtures/paysim_temporal_cases.jsonl` SHA-256
+  `5DD9228FE5B6A2430EC7ABC23E978219F171D1F1316D364633A77B72839DF5AE` and
+  `data/fixtures/paysim_expected_features.json` SHA-256
+  `DF9846F7EB299799425E7FF204202884498B7F7A2BA31AE1BBE3A4922ED9C15B`. The fixture holds 15 source
+  rows: 11 in scoring scope with a vector, 4 history-only without one. Destinations are
+  `C1000022185` (rich; steps 42, 138, 155, 157, 159, 177, 178), `C1000004940` (same-step pair, two
+  rows at step 303) and `C100003532` (zero history, one row at step 397). All 4 history-only rows
+  (`861131`, `1357635`, `1701770`, `4149878`) are `CASH_IN` to a `CUSTOMER` destination — they
+  leave scoring scope on transaction type, not destination kind, which is the intended shape since
+  history counts regardless of type.
+- **Known limitation:** `set(expected) == in_scope` computes `in_scope` with the same
+  `in_scoring_scope` the builder uses, so it is not an independent derivation — if the scope
+  definition moved, both sides would move together. It locks the file on disk against the contract;
+  `assert history_only` covers the degenerate case separately.
+- **Not run, and not claimed:** nothing is committed, so no commit hash exists (pending). `train`
+  was not re-run and no M019/M026/M027 metric or checksum is restated. No e2e lane exists. The
+  parity lane still runs on hand-built `PARITY_ROWS` only — no test yet drives the two DuckDB
+  engines against the 15 extracted rows. Determinism is shown on one machine and one core count.
+  Sprint 2 T1 has not started: `feature_repo/` still holds exactly two placeholder files.
+- Detail: [M029 log](milestones/M029-oracle-sql-parity-lane-and-paysim-fixture-builder.md).
+
 ## 2026-07-31 — M028: ADR-006 Feast time mapping and feature service v2 (proposed)
 
 - Sprint 2 T1 (Feast repository, S2-A1, gate G1) is blocked on two decisions that get baked into

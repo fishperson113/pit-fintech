@@ -44,6 +44,9 @@ build-lakehouse: test-temporal ## Build versioned Bronze/Silver Delta tables for
 lakehouse-history: ## Inspect local Bronze/Silver Delta history for DATASET
 	uv run pit data lakehouse-history --dataset $(DATASET)
 
+build-fixture: ## Extract and score a small real-Silver PaySim temporal fixture
+	uv run pit data build-fixture --dataset paysim
+
 features: ## Inspect the frozen PaySim FeatureSpec v2 and checksum
 	uv run pit features show --dataset paysim
 
@@ -102,4 +105,4 @@ logs: ## Follow core service logs
 down: ## Stop services without deleting data volumes
 	docker compose down
 
-.PHONY: help bootstrap doctor lab lab-training lab-container data-sample data-snapshot profile build-lakehouse lakehouse-history features test-temporal test-unit test-lakehouse test-notebooks model-spike train test lint format check changelog-check lock up-core status logs down
+.PHONY: help bootstrap doctor lab lab-training lab-container data-sample data-snapshot profile build-lakehouse lakehouse-history build-fixture features test-temporal test-unit test-lakehouse test-notebooks model-spike train test lint format check changelog-check lock up-core status logs down

@@ -554,9 +554,12 @@ def _materialize_vector_table(
                 {window_columns}
             FROM scoped_history AS c
             LEFT JOIN scoped_history AS s
-                -- Widest-window prune only. Eligibility, including the knowledge-time
-                -- half of the invariant, lives entirely in the FILTER predicate so that
-                -- _prior_window_predicate stays the single source of truth.
+                -- Widest-window prune plus the event-time upper bound. The `c.step - 1`
+                -- below is half of the eligibility rule, not a prune: it is what keeps
+                -- same-step rows, and c's own row, out of the join in the first place.
+                -- The FILTER repeats that bound and adds the knowledge-time half, which
+                -- lives nowhere else -- so _prior_window_predicate is the single source
+                -- of truth for knowledge time, and a shared one for same-step exclusion.
                 ON s.destination_entity_id = c.destination_entity_id
                 AND s.step >= c.step - {MAX_LEAKAGE_WINDOW_STEPS}
                 AND s.step <= c.step - 1

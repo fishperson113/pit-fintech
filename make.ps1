@@ -71,6 +71,9 @@ switch ($Target) {
             "run", "pit", "data", "lakehouse-history", "--dataset", $Dataset
         )
     }
+    "build-fixture" {
+        Invoke-Checked "uv" @("run", "pit", "data", "build-fixture", "--dataset", "paysim")
+    }
     "features" {
         Invoke-Checked "uv" @("run", "pit", "features", "show", "--dataset", "paysim")
     }
@@ -154,6 +157,7 @@ switch ($Target) {
             @("profile", "generate the decision-oriented profile for -Dataset"),
             @("build-lakehouse", "build Bronze/Silver Delta tables for -Dataset"),
             @("lakehouse-history", "inspect Delta history for -Dataset"),
+            @("build-fixture", "extract and score a small real-Silver PaySim temporal fixture"),
             @("features", "inspect the frozen PaySim FeatureSpec v2"),
             @("test-temporal", "run PIT correctness suite"),
             @("test-unit", "run fast unit tests"),
