@@ -17,6 +17,39 @@ medallion hay DuckDB.
 
 ---
 
+## Nhật ký hiệu chỉnh
+
+Guide này được viết trước ADR-002/003 và trước khi Feast được cài thật, nên một số chỗ đã lỗi
+thời. Chúng được **sửa tại chỗ** để người làm không đi theo hướng dẫn sai, và **ghi lại đầy đủ ở
+đây** để không mất dấu vết kế hoạch ban đầu — lineage là thứ dự án này tồn tại để chứng minh, nên
+không có chỗ nào bị xoá lặng lẽ.
+
+### 2026-08-03 — đồng bộ với contract PaySim đã đóng băng và với Feast 0.65.0 đo thật
+
+| Chỗ | Guide viết ban đầu | Đã sửa thành | Căn cứ |
+|---|---|---|---|
+| §1 input contract | `feature spec v1` | `paysim-fraud-recipient-v2` | ADR-003 sửa bởi ADR-005 |
+| §3.2 Entity | `card_entity` | `destination_entity_id`, entity version `paysim-destination-customer-v1` | ADR-003 |
+| §3.2 FileSource | "pre-decision Gold Delta table" (ngụ ý bảng raw là đủ) | bảng pre-decision **đã tính sẵn** mười hai field | M030 finding 1 |
+| §3.2 FeatureView | "history feature v1" | mười hai field của `paysim-fraud-recipient-v2` đúng thứ tự `PAYSIM_MODEL_FEATURE_ORDER` | ADR-003, ADR-005 |
+| §3.2 FeatureService | `fraud_scoring_v1` | `paysim-fraud-scoring-v2` | ADR-006 quyết định 2 |
+| §3.3 registry checksum | "registry runtime artifact có checksum" | checksum phải tính từ definitions, không từ registry blob | M030 finding 2 |
+| §3.4 acceptance | "trên synthetic fixture" | trên PaySim fixture trích từ Silver thật | ADR-002, ADR-006 phần Alternatives |
+| §3.4 acceptance | `fraud_scoring_v1` | `paysim-fraud-scoring-v2` | ADR-006 quyết định 2 |
+| §4.0 Gold | `pre_decision_features` chỉ nói cho training | nói rõ đây cũng là feature source của T1, nên T1/T2 có phụ thuộc thật | M030 finding 1 |
+| §4.1 implementation | "tối ưu cho full IEEE-CIS" | full snapshot `paysim1:16910f90577b0d98` | ADR-002 |
+| §6.1 entity dataframe | `transaction_id` / `card_entity_id` / `ordered_event_timestamp` / `label_is_fraud` | `source_row_number` / `destination_entity_id` / `event_timestamp` / `isFraud` | ADR-002, ADR-003, ADR-006 |
+| §6.4 promotion gate | `fraud_scoring_v1` | `paysim-fraud-scoring-v2` | ADR-006 quyết định 2 |
+| §13 gate G1 | "historical retrieval khớp fixture oracle" | thêm điều kiện đo idempotence bằng definitions checksum | M030 finding 2 |
+
+Hai mục **mới thêm**, không phải sửa: §3.2.1 (Feast không tự tính aggregate) và §3.3.1 (registry
+blob không phải định danh ổn định). Cả hai là kết quả đo trên Feast 0.65.0 đang cài, ghi trong
+`artifacts/changelog/milestones/M030-feast-source-parquet-and-t1-design-spike.md`.
+
+Không đụng `docs/adr/`: ADR là quyết định đã đóng băng, muốn đổi thì ra ADR mới.
+
+---
+
 ## 0. Bản đồ artifact
 
 | ID | Artifact | Nội dung bắt buộc |
@@ -45,7 +78,7 @@ Sprint 2 dừng ngay nếu chưa có:
 - `dataset_snapshot_id`;
 - entity definition version;
 - event-time/tie-break rules;
-- feature spec v1;
+- feature spec đã đóng băng (`paysim-fraud-recipient-v2`, ADR-003 sửa bởi ADR-005);
 - synthetic expected vectors;
 - temporal split cutoffs;
 - float comparison tolerance;
@@ -113,12 +146,30 @@ Secret không nằm trong YAML commit. Dùng environment variable expansion ho�
 
 ### 3.2. Feast objects
 
-- `Entity`: `card_entity` với join key đã khóa.
-- `FileSource`: pre-decision Gold Delta table có `event_timestamp` và `created_timestamp` (qua Feast DuckDB offline store).
+- `Entity`: join key `destination_entity_id`, entity definition version `paysim-destination-customer-v1` (ADR-003).
+- `FileSource`: bảng **pre-decision đã tính sẵn** mười hai field, có `event_timestamp` và `created_timestamp` suy dẫn theo ADR-006 (qua Feast DuckDB offline store). Xem §3.2.1 — đây không phải bảng raw.
 - `PushSource`: batch source trỏ vào FileSource; online write nhận post-event state từ replay/materializer.
-- `FeatureView`: history feature v1 đọc PushSource, giữ cùng schema cho batch và online paths.
-- `FeatureService`: `fraud_scoring_v1`, chỉ chứa feature model thực sự dùng.
+- `FeatureView`: đọc PushSource, schema là mười hai field của `paysim-fraud-recipient-v2` đúng thứ tự `PAYSIM_MODEL_FEATURE_ORDER`, giữ cùng schema cho batch và online paths.
+- `FeatureService`: `paysim-fraud-scoring-v2`, chỉ chứa feature model thực sự dùng.
 - Request-time fields xử lý rõ ràng ngoài hoặc bằng on-demand feature view; không duplicate logic âm thầm.
+
+### 3.2.1. Feast KHÔNG tự tính aggregate — feature source bắt buộc là bảng đã tính sẵn
+
+Đo trên Feast 0.65.0 đang cài (M030). `feast/aggregation/__init__.py:17` ghi thẳng:
+"Feast-handled aggregations are not yet supported." Chuỗi `aggregation` không xuất hiện trong
+`feast/infra/offline_stores/duckdb.py` hay `file_source.py`; `FeatureView` thường thậm chí không
+nhận tham số `aggregations`; `BatchFeatureView`/`StreamFeatureView` có nhận nhưng chỉ lưu lại;
+`OnDemandFeatureView` biến đổi **theo hàng** trên input đã lấy về nên không nhìn lại lịch sử được.
+
+Hệ quả bắt buộc: `FeatureView` phải đọc một bảng mà `pit_prior_count_*`, `pit_prior_amount_*` và
+`recipient_has_history_*` **đã được tính sẵn**, một hàng một cutoff. Một bảng raw kiểu Silver, dù
+đã có hai cột timestamp suy dẫn, **không dùng được** làm feature source — Feast sẽ không sinh ra
+mười hai field từ nó.
+
+Bảng đó phải được tính bằng **SQL engine** (`features/paysim_recipient.py`), không bằng oracle
+Python. Nếu tính bằng oracle rồi lấy ra so với chính oracle thì G1 thành tautology, kiểm một thứ
+với chính nó. Tính bằng SQL rồi so với oracle mới là hai suy dẫn độc lập — đúng vai trò
+`features/paysim_reference.py` được dựng ra để giữ.
 
 ### 3.3. Registry lifecycle
 
@@ -127,15 +178,34 @@ feast plan/apply -> registry checksum -> feature_service_version
 ```
 
 - Commit feature definitions, không commit secret.
-- Registry runtime artifact có checksum.
+- Registry runtime artifact có checksum. **Checksum này phải tính từ DEFINITIONS, không phải từ
+  registry blob** — xem §3.3.1.
 - CI chạy `feast apply` trên temp directory/fixture.
 - Removal/rename feature yêu cầu migration note.
 
+### 3.3.1. Registry blob KHÔNG phải định danh ổn định
+
+Đo trên Feast 0.65.0 (M030): chạy `feast apply` lần thứ hai mà **không đổi gì** vẫn làm digest
+thay đổi, cả sha256 của file registry lẫn sha256 của proto serialize, vì registry proto mang
+trường `last_updated`.
+
+```text
+apply #1: 73b76be0a95b5ef8fe393ac29c43de78a1632db5e41fb95d7ec8a0e56b7eb349
+apply #2: 67ddb99358774a7a487f4e79eb0c03501c3fa6527baa1f89e098c53b156bdf16
+```
+
+Hệ quả: nếu tiêu chí "`feast apply` idempotent" của G1 được đo bằng cách so checksum của registry
+artifact, nó sẽ **luôn fail vì một lý do vô nghĩa**, và phản ứng tự nhiên là nới tiêu chí — tức
+phá một gate thật. Checksum phải canonical hoá **definitions** (entity, source, feature view,
+feature service, tên field và thứ tự field), đúng cách `paysim_feature_contract_checksum` trong
+`features/paysim_specs.py` đang làm cho contract checksum. Không tính trên blob.
+
 ### 3.4. Acceptance
 
-- Feast historical retrieval trên synthetic fixture khớp expected vectors.
-- `feast apply` idempotent.
-- `fraud_scoring_v1` resolve đủ và đúng ordered feature names.
+- Feast historical retrieval trên PaySim fixture trích từ Silver thật khớp expected vectors của
+  oracle (`data/fixtures/paysim_expected_features.json`).
+- `feast apply` idempotent, đo bằng definitions checksum theo §3.3.1, không bằng registry blob.
+- `paysim-fraud-scoring-v2` resolve đủ và đúng ordered feature names.
 
 ---
 
@@ -145,7 +215,7 @@ feast plan/apply -> registry checksum -> feature_service_version
 
 Builder tạo hai artifact có vai trò khác nhau:
 
-- Gold Delta `pre_decision_features`: aggregate ngay trước từng transaction, dùng cho training;
+- Gold Delta `pre_decision_features`: aggregate ngay trước từng transaction, dùng cho training. **Đây cũng chính là bảng T1 cần làm feature source** (§3.2.1), nên T1 và T2 có phụ thuộc thật: hoặc T1 chờ T2, hoặc T1 tự sinh một bảng nhỏ cùng dạng bằng cùng SQL engine;
 - Gold Delta `post_event_state_updates`: aggregate sau khi consume từng transaction, dùng để materialize online state.
 
 Không materialize latest `pre_decision_features` row: nó loại transaction mới nhất và khiến online state chậm một event. Hai view phải được sinh từ cùng feature spec/reducer, và fixture phải chứng minh quan hệ shift giữa chúng.
@@ -153,7 +223,7 @@ Không materialize latest `pre_decision_features` row: nó loại transaction m�
 ### 4.1. Hai implementation
 
 1. **Reference implementation:** tối ưu cho correctness, chạy fixture/small sample.
-2. **DuckDB implementation:** tối ưu cho full IEEE-CIS.
+2. **DuckDB implementation:** tối ưu cho full snapshot `paysim1:16910f90577b0d98`.
 
 Hai implementation phải khớp trên fixture và random sample trước khi benchmark performance.
 
@@ -256,11 +326,11 @@ từng run vào MLflow; không mở large-scale hyperparameter search.
 Entity dataframe cho training gồm:
 
 ```text
-transaction_id
-card_entity_id
-ordered_event_timestamp
-label_is_fraud
-request-time fields
+source_row_number
+destination_entity_id
+event_timestamp          (suy dẫn ADR-006 từ step; thứ tự/tie-break vẫn trên (step, source_row_number))
+isFraud                  (từ silver.paysim_labels, không bao giờ nằm trong feature columns)
+request-time fields      (current_amount, event_step, transaction_type_transfer)
 ```
 
 Feast/DuckDB gắn history features theo cutoff. Sau retrieval:
@@ -313,7 +383,7 @@ Model candidate chỉ được đánh dấu deployable khi:
 - feature parity fixture pass;
 - không dùng leaky/random split artifact;
 - required metrics tồn tại;
-- model input contract khớp `fraud_scoring_v1`.
+- model input contract khớp `paysim-fraud-scoring-v2`.
 
 Không bắt buộc candidate phải thắng baseline để chứng minh platform. Nếu không thắng, report trung thực.
 
@@ -590,7 +660,7 @@ Full data dùng cùng code path, chỉ khác config/manifest.
 
 | Gate | PASS khi |
 |---|---|
-| G1 Feast contract | historical retrieval khớp fixture oracle |
+| G1 Feast contract | historical retrieval khớp fixture oracle; apply idempotent đo bằng definitions checksum (§3.3.1), không bằng registry blob |
 | G2 Backfill | full/range rerun có checksum giống nhau và Delta versions được ghi |
 | G3 Atomicity | failed run không để committed partial output |
 | G4 Training | temporal run của model đã chọn sau EDA có MLflow artifacts đầy đủ |

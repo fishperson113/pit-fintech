@@ -1,5 +1,100 @@
 # Project changelog
 
+## 2026-08-03 — M030: ADR-006 Feast source Parquet and the T1 design spike
+
+- First step of Sprint 2 T1, taken without waiting for T2: the data source only. ADR-006 decision
+  1 froze the only way PaySim can supply a Feast `FileSource` — derived timestamp columns, because
+  Silver carries hour ordinals and Feast validates against real timestamp columns — and assigned
+  the derivation to T2's Gold projection. The project owner decided to take the source step now.
+  **T1 is not done**; this milestone is the source plus the design reconnaissance that had to
+  happen before any registry code.
+- **New Parquet source.** `pit data build-fixture` now writes
+  `data/fixtures/paysim_temporal_cases.parquet` from the same selection that produces the JSONL
+  and the expected vectors: every Silver column, names and types taken straight from Silver rather
+  than retyped, plus exactly 2 derived columns `event_timestamp`/`created_timestamp` at
+  `pa.timestamp("us", tz="UTC")`. It is a presentation of the selection, never an input to the
+  oracle. `_verify_round_trip` re-reads it and fails the build if the row identities or the
+  timestamp types drift.
+- **`PAYSIM_FEAST_EPOCH_0` and `paysim_step_to_timestamp` in `features/paysim_specs.py`**, the
+  single implementation ADR-006 decision 1.7 requires. The Unix literal `1577836800` appears
+  nowhere in the codebase. The mapping is computed in Python, not SQL: a DuckDB `TIMESTAMPTZ`
+  expression is rendered against the session time zone, which would make the file depend on the
+  machine that produced it.
+- **`to_arrow_table`, and `combine_chunks` kept.** The first real run crashed on
+  `RecordBatchReader has no attribute combine_chunks`: DuckDB's `.arrow()` returns a reader, not a
+  table. `fetch_arrow_table` fixed it but is deprecated; `to_arrow_table` returns a `Table` and
+  runs clean under `-W error::DeprecationWarning`, and is what the repo already used at
+  `features/paysim_recipient.py:376`. `combine_chunks()` was kept rather than deleted to silence
+  the error: it guarantees one chunk, so Parquet row-group boundaries follow the row count and
+  never DuckDB's batching.
+- **Throwaway design spike `scripts/spike_feast_t1.py`** — writes only into a temp directory it
+  deletes, touches neither `feature_repo/` nor `data/fixtures/`. Its feature table is built by the
+  SQL engine (importing `_prior_window_predicate` from `features/paysim_recipient.py`) so that
+  comparing it against the oracle is two independent derivations, not a file compared with itself.
+  Four results: **Q1** the eleven in-scope rows sit at 11 distinct steps, so the fixture's
+  same-step pair never reaches the feature table — a coverage hole, not a blocker, and it corrects
+  an earlier claim that the tie was T1's largest risk; **Q2** `get_historical_features` returned
+  11 rows matching the oracle on every field, 0 differences; **Q3** a deliberate tie collapsed to
+  exactly one row with no fan-out, but which row wins is not controlled by the project, exactly as
+  ADR-006 decision 1.4 warned; **Q4** a no-op second `apply` changed both the registry file and
+  serialized-proto digests (`73b76be0…` to `67ddb993…`) because the proto carries `last_updated`.
+- **Finding 1 — Feast does not compute window aggregates, so the feature source must be
+  precomputed.** `feast/aggregation/__init__.py:17`: "Feast-handled aggregations are not yet
+  supported." `aggregation` appears nowhere in `feast/infra/offline_stores/duckdb.py` or
+  `file_source.py`; a plain `FeatureView` does not accept the argument at all, `BatchFeatureView`
+  and `StreamFeatureView` only store it, and `OnDemandFeatureView` transforms row-wise over
+  already-retrieved inputs. Consequence: the Parquet shipped here is a *source* table, not a
+  *feature* table. T1 additionally needs a precomputed table holding the twelve contract fields,
+  one row per cutoff. Guide §3.2 line 117 and §4 line 148 always said so; declining to wait for T2
+  does not remove that dependency, it moves the obligation into T1.
+- **Finding 2 — the guide §3.3 registry checksum must come from definitions, not the registry
+  blob.** Q4 shows a blob checksum moves on a no-op apply for a reason unrelated to the
+  definitions, so a G1 idempotence criterion measured that way would fail permanently and
+  meaninglessly. The checksum has to be canonical over entity/source/view/service and field order,
+  the way `paysim_feature_contract_checksum` already works. No such function exists in `src/`.
+- **Guides corrected, with the original wording preserved.** Both findings are worthless if the
+  guide keeps telling the next reader to build `card_entity` and `fraud_scoring_v1` against a raw
+  source. `docs/feature-store/sprint-2-implementation-guide.md` took 14 corrections — entity,
+  feature service (three places), feature view schema, `FileSource`, feature spec version,
+  registry checksum rule, both acceptance criteria, the `pre_decision_features` description, the
+  IEEE-CIS dataset reference, the training entity dataframe columns, and the G1 row — plus 2 new
+  sections §3.2.1 and §3.3.1 carrying Findings 1 and 2 into the document people actually follow.
+  `docs/feature-store/sprint-3-implementation-guide.md` took 1 correction, its only stale spot.
+  Every change is logged inside each guide under a `## Nhật ký hiệu chỉnh` section at the top of
+  the file, quoting the original wording next to the replacement and the ADR or milestone that
+  justifies it: this project exists to demonstrate lineage, so nothing is deleted silently.
+  `docs/adr/` was not touched — a frozen decision changes by new ADR, not in-place edit. Left
+  unchanged as historical records: `docs/reports/paysim-feature-contract-v1.md` (ADR-006 line 184
+  keeps it at v1), `docs/reports/sprint-1-completion-report.md`,
+  `docs/feature-store/point-in-time-feature-store-proposal.md` and
+  `docs/feature-store/sprint-1-implementation-guide.md`.
+- Status: verified within the scope run. Project owner ran on 2026-08-03: `.\make.ps1 lint`
+  (`ruff check` all checks passed; `ruff format --check` 54 files already formatted);
+  `.\make.ps1 build-fixture` twice, independently, both reporting 15 source rows and producing
+  byte-identical files — `paysim_temporal_cases.jsonl`
+  `5DD9228FE5B6A2430EC7ABC23E978219F171D1F1316D364633A77B72839DF5AE` and
+  `paysim_expected_features.json`
+  `DF9846F7EB299799425E7FF204202884498B7F7A2BA31AE1BBE3A4922ED9C15B` both unchanged from M029,
+  and the new `paysim_temporal_cases.parquet`
+  `6935B7EE1C0EB4133CA1EF07A11686993329FD119DB3DB4EE6A282FB997153A5` identical across both runs;
+  `uv run pytest -q -rs -m integration tests/integration/test_paysim_fixture.py` (2 passed);
+  `uv run python scripts/spike_feast_t1.py` (all four questions answered, none unanswered). No
+  `DeprecationWarning` remains from project code; one remains from
+  `ibis/backends/duckdb/__init__.py:332`, third-party and recorded rather than suppressed.
+- **Not done, and not claimed: T1 is not finished.** `feature_repo/` is untouched and still holds
+  exactly 2 placeholder files; no `Entity`, `FeatureView`, `FeatureService` or `feature_store.yaml`
+  is committed anywhere. There is no precomputed feature table on disk — the eleven-row table Q2
+  retrieved was built in memory in a temp directory that was deleted. There is no registry
+  checksum in `src/`, and no G1 test lane: the spike is a script, not a test. **G1 does not pass**
+  — of the three criteria in guide §3.4 only the first has been measured, and only inside the
+  spike; the second cannot be measured as the guide implies until the checksum moves off the
+  registry blob (whether apply is semantically idempotent is CHUA XAC DINH); the third was not
+  attempted, no `FeatureService` was created. Q3's tie behaviour is observed, not a contract.
+  Determinism is shown on one machine and one core count. Nothing is committed, so no commit hash
+  is recorded (pending). `train` was not re-run and no M019/M026/M027 metric or checksum is
+  restated.
+- Detail: [M030 log](milestones/M030-feast-source-parquet-and-t1-design-spike.md).
+
 ## 2026-08-03 — M029: PaySim oracle/SQL parity lane and real-Silver fixture builder
 
 - `src/pit_fintech/features/reference.py:3-5` has required since Sprint 1 that a DuckDB

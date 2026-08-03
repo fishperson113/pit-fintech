@@ -13,6 +13,22 @@ Sprint 3 chuyển hệ thống đã đúng thành bằng chứng có thể bảo
 
 ---
 
+## Nhật ký hiệu chỉnh
+
+Sửa tại chỗ để hướng dẫn không sai, ghi lại ở đây để không mất dấu vết kế hoạch ban đầu.
+
+### 2026-08-03 — đồng bộ tên dataset
+
+| Chỗ | Guide viết ban đầu | Đã sửa thành | Căn cứ |
+|---|---|---|---|
+| §4.1 | "chỉ có giá trị trên IEEE-CIS" | "chỉ có giá trị trên snapshot `paysim1:16910f90577b0d98`" | ADR-002 |
+
+Đây là chỗ lỗi thời **duy nhất** trong file này. Guide Sprint 3 nói về ablation, monitoring và
+cloud demo ở mức không phụ thuộc tên entity hay tên feature service, nên không mang các lỗi
+`card_entity` / `fraud_scoring_v1` như guide Sprint 2.
+
+---
+
 ## 0. Bản đồ artifact
 
 | ID | Artifact | Nội dung bắt buộc |
@@ -202,7 +218,7 @@ Thay một controlled feature definition:
 
 ### 4.1. Không claim quá paper
 
-Kết quả chỉ có giá trị trên IEEE-CIS, single-node DuckDB và machine đã ghi. Không so sánh trực tiếp với speedup FeathrPO/Spark trong paper.
+Kết quả chỉ có giá trị trên snapshot `paysim1:16910f90577b0d98`, single-node DuckDB và machine đã ghi. Không so sánh trực tiếp với speedup FeathrPO/Spark trong paper.
 
 ---
 

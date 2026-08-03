@@ -296,6 +296,7 @@ def data_build_fixture(
     table.add_row("silver path", str(result["silver_path"]))
     table.add_row("fixture path", str(result["fixture_path"]))
     table.add_row("expected path", str(result["expected_path"]))
+    table.add_row("parquet path", str(result["parquet_path"]))
     console.print(table)
 
 

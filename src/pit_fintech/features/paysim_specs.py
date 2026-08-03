@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import UTC, datetime, timedelta
 from typing import Final
 
 from pit_fintech.contracts.features import FeatureSetContract, FeatureSpec
@@ -19,6 +20,33 @@ PAYSIM_FEATURE_SOURCE: Final = "silver.paysim_transactions"
 PAYSIM_LABEL_SOURCE: Final = "silver.paysim_labels"
 PAYSIM_ENTITY: Final = "destination_entity_id"
 PAYSIM_ENTITY_DEFINITION_VERSION: Final = "paysim-destination-customer-v1"
+
+# ADR-006 decision 1. Feast's `FileSource` requires real timestamp columns, but PaySim carries only
+# the `step`/`knowledge_step` hour ordinals (ADR-002 decision 1). This anchor presents them as UTC
+# timestamps for the Feast layer only. It is frozen: changing it changes every derived timestamp,
+# and therefore every registry artifact, Gold partition and online key derived from them, so it
+# requires a new ADR. It lives here because ADR-006 decision 1.7 requires exactly one
+# implementation of the mapping, expressed from the contract module and reused by every consumer.
+#
+# What this constant is NOT: the PIT computation never reads the derived columns. Eligibility,
+# window bounds and the replay tie-break stay on `(step, source_row_number)` (ADR-006 decision 1.4)
+# because hour-resolution timestamps cannot express the tie-break at all -- every row in the same
+# `step` maps to the same instant. A derived date is never a feature, a split boundary, or a date
+# quoted in a report as if it were real (ADR-006 decision 1.2).
+PAYSIM_FEAST_EPOCH_0: Final = datetime(2020, 1, 1, tzinfo=UTC)
+
+
+def paysim_step_to_timestamp(step_ordinal: int) -> datetime:
+    """Map an hour ordinal to its ADR-006 derived UTC timestamp, for the Feast layer only.
+
+    `f(n) = PAYSIM_FEAST_EPOCH_0 + n hours` is strictly monotone on integers, so it is bijective
+    and order-preserving over the frozen 1-743 range: it adds no information, removes none, and
+    merges no two distinct steps. Used for both `event_timestamp` (from `step`) and
+    `created_timestamp` (from `knowledge_step`).
+    """
+
+    return PAYSIM_FEAST_EPOCH_0 + timedelta(hours=int(step_ordinal))
+
 
 # Money is summed as this DECIMAL type, never as DOUBLE. Integer-scaled addition is exact,
 # associative and commutative, so a parallel hash aggregate produces the same value no matter how

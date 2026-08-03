@@ -8,6 +8,12 @@ still depend on. This module extracts a small PaySim fixture from the *real* Sil
 test comparing the production SQL path against these expectations would only compare the SQL
 against itself, which is exactly the failure mode the oracle exists to rule out.
 
+Three files are written from one selection: the JSONL source rows, the JSON expected vectors, and
+a Parquet rendering of the same rows carrying every Silver column plus the two ADR-006 derived
+timestamp columns. The Parquet exists because Feast's `FileSource` requires real timestamp columns
+and PaySim has only hour ordinals; it is a presentation of the selection, never an input to the
+oracle, and no feature value is ever computed from it.
+
 Row selection is entirely order-by-then-take against the real dataset -- no randomness, no
 wall-clock sampling, and where a candidate can fail a check the candidates are walked in
 lexicographic order and the first confirmed one wins -- so two runs against the same Silver
@@ -19,23 +25,39 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Final
+from typing import Final, NamedTuple
 
 import duckdb
+import pyarrow as pa
+import pyarrow.parquet as pq
 from deltalake import DeltaTable
 
 from pit_fintech.contracts.manifests import ApplicationLakehouseManifest
-from pit_fintech.data.paysim_lakehouse import find_latest_paysim_lakehouse_manifest
+from pit_fintech.data.paysim_lakehouse import (
+    PAYSIM_SILVER_TRANSACTION_COLUMNS,
+    find_latest_paysim_lakehouse_manifest,
+)
 from pit_fintech.features.paysim_reference import (
     PAYSIM_WINDOW_STEPS,
     PaySimSourceEvent,
     compute_paysim_feature_vectors,
 )
+from pit_fintech.features.paysim_specs import paysim_step_to_timestamp
 
 PROJECT_ROOT: Final = Path(__file__).resolve().parents[3]
 FIXTURE_DIR: Final = PROJECT_ROOT / "data" / "fixtures"
 SOURCE_PATH: Final = FIXTURE_DIR / "paysim_temporal_cases.jsonl"
 EXPECTED_PATH: Final = FIXTURE_DIR / "paysim_expected_features.json"
+PARQUET_PATH: Final = FIXTURE_DIR / "paysim_temporal_cases.parquet"
+
+# The Feast-facing shape of the same rows: every Silver column unchanged, plus the two ADR-006
+# derived columns. `pa.timestamp("us", tz="UTC")` matches what the lakehouse writer already uses
+# (`data/build_lakehouse.py:127-128`) and is the type Feast `FileSource` validation expects.
+_DERIVED_TIMESTAMP_TYPE: Final = pa.timestamp("us", tz="UTC")
+_DERIVED_TIMESTAMP_COLUMNS: Final = (
+    ("event_timestamp", "step"),
+    ("created_timestamp", "knowledge_step"),
+)
 
 # The widest history window (168h) bounds every bounded fetch below: nothing outside
 # [cutoff - RICH_MIN_STEP_SPAN, cutoff] can ever enter a vector, so nothing outside it is fetched.
@@ -343,7 +365,63 @@ def _fetch_window(
     return _rows_to_events(rows)
 
 
-def select_paysim_fixture_events(silver_path: Path) -> list[PaySimSourceEvent]:
+def _fetch_feast_source_table(
+    connection: duckdb.DuckDBPyConnection, source_row_numbers: Sequence[int]
+) -> pa.Table:
+    """The selected rows as Arrow: every Silver column, plus the two ADR-006 derived columns.
+
+    Column names and types come straight out of Silver rather than being retyped here, so this
+    Parquet cannot drift from the table it was extracted from. The two derived columns are the
+    only addition and they are computed in Python from `paysim_step_to_timestamp`, not in SQL: a
+    DuckDB `TIMESTAMPTZ` expression would be rendered against the session time zone, which would
+    make the output depend on the machine that ran it. Nothing in the PIT computation reads them.
+
+    `to_arrow_table` is the materializing call: `DuckDBPyConnection.arrow` returns a
+    `RecordBatchReader`, not a table, so it has no `combine_chunks`, and `fetch_arrow_table` is
+    deprecated in favour of this one. It accepts a `batch_size` that can split the result, hence
+    the explicit `combine_chunks()`: one chunk means the Parquet row-group boundaries follow the
+    row count alone, never DuckDB's batching.
+    """
+
+    placeholders = ", ".join("?" for _ in source_row_numbers)
+    table = (
+        connection.execute(
+            f"""
+            SELECT {", ".join(PAYSIM_SILVER_TRANSACTION_COLUMNS)}
+            FROM silver_transactions
+            WHERE source_row_number IN ({placeholders})
+            ORDER BY step, source_row_number
+            """,
+            list(source_row_numbers),
+        )
+        .to_arrow_table()
+        .combine_chunks()
+    )
+    for name, step_column in _DERIVED_TIMESTAMP_COLUMNS:
+        derived = [
+            paysim_step_to_timestamp(ordinal) for ordinal in table.column(step_column).to_pylist()
+        ]
+        table = table.append_column(
+            pa.field(name, _DERIVED_TIMESTAMP_TYPE, nullable=False),
+            pa.array(derived, type=_DERIVED_TIMESTAMP_TYPE),
+        )
+    return table
+
+
+class PaySimFixtureSelection(NamedTuple):
+    """One selection in two shapes, over exactly the same rows in the same order.
+
+    `events` is the oracle's view: the seven columns the frozen contract may read. `source_table`
+    is the Feast-facing view: every Silver column plus the ADR-006 derived timestamps. The second
+    is a presentation of the first, never an input to it -- no feature value is ever computed from
+    `source_table`.
+    """
+
+    events: list[PaySimSourceEvent]
+    source_table: pa.Table
+
+
+def select_paysim_fixture_events(silver_path: Path) -> PaySimFixtureSelection:
     """Deterministically select a small, real-Silver-derived multi-scenario fixture.
 
     Three scenarios, one destination each: a zero-history CUSTOMER destination, a destination
@@ -373,11 +451,15 @@ def select_paysim_fixture_events(silver_path: Path) -> list[PaySimSourceEvent]:
                 same_step,
             ),
         ]
+        by_row_number = {event.source_row_number: event for event in events}
+        ordered = sorted(by_row_number.values(), key=lambda event: event.order_key)
+        source_table = _fetch_feast_source_table(
+            connection, [event.source_row_number for event in ordered]
+        )
     finally:
         connection.close()
 
-    by_row_number = {event.source_row_number: event for event in events}
-    return sorted(by_row_number.values(), key=lambda event: event.order_key)
+    return PaySimFixtureSelection(events=ordered, source_table=source_table)
 
 
 def _event_to_jsonable(event: PaySimSourceEvent) -> dict[str, object]:
@@ -413,10 +495,18 @@ def load_paysim_expected_features(path: Path = EXPECTED_PATH) -> dict[int, dict[
     }
 
 
-def _write_fixture_files(events: list[PaySimSourceEvent]) -> None:
+def _write_fixture_files(selection: PaySimFixtureSelection) -> None:
+    events = selection.events
     FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
     lines = [json.dumps(_event_to_jsonable(event), sort_keys=True) for event in events]
     SOURCE_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    # Same call and same arguments as the synthetic fixture writer (`data/sample.py:117`), which
+    # is the repo's existing evidence that this write is reproducible: `pit data sample` runs as a
+    # `test-temporal` prerequisite and M028 recorded that it leaves `git status --short` clean.
+    # Determinism comes from the input, not the codec: a fixed row order, a fixed column order and
+    # Silver's own column types, with `zstd` at pyarrow's default level and a pinned pyarrow.
+    pq.write_table(selection.source_table, PARQUET_PATH, compression="zstd")
 
     vectors = {
         str(row.source_row_number): row.values for row in compute_paysim_feature_vectors(events)
@@ -449,6 +539,24 @@ def _verify_round_trip(events: list[PaySimSourceEvent]) -> None:
     ]:
         raise ValueError("paysim fixture row order changed on reload")
 
+    # The Parquet is a second presentation of the same rows, so it has to carry the same row
+    # identities in the same order. Checking it here means a drift fails the build rather than
+    # waiting for the integration lane.
+    parquet_table = pq.read_table(PARQUET_PATH)
+    parquet_row_numbers = parquet_table.column("source_row_number").to_pylist()
+    if parquet_row_numbers != [event.source_row_number for event in events]:
+        raise ValueError(
+            f"paysim parquet rows do not match the jsonl fixture: {parquet_row_numbers} != "
+            f"{[event.source_row_number for event in events]}"
+        )
+    for name, _ in _DERIVED_TIMESTAMP_COLUMNS:
+        if parquet_table.schema.field(name).type != _DERIVED_TIMESTAMP_TYPE:
+            raise ValueError(
+                f"paysim parquet column {name} is "
+                f"{parquet_table.schema.field(name).type}, not {_DERIVED_TIMESTAMP_TYPE}; "
+                "Feast FileSource validation needs a UTC timestamp column"
+            )
+
 
 def build_paysim_temporal_fixture(
     *,
@@ -466,13 +574,14 @@ def build_paysim_temporal_fixture(
         artifact_root = project_root / artifact_root
 
     silver_path = _resolve_silver_transactions_path(project_root, artifact_root)
-    events = select_paysim_fixture_events(silver_path)
-    _write_fixture_files(events)
-    _verify_round_trip(events)
+    selection = select_paysim_fixture_events(silver_path)
+    _write_fixture_files(selection)
+    _verify_round_trip(selection.events)
 
     return {
-        "source_rows": len(events),
+        "source_rows": len(selection.events),
         "silver_path": str(silver_path),
         "fixture_path": str(SOURCE_PATH),
         "expected_path": str(EXPECTED_PATH),
+        "parquet_path": str(PARQUET_PATH),
     }
