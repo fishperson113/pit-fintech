@@ -46,6 +46,85 @@ services:
       timeout: 5s
       retries: 12
 
+  # T8 (guide s10) -- the scoring API. Core service, no profile: guide s10 lists Redis, the MLflow
+  # tracking server and the scoring API as the minimum Compose set.
+  #
+  # Round-0 status: the image builds and the container starts, but `pit_fintech.serving.app` is a
+  # skeleton whose bodies raise NotImplementedError, so the healthcheck below will not go healthy
+  # until T7 is implemented. That is the honest state, not a misconfiguration.
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        UV_GROUPS: serving
+    command:
+      - uv
+      - run
+      - --no-sync
+      - uvicorn
+      - pit_fintech.serving.app:create_app
+      - --factory
+      - --host=0.0.0.0
+      - --port=8000
+    environment:
+      # `Settings` reads the PIT_ prefix (src/pit_fintech/config.py). Service names resolve on the
+      # Compose network, so these override the localhost defaults.
+      PIT_REDIS_URL: redis://redis:6379/0
+      PIT_MLFLOW_TRACKING_URI: http://mlflow:5000
+      PIT_API_HOST: 0.0.0.0
+      PIT_API_PORT: "8000"
+      PIT_FEATURE_SERVICE_VERSION: ${PIT_FEATURE_SERVICE_VERSION:-paysim-fraud-scoring-v2}
+      PIT_LOG_JSON: "true"
+    ports:
+      - "127.0.0.1:${PIT_API_PORT:-8000}:8000"
+    volumes:
+      # Guide s10.1: raw/silver/artifacts bind-mounted read-only or read-write as needed. Serving
+      # reads Gold and manifests and must never write them -- AGENTS.md s11 keeps the medallion off
+      # the synchronous request path, so read-only here is the enforcement, not a precaution.
+      - ./data:/app/data:ro
+      - ./artifacts:/app/artifacts:ro
+      - ./feature_repo:/app/feature_repo:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+      mlflow:
+        condition: service_healthy
+    healthcheck:
+      # Guide s10.2: ready is true only when model + online store + feature version all load. The
+      # readiness probe is the gate; liveness alone would report a process that cannot score.
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # Guide s10: "optional MinIO profile de smoke-test Delta tables tren S3-compatible storage."
+  # Opt-in only (`--profile minio`) so the core lane stays Redis + MLflow + API.
+  minio:
+    profiles: ["minio"]
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${PIT_MINIO_USER:-pitminio}
+      MINIO_ROOT_PASSWORD: ${PIT_MINIO_PASSWORD:-pitminio123}
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   jupyter:
     profiles: ["lab"]
     build:
@@ -76,3 +155,6 @@ services:
 volumes:
   redis-data:
   mlflow-data:
+  # Guide s10.1: named volumes for runtime state. Teardown must not remove the raw dataset, which
+  # lives in the bind-mounted ./data tree and is deliberately not a volume.
+  minio-data:

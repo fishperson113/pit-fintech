@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-08-04 (M031). Status words are strict:
+Last updated: 2026-08-04 (M032). Status words are strict:
 
 - **planned**: present in the six-week guide, with no claim that code exists;
 - **implemented**: code/artifact exists but the relevant gate may not have run;
@@ -73,6 +73,28 @@ Thin Feast contract, CLI-built Gold features, full/range/incremental backfill, R
 materialization, local selected-model + MLflow run, gated promotion/rollback, FastAPI/Uvicorn
 scoring, one-producer ordered in-memory replay, offline/online parity, and sample E2E are all
 **planned**. Ray Train/Tune/Serve and external message brokers are out of the Sprint 2 MVP.
+
+**M032 Round 0 is implemented, not verified.** It adds 19 new files (3,842 lines) and modifies
+`compose.yaml`, creating the cross-module scaffolding for T2–T9: Gold-build, backfill,
+materialization, training, replay/parity, serving, and E2E package seams. Import is reported OK;
+the reported check results are `ruff check` clean for 79 files, unit 50 passed, temporal 73 passed,
+and E2E 12 skipped. These results do not demonstrate a running pipeline or E2E: scaffold entry
+points raise `NotImplementedError`, except `backfill_idempotency_key()` which is explicitly
+implemented. Consequently no T2–T9 gate, serving flow, backfill flow, replay flow, promotion/
+rollback, or E2E path is verified by M032.
+
+M032 freezes seven contracts: two Gold tables and `OfflineFeatureBuildResult`; `BackfillRunRecord`
+and its idempotency key; `FeatureProvider` plus four adapters; replay parity result types; and
+Pydantic score request/response schemas. Its log also records three guards that must survive later
+implementation (post-event field names must differ from contract names to prevent leakage,
+integer and float parity mismatches must stay separate, and missing checkpoints fail a parity
+report), three known traps (SQL engine rather than oracle as feature producer; Python timestamp
+mapping; required same-step-tie coverage), and six explicit decisions still pending. The guide
+deviations are intentional and unresolved: idempotency hashing currently adds a version prefix,
+and no `e2e` marker was added because changing `pyproject.toml` would invalidate both ADR-004
+component fingerprints; path plus `integration` marker selects the lane instead. `AGENTS.md` is a
+contemporaneous Dương-to-Codex instruction edit, not a Round 0 product and must not be reverted as
+one.
 
 Component-scoped lineage is **verified** by M021, including the post-commit `train` reuse of
 legacy Silver v2 without rebuild and the new fingerprint fields recorded in the 2026-07-28

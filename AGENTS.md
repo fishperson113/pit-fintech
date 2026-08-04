@@ -16,9 +16,10 @@ Project kéo dài 6 tuần, solo, gồm 3 sprint. Cloud deployment và TypeScrip
 
 ## 2. Trạng thái bàn giao
 
-- M001–M017 đã triển khai foundation, synthetic temporal oracle, PaySim EDA/ADR, destination
-  PIT prototype, LightGBM candidate spike và FeatureSpec
-  `paysim-fraud-recipient-v1`; các milestone này đã được user verify.
+- Sprint 1 (M001–M024) đã complete và verified. Ngoài foundation, synthetic temporal oracle,
+  PaySim EDA/ADR, destination PIT prototype, lakehouse và clean baseline, M024 đã nâng temporal
+  regression suite lên 33 tests; knowledge interview vẫn chưa được re-score nên không được suy ra
+  knowledge gate đã pass.
 - Dataset snapshot đang khóa là `paysim1:16910f90577b0d98`, 6.362.620 dòng, step 1–743.
 - M018 đã implement application path
   `raw CSV -> bronze.paysim_transactions -> silver.paysim_transactions +
@@ -37,13 +38,32 @@ Project kéo dài 6 tuần, solo, gồm 3 sprint. Cloud deployment và TypeScrip
   `docs/reports/sprint-1-completion-report.md`. Notebook 05 đã được trả về trạng thái output-free;
   manifest và MLflow artifacts mới là evidence authoritative.
 - Sprint 2 bắt đầu từ exact Silver v1 và phải thêm probability-scoring wrapper trước serving.
-- M021 đang thay guard commit-equality bằng `component-fingerprint-v1`: exact Delta/contract là
-  source gate, training và lakehouse có fingerprint/dirty state riêng; docs-only commit không
-  yêu cầu rebuild Silver. Code đã implement nhưng user gates chưa chạy.
+- M021 `component-fingerprint-v1` đã verified: exact Delta/contract là source gate; training và
+  lakehouse có fingerprint/dirty state riêng; docs-only commit không yêu cầu rebuild Silver. User
+  đã chạy `train` reuse Silver v2 không rebuild và tái lập đúng metric baseline.
+- M025–M027 đã verified: ADR-005 thêm `knowledge_step`, contract lên
+  `paysim-fraud-recipient-v2`, và PIT SQL dùng two-column eligibility; monetary aggregation dùng
+  `DECIMAL(18,2)` để vector checksum deterministic. Hai lần train độc lập trên Silver v6 cùng
+  vector checksum `ce88d250…`, future-read violations `0`.
+- M028 (ADR-006) đã accepted và verified: Feast-only time map là
+  `2020-01-01T00:00:00Z + step/knowledge_step hours`; service là
+  `paysim-fraud-scoring-v2`. `feast==0.65.0` là optional dependency và `uvicorn==0.34.0` bị cap
+  bởi dependency của Feast.
+- M029 đã verified PaySim pure-Python oracle versus cả hai DuckDB PIT engines và real-Silver
+  fixture builder. Fixture có 15 source rows (11 scoring, 4 history-only), nhưng parity extracted
+  fixture giữa hai DuckDB engines và determinism cross-machine vẫn là gaps.
+- M030 verified design reconnaissance: Feast không tính window aggregate; `FileSource` phải đọc
+  precomputed features từ SQL engine. Registry blob không là stable identity vì no-op apply đổi
+  timestamps, nên idempotence dùng definitions checksum.
+- M031 đã verified trong scope re-run, chưa commit: real local `feature_repo/`, precomputed
+  11-row fixture feature table, definitions checksum và G1 pytest lane. G1 pass: Feast historical
+  retrieval khớp oracle 132/132 fields, apply stable theo definitions checksum, service resolves
+  12 fields đúng thứ tự. Đây đóng G1, không đóng toàn bộ T1/Sprint 2.
 - Notebook chỉ là EDA/experiment surface. Correctness, model và lakehouse logic nằm trong `src/`
   và `tests/`.
-- Redis/MLflow Compose mới là service boundary; Feast, Gold, backfill, materialization, serving,
-  replay parity và promotion vẫn thuộc Sprint 2.
+- T2 Gold `pre_decision_features`, full/range/incremental backfill, Redis materialization,
+  probability-scoring wrapper/FastAPI, replay parity và promotion vẫn thuộc Sprint 2. Feast T1
+  chưa có PushSource/OnDemandFeatureView; same-step cutoff tie chưa được exercise tại Feast layer.
 - Mọi command execution thuộc user; agent viết code, kiểm tra tĩnh và verify output do user gửi.
 
 Tài liệu triển khai authoritative nằm trong `docs/feature-store/`, ADR trong `docs/adr/`, report
@@ -156,19 +176,23 @@ M019 triển khai clean baseline riêng qua `train`/notebook 05:
 - dùng component fingerprint thay vì yêu cầu trainer/lakehouse cùng Git commit;
 - chặn uncommitted change trong training/lakehouse component nhưng không chặn docs-only change;
 - log FeatureSpec/Delta/vector/component/code/lock lineage vào MLflow và manifest;
-- verified baseline lịch sử dùng clean Silver v1/commit `6e93e7f…`; M021 policy mới chưa được
-  user verify.
+- verified baseline lịch sử dùng clean Silver v1/commit `6e93e7f…`; M021 policy sau đó đã được
+  user verify. M026/M027 lại tái lập metric này trên rebuilt Silver v4/v6 với knowledge-time
+  predicate và deterministic decimal sums.
 
-FeatureSpec PaySim đã khóa ngày 2026-07-27 qua ADR-003:
+FeatureSpec PaySim hiện khóa ở v2 qua ADR-003, ADR-005 và ADR-006:
 
-- contract `paysim-fraud-recipient-v1`, service `paysim-fraud-scoring-v2`;
+- contract `paysim-fraud-recipient-v2`, service `paysim-fraud-scoring-v2`;
 - entity `destination_entity_id`, definition `paysim-destination-customer-v1`;
 - scoring scope v1 là `CASH_OUT`/`TRANSFER` có destination kind `CUSTOMER`;
 - source `silver.paysim_transactions`, label source `silver.paysim_labels`;
 - vector 12 fields: 3 request-time + count/sum/history flag tại 1h, 24h, 168h;
-- strict `prior_step < current_step`; same-step bị loại khỏi model feature;
+- strict `prior_step < current_step` và `prior_knowledge_step <= current_knowledge_step`;
+  same-step bị loại khỏi model feature;
 - `source_row_number` chỉ là replay/tie-break, không cho phép đọc cùng step;
 - cấm label, policy output và bốn balance columns;
+- `knowledge_step` là derived Bronze/Silver field; Feast timestamps chỉ là mapping layer, không
+  thay PIT axis `(step, source_row_number)`;
 - online bắt buộc `read -> score -> update`;
 - mọi thay đổi semantics/order/dtype/default phải bump version và backfill lại.
 

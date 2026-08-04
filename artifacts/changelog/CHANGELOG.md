@@ -1,5 +1,28 @@
 # Project changelog
 
+## 2026-08-04 — M032: Sprint 2 round 0 scaffold and cross-module contracts
+
+- **Implemented, not verified.** Round 0 adds 19 new files (3,842 lines) for the remaining Sprint 2
+  seams and modifies `compose.yaml` (T8 `api` service / `minio` profile). It is only a scaffold:
+  import succeeds and lint is clean, but implementation entry points raise `NotImplementedError`
+  (except the explicitly implemented `backfill_idempotency_key()` helper). No T2–T9 pipeline or
+  acceptance gate is claimed to run.
+- Seven contracts are fixed across Gold build, backfill records/idempotency, serving providers and
+  schemas, and replay parity. Three non-obvious guards are recorded so they are not refactored away:
+  post-event names intentionally differ from contract names to prevent leakage, integer mismatches
+  remain separate from float-tolerance mismatches, and a parity run cannot pass with required
+  checkpoints missing.
+- The log carries forward three implementation traps (SQL engine rather than oracle as feature
+  producer; Python rather than SQL timestamp derivation; required same-step-tie coverage) and six
+  pending decisions, including the Feast-to-Gold path, stale entities, idempotency-key prefix,
+  manifest consolidation, and the T1/T7 nine-versus-twelve field seam. It explicitly records the
+  two intentional guide deviations: the prefix in the idempotency-key hash and no new `e2e` marker
+  because it would invalidate ADR-004 fingerprint reuse.
+- Recorded Round 0 checks: import OK; `ruff check` clean for 79 files; unit 50 passed; temporal 73
+  passed; E2E 12 skipped. These are not evidence of an E2E run. `AGENTS.md` is modified because
+  Dương updated Codex instructions; it is not a M032 output and must not be reverted as one.
+- Detail: [M032 log](milestones/M032-sprint2-scaffold-and-contracts.md).
+
 ## 2026-08-04 — M031: Feast `feature_repo/`, definitions checksum, and the G1 pytest lane
 
 - Closes the four gaps M030 left open in Sprint 2 T1: no precomputed feature table on disk, no

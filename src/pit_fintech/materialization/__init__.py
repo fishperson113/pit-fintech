@@ -1,0 +1,53 @@
+"""T5 -- online materialization, watermark and recovery (guide s7; gates G5, G8)."""
+
+from pit_fintech.materialization.materializer import (
+    OnlineStoreConfig,
+    evaluate_write,
+    materialize_to_watermark,
+    post_event_row_to_record,
+    push_to_feast_online_store,
+    read_online_features,
+    read_watermark,
+    rematerialize_after_reset,
+    reset_online_store,
+    write_record,
+)
+from pit_fintech.materialization.records import (
+    ONLINE_KEY_TEMPLATE,
+    ONLINE_RUN_KEY_TEMPLATE,
+    ONLINE_WATERMARK_KEY_TEMPLATE,
+    FeatureStatus,
+    MaterializationRunResult,
+    MaterializationWriteDecision,
+    MaterializationWriteOutcome,
+    OnlineFeatureRecord,
+    OnlineReadResult,
+    OnlineStoreKind,
+    RecoveryReport,
+    online_record_key,
+)
+
+__all__ = [
+    "ONLINE_KEY_TEMPLATE",
+    "ONLINE_RUN_KEY_TEMPLATE",
+    "ONLINE_WATERMARK_KEY_TEMPLATE",
+    "FeatureStatus",
+    "MaterializationRunResult",
+    "MaterializationWriteDecision",
+    "MaterializationWriteOutcome",
+    "OnlineFeatureRecord",
+    "OnlineReadResult",
+    "OnlineStoreConfig",
+    "OnlineStoreKind",
+    "RecoveryReport",
+    "evaluate_write",
+    "materialize_to_watermark",
+    "online_record_key",
+    "post_event_row_to_record",
+    "push_to_feast_online_store",
+    "read_online_features",
+    "read_watermark",
+    "rematerialize_after_reset",
+    "reset_online_store",
+    "write_record",
+]
