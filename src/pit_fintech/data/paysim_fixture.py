@@ -8,11 +8,18 @@ still depend on. This module extracts a small PaySim fixture from the *real* Sil
 test comparing the production SQL path against these expectations would only compare the SQL
 against itself, which is exactly the failure mode the oracle exists to rule out.
 
-Three files are written from one selection: the JSONL source rows, the JSON expected vectors, and
-a Parquet rendering of the same rows carrying every Silver column plus the two ADR-006 derived
-timestamp columns. The Parquet exists because Feast's `FileSource` requires real timestamp columns
-and PaySim has only hour ordinals; it is a presentation of the selection, never an input to the
-oracle, and no feature value is ever computed from it.
+Four files are written from one selection: the JSONL source rows, the JSON expected vectors, a
+Parquet rendering of the same rows carrying every Silver column plus the two ADR-006 derived
+timestamp columns, and the precomputed feature table Feast's `FeatureView` actually reads. The
+first Parquet exists because Feast's `FileSource` requires real timestamp columns and PaySim has
+only hour ordinals; it is a presentation of the selection, never an input to the oracle, and no
+feature value is ever computed from it.
+
+The feature table is different in kind: Feast computes no window aggregates (M030 Finding 1), so
+the nine history fields have to exist on disk before a `FeatureView` can serve them. It is
+computed by the **SQL engine** (`features/paysim_recipient.py`), never by the oracle -- an
+oracle-built table later checked against the oracle would make gate G1 a tautology -- and the
+builder then compares it against the oracle field by field and refuses to finish if they disagree.
 
 Row selection is entirely order-by-then-take against the real dataset -- no randomness, no
 wall-clock sampling, and where a candidate can fail a check the candidates are walked in
@@ -37,18 +44,43 @@ from pit_fintech.data.paysim_lakehouse import (
     PAYSIM_SILVER_TRANSACTION_COLUMNS,
     find_latest_paysim_lakehouse_manifest,
 )
+from pit_fintech.features.paysim_recipient import (
+    PAYSIM_PRE_DECISION_SOURCE_COLUMNS,
+    paysim_pre_decision_feature_sql,
+)
 from pit_fintech.features.paysim_reference import (
     PAYSIM_WINDOW_STEPS,
     PaySimSourceEvent,
     compute_paysim_feature_vectors,
+    in_scoring_scope,
 )
-from pit_fintech.features.paysim_specs import paysim_step_to_timestamp
+from pit_fintech.features.paysim_specs import (
+    PAYSIM_ENTITY,
+    PAYSIM_MODEL_FEATURE_ORDER,
+    paysim_step_to_timestamp,
+)
 
 PROJECT_ROOT: Final = Path(__file__).resolve().parents[3]
 FIXTURE_DIR: Final = PROJECT_ROOT / "data" / "fixtures"
 SOURCE_PATH: Final = FIXTURE_DIR / "paysim_temporal_cases.jsonl"
 EXPECTED_PATH: Final = FIXTURE_DIR / "paysim_expected_features.json"
 PARQUET_PATH: Final = FIXTURE_DIR / "paysim_temporal_cases.parquet"
+FEATURE_TABLE_PATH: Final = FIXTURE_DIR / "paysim_feature_table.parquet"
+
+# The frozen column order of the feature table. `feature_repo/` binds to these names, so changing
+# one is a contract change, not a refactor: entity join key first, then the two ADR-006 timestamp
+# columns Feast validates and joins on, then the twelve contract fields in
+# `PAYSIM_MODEL_FEATURE_ORDER`. `source_row_number` trails as the row identity -- it is not a
+# contract field and is never served as one, but it is the only key that maps a retrieved row back
+# to `paysim_expected_features.json`, which is what the G1 comparison needs.
+PAYSIM_FEATURE_TABLE_COLUMNS: Final = (
+    PAYSIM_ENTITY,
+    "event_timestamp",
+    "created_timestamp",
+    *PAYSIM_MODEL_FEATURE_ORDER,
+    "source_row_number",
+)
+_FEATURE_INPUT_RELATION: Final = "paysim_fixture_rows"
 
 # The Feast-facing shape of the same rows: every Silver column unchanged, plus the two ADR-006
 # derived columns. `pa.timestamp("us", tz="UTC")` matches what the lakehouse writer already uses
@@ -408,17 +440,74 @@ def _fetch_feast_source_table(
     return table
 
 
+def _fetch_feature_table(
+    connection: duckdb.DuckDBPyConnection, source_row_numbers: Sequence[int]
+) -> pa.Table:
+    """Compute the precomputed feature table with the SQL engine, then time-type it in Python.
+
+    The selected rows are pulled into Arrow and registered as the projection's input relation, so
+    the SQL sees exactly the pool the oracle scores -- the same fifteen rows, no more history and
+    no less. `paysim_pre_decision_feature_sql` is imported rather than restated: the table has to
+    come off the engine the project ships, or comparing it against the oracle proves nothing.
+
+    The two timestamp columns are appended in Python from `paysim_step_to_timestamp`, never in
+    SQL, for the reason ADR-006 decision 1.7 records: a DuckDB `TIMESTAMPTZ` expression renders
+    against the session time zone, so the file would differ between machines.
+    """
+
+    placeholders = ", ".join("?" for _ in source_row_numbers)
+    fixture_rows = (
+        connection.execute(
+            f"""
+            SELECT {", ".join(PAYSIM_PRE_DECISION_SOURCE_COLUMNS)}
+            FROM silver_transactions
+            WHERE source_row_number IN ({placeholders})
+            ORDER BY step, source_row_number
+            """,
+            list(source_row_numbers),
+        )
+        .to_arrow_table()
+        .combine_chunks()
+    )
+    connection.register(_FEATURE_INPUT_RELATION, fixture_rows)
+    try:
+        table = (
+            connection.execute(paysim_pre_decision_feature_sql(_FEATURE_INPUT_RELATION))
+            .to_arrow_table()
+            .combine_chunks()
+        )
+    finally:
+        connection.unregister(_FEATURE_INPUT_RELATION)
+
+    for name, step_column in _DERIVED_TIMESTAMP_COLUMNS:
+        derived = [
+            paysim_step_to_timestamp(ordinal) for ordinal in table.column(step_column).to_pylist()
+        ]
+        table = table.append_column(
+            pa.field(name, _DERIVED_TIMESTAMP_TYPE, nullable=False),
+            pa.array(derived, type=_DERIVED_TIMESTAMP_TYPE),
+        )
+    # `select` also drops `step`/`knowledge_step`: they are the ordinals the timestamps were
+    # derived from, not contract fields, and leaving them in would invite a consumer to join on
+    # them instead of on the columns Feast validates.
+    return table.select(PAYSIM_FEATURE_TABLE_COLUMNS)
+
+
 class PaySimFixtureSelection(NamedTuple):
-    """One selection in two shapes, over exactly the same rows in the same order.
+    """One selection in three shapes, over exactly the same rows in the same order.
 
     `events` is the oracle's view: the seven columns the frozen contract may read. `source_table`
-    is the Feast-facing view: every Silver column plus the ADR-006 derived timestamps. The second
-    is a presentation of the first, never an input to it -- no feature value is ever computed from
-    `source_table`.
+    is the Feast-facing raw view: every Silver column plus the ADR-006 derived timestamps.
+    `feature_table` is the precomputed twelve-field table a `FeatureView` can actually serve, one
+    row per in-scope cutoff, computed by the SQL engine.
+
+    Only `events` ever reaches the oracle. Neither table is an input to it, and no expected value
+    is ever computed from either.
     """
 
     events: list[PaySimSourceEvent]
     source_table: pa.Table
+    feature_table: pa.Table
 
 
 def select_paysim_fixture_events(silver_path: Path) -> PaySimFixtureSelection:
@@ -453,13 +542,15 @@ def select_paysim_fixture_events(silver_path: Path) -> PaySimFixtureSelection:
         ]
         by_row_number = {event.source_row_number: event for event in events}
         ordered = sorted(by_row_number.values(), key=lambda event: event.order_key)
-        source_table = _fetch_feast_source_table(
-            connection, [event.source_row_number for event in ordered]
-        )
+        row_numbers = [event.source_row_number for event in ordered]
+        source_table = _fetch_feast_source_table(connection, row_numbers)
+        feature_table = _fetch_feature_table(connection, row_numbers)
     finally:
         connection.close()
 
-    return PaySimFixtureSelection(events=ordered, source_table=source_table)
+    return PaySimFixtureSelection(
+        events=ordered, source_table=source_table, feature_table=feature_table
+    )
 
 
 def _event_to_jsonable(event: PaySimSourceEvent) -> dict[str, object]:
@@ -507,6 +598,7 @@ def _write_fixture_files(selection: PaySimFixtureSelection) -> None:
     # Determinism comes from the input, not the codec: a fixed row order, a fixed column order and
     # Silver's own column types, with `zstd` at pyarrow's default level and a pinned pyarrow.
     pq.write_table(selection.source_table, PARQUET_PATH, compression="zstd")
+    pq.write_table(selection.feature_table, FEATURE_TABLE_PATH, compression="zstd")
 
     vectors = {
         str(row.source_row_number): row.values for row in compute_paysim_feature_vectors(events)
@@ -516,6 +608,71 @@ def _write_fixture_files(selection: PaySimFixtureSelection) -> None:
         json.dumps(payload, allow_nan=False, separators=(",", ":"), sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def _verify_feature_table(
+    events: Sequence[PaySimSourceEvent],
+    expected: dict[int, dict[str, int | float]],
+) -> None:
+    """Re-read the feature table and check the SQL engine against the oracle, field by field.
+
+    This is the point of building the table in SQL. Both sides derive the same twelve fields from
+    the same fifteen rows through completely different machinery -- a DuckDB range self-join with
+    DECIMAL(18,2) aggregation on one side, explicit Python loops with `decimal.Decimal` on the
+    other -- so an agreement is real evidence and a disagreement is a defect in one of them. Every
+    difference is collected before raising, because seeing all of them at once is what tells you
+    which side is wrong; the fix is never to move the expectation onto the output.
+    """
+
+    table = pq.read_table(FEATURE_TABLE_PATH)
+    if tuple(table.column_names) != PAYSIM_FEATURE_TABLE_COLUMNS:
+        raise ValueError(
+            f"paysim feature table columns drifted from the frozen order: "
+            f"{tuple(table.column_names)} != {PAYSIM_FEATURE_TABLE_COLUMNS}"
+        )
+    in_scope = [event for event in events if in_scoring_scope(event)]
+    rows = table.to_pylist()
+    if [row["source_row_number"] for row in rows] != [
+        event.source_row_number for event in in_scope
+    ]:
+        raise ValueError(
+            "paysim feature table rows are not the in-scope fixture cutoffs in replay order: "
+            f"{[row['source_row_number'] for row in rows]} != "
+            f"{[event.source_row_number for event in in_scope]}"
+        )
+
+    by_row_number = {event.source_row_number: event for event in in_scope}
+    differences: list[str] = []
+    for row in rows:
+        row_number = int(row["source_row_number"])
+        event = by_row_number[row_number]
+        if row[PAYSIM_ENTITY] != event.destination_entity_id:
+            differences.append(
+                f"{row_number}.{PAYSIM_ENTITY}: sql {row[PAYSIM_ENTITY]!r} != fixture "
+                f"{event.destination_entity_id!r}"
+            )
+        for name, ordinal in (
+            ("event_timestamp", event.step),
+            ("created_timestamp", event.knowledge_step),
+        ):
+            if row[name] != paysim_step_to_timestamp(ordinal):
+                differences.append(
+                    f"{row_number}.{name}: {row[name]!r} != "
+                    f"{paysim_step_to_timestamp(ordinal)!r} (ADR-006 map of {ordinal})"
+                )
+        for name in PAYSIM_MODEL_FEATURE_ORDER:
+            if row[name] != expected[row_number][name]:
+                differences.append(
+                    f"{row_number}.{name}: sql {row[name]!r} != oracle "
+                    f"{expected[row_number][name]!r}"
+                )
+    if differences:
+        raise ValueError(
+            "the SQL-built feature table disagrees with the Python oracle on "
+            f"{len(differences)} field(s); recompute the disputed rows by hand from "
+            f"{SOURCE_PATH.name} to find which side is wrong, and never edit the expectation to "
+            "match the output:\n  " + "\n  ".join(differences)
+        )
 
 
 def _verify_round_trip(events: list[PaySimSourceEvent]) -> None:
@@ -557,6 +714,8 @@ def _verify_round_trip(events: list[PaySimSourceEvent]) -> None:
                 "Feast FileSource validation needs a UTC timestamp column"
             )
 
+    _verify_feature_table(events, expected)
+
 
 def build_paysim_temporal_fixture(
     *,
@@ -580,8 +739,10 @@ def build_paysim_temporal_fixture(
 
     return {
         "source_rows": len(selection.events),
+        "feature_rows": selection.feature_table.num_rows,
         "silver_path": str(silver_path),
         "fixture_path": str(SOURCE_PATH),
         "expected_path": str(EXPECTED_PATH),
         "parquet_path": str(PARQUET_PATH),
+        "feature_table_path": str(FEATURE_TABLE_PATH),
     }

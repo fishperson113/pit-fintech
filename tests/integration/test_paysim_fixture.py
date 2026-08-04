@@ -24,7 +24,9 @@ import pytest
 
 from pit_fintech.data.paysim_fixture import (
     EXPECTED_PATH,
+    FEATURE_TABLE_PATH,
     PARQUET_PATH,
+    PAYSIM_FEATURE_TABLE_COLUMNS,
     SOURCE_PATH,
     build_paysim_temporal_fixture,
     load_paysim_expected_features,
@@ -32,7 +34,12 @@ from pit_fintech.data.paysim_fixture import (
 )
 from pit_fintech.data.paysim_lakehouse import PAYSIM_SILVER_TRANSACTION_COLUMNS
 from pit_fintech.features.paysim_reference import in_scoring_scope
-from pit_fintech.features.paysim_specs import PAYSIM_FEAST_EPOCH_0
+from pit_fintech.features.paysim_specs import (
+    PAYSIM_ENTITY,
+    PAYSIM_FEAST_EPOCH_0,
+    PAYSIM_MODEL_FEATURE_ORDER,
+    paysim_step_to_timestamp,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -127,3 +134,83 @@ def test_paysim_fixture_parquet_is_a_feast_readable_view_of_the_same_rows() -> N
         assert row["created_timestamp"] == PAYSIM_FEAST_EPOCH_0 + timedelta(
             hours=row["knowledge_step"]
         )
+
+
+# The eleven in-scope cutoffs of the frozen `paysim1:16910f90577b0d98` snapshot. Written as a
+# literal rather than derived, so a selection change that silently drops or adds a cutoff fails
+# here instead of quietly reshaping the table `feature_repo/` reads.
+EXPECTED_FEATURE_ROWS = 11
+
+# Contract dtypes from ADR-003/ADR-005: counts and history flags are int64, everything else
+# float64. DuckDB types a bare `CASE ... THEN 1` as int32, so the flags are only int64 because the
+# projection casts them; pinning them here is what keeps that cast from being dropped as noise.
+_INT64_FIELDS = frozenset(
+    name
+    for name in PAYSIM_MODEL_FEATURE_ORDER
+    if name.startswith(("pit_prior_count", "recipient_has_history"))
+)
+
+
+def test_paysim_feature_table_pins_the_schema_feature_repo_binds_to() -> None:
+    """The precomputed feature table: eleven rows, frozen column order, contract dtypes.
+
+    Feast computes no window aggregates (M030 Finding 1), so this table -- not the raw source
+    Parquet -- is what a `FeatureView` reads. Its path and its column names are a contract with
+    `feature_repo/`, which is why they are pinned literally rather than recomputed here.
+
+    The oracle comparison is repeated even though `build_paysim_temporal_fixture` already runs it
+    internally: this one reads the file from disk, so it also covers the write and the Parquet
+    round-trip, and it would still fail if the builder's own check were ever weakened.
+    """
+
+    try:
+        result = build_paysim_temporal_fixture()
+    except FileNotFoundError as exc:
+        pytest.skip(f"no local PaySim Silver artifact to build the fixture from: {exc}")
+
+    assert result["feature_table_path"] == str(FEATURE_TABLE_PATH)
+    assert FEATURE_TABLE_PATH.name == "paysim_feature_table.parquet"
+    assert FEATURE_TABLE_PATH.exists()
+
+    table = pq.read_table(FEATURE_TABLE_PATH)
+    events = load_paysim_fixture_events()
+    expected = load_paysim_expected_features()
+    in_scope = [event for event in events if in_scoring_scope(event)]
+
+    # Row count: one per in-scope cutoff, and no history-only row leaked in as a cutoff.
+    assert table.num_rows == EXPECTED_FEATURE_ROWS
+    assert table.num_rows == len(in_scope) == len(expected)
+    assert result["feature_rows"] == EXPECTED_FEATURE_ROWS
+
+    # Column names and their order are the contract. Position matters as much as membership,
+    # so this is a tuple comparison, not a set one.
+    assert tuple(table.column_names) == PAYSIM_FEATURE_TABLE_COLUMNS
+    assert PAYSIM_FEATURE_TABLE_COLUMNS[0] == PAYSIM_ENTITY
+    assert PAYSIM_FEATURE_TABLE_COLUMNS[1:3] == ("event_timestamp", "created_timestamp")
+    assert PAYSIM_FEATURE_TABLE_COLUMNS[3:15] == PAYSIM_MODEL_FEATURE_ORDER
+
+    utc_timestamp = pa.timestamp("us", tz="UTC")
+    assert table.schema.field(PAYSIM_ENTITY).type == pa.string()
+    assert table.schema.field("event_timestamp").type == utc_timestamp
+    assert table.schema.field("created_timestamp").type == utc_timestamp
+    assert table.schema.field("source_row_number").type == pa.int64()
+    for name in PAYSIM_MODEL_FEATURE_ORDER:
+        expected_type = pa.int64() if name in _INT64_FIELDS else pa.float64()
+        assert table.schema.field(name).type == expected_type, name
+
+    # The SQL engine built this table and the pure-Python oracle built the expectations, so this
+    # is two independent derivations agreeing -- the whole reason the table is not oracle-built.
+    rows = table.to_pylist()
+    assert [row["source_row_number"] for row in rows] == [
+        event.source_row_number for event in in_scope
+    ]
+    by_row_number = {event.source_row_number: event for event in in_scope}
+    for row in rows:
+        event = by_row_number[row["source_row_number"]]
+        assert row[PAYSIM_ENTITY] == event.destination_entity_id
+        assert row["event_timestamp"] == paysim_step_to_timestamp(event.step)
+        assert row["created_timestamp"] == paysim_step_to_timestamp(event.knowledge_step)
+        for name in PAYSIM_MODEL_FEATURE_ORDER:
+            assert row[name] == expected[row["source_row_number"]][name], (
+                f"{row['source_row_number']}.{name}"
+            )

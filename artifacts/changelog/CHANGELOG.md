@@ -1,5 +1,82 @@
 # Project changelog
 
+## 2026-08-04 — M031: Feast `feature_repo/`, definitions checksum, and the G1 pytest lane
+
+- Closes the four gaps M030 left open in Sprint 2 T1: no precomputed feature table on disk, no
+  `feature_repo/` objects, no definitions-based registry checksum in `src/`, no G1 test lane. All
+  three guide §3.4 G1 acceptance criteria now pass (**DAT**) by a real `pytest` test, re-run
+  independently and recorded in `verify.md`.
+- **Precomputed feature table.** `pit data build-fixture --dataset paysim` now also writes
+  `data/fixtures/paysim_feature_table.parquet` — 11 rows, 16 columns, 6,438 bytes — computed by the
+  SQL engine (`paysim_pre_decision_feature_sql()`, new in `features/paysim_recipient.py`, reusing
+  the existing `_prior_window_predicate`), never the oracle, so comparing the two stays two
+  independent derivations. Columns: entity, both ADR-006 timestamps, the 12
+  `PAYSIM_MODEL_FEATURE_ORDER` fields in contract order, and a trailing `source_row_number`; `step`/
+  `knowledge_step` are dropped from the written file. 132/132 fields match the oracle exactly across
+  two independent build runs, SHA-256
+  `A6E6B9B00FA62966E19397D9C0A7737FCB48D8C9C81A5C7300CCE047B3B997C5`, confirmed a third time in the
+  independent `verify.md` re-run.
+- **Real `feature_repo/` and a real `feast apply`.** `feature_repo/feature_store.yaml` (`local`
+  profile: DuckDB offline + SQLite online) and `feature_repo/definitions.py` (`Entity`,
+  `FileSource`, `FeatureView`, `FeatureService`, every name/dtype/version imported from
+  `features/paysim_specs.py`) are new. `feast apply`, run against installed Feast 0.65.0, created
+  the entity, feature view, feature service and SQLite table. A second apply reported "No changes to
+  infrastructure" but the registry proto's `last_updated` timestamps still moved — restating M030
+  Finding 2 on the real repo, not just the spike. `PushSource` and an `OnDemandFeatureView` split
+  for the three request-time fields were deliberately not built (T5/T7 scope).
+- **Definitions-based registry checksum**, `src/pit_fintech/platform/feast_registry.py` (new; placed
+  in `platform/`, not `features/`, because `features/` is the correctness-contract tier and Feast is
+  kept out of it per AGENTS.md §11 and the `pyproject.toml` dependency-group comment). Reads Feast
+  objects by duck typing (`TYPE_CHECKING`-only import) so `src/` still imports without Feast
+  installed; canonical JSON + SHA-256, same convention as `paysim_feature_contract_checksum`.
+  `ttl` and `entity_columns` are deliberately excluded from the payload — both read back differently
+  from the registry than they are declared in the module (`None`->`timedelta(0)`,
+  `[]`->populated), so hashing them would fail the gate for a reason unrelated to a definitions
+  change; recorded as a real trade-off, not a free simplification. Current checksum:
+  `d330edefbbc0d3a075b4b5f145a6d169e2aa910d39cfae33c70478289432f443`, stable across 2 independent
+  processes and across both `apply` runs, while the registry **blob** digest still moved
+  (`98fe137e...` -> `fd09313e...`), confirming Finding 2 stays live on this exact lane.
+- **G1 pytest lane**, `tests/integration/test_feast_registry_g1.py` (new, 4 tests) — runs
+  `apply_total()` (the function `feast apply` itself calls) directly against the real
+  `feature_repo/`, redirecting only the registry/online-store output paths to a temp dir (copying
+  `definitions.py` was tried and rejected: its `PROJECT_ROOT` resolution would then point
+  `FileSource.path` at a nonexistent location). All three G1 criteria pass:
+  historical-retrieval-matches-oracle (132/132 fields), apply-idempotent-by-definitions-checksum
+  (stable across 2 applies, blob intentionally still differing), and
+  feature-service-resolves-12-fields-in-contract-order (exact ordered list + dtype match). A fourth
+  guard test confirms the lane leaves `feature_repo/registry.db`/`online.db` byte-identical.
+  `tests/unit/test_feast_definitions_checksum.py` (new, 9 tests, no Feast needed) pins the checksum
+  function's properties on stub objects.
+- **New Feast 0.65.0 findings, not in M030:** `FeatureView.schema` runs through `set()` and loses
+  field order (`feast/feature_view.py:430`) — `FeatureView.features` / `feature_view_projections[i]
+  .features` must be used instead, confirmed empirically; `feast apply` does not read the source
+  file at apply time, so a successful apply is not evidence the source exists; `FeatureView.name`
+  must be `.isidentifier()`-safe (a dashed name breaks the SQLite online-store table name with
+  `OperationalError near "-"`) while `FeatureService.name` is not so constrained; `entity.join_keys`
+  does not exist post-construction — only the singular `entity.join_key` does.
+- Status: **verified within the scope re-run recorded in `verify.md`**, independent of the original
+  session that wrote the code. `ruff check src tests feature_repo notebooks scripts`: all checks
+  passed. `pytest -q tests/unit`: 50 passed (up from 41 — the 9 new checksum tests).
+  `pytest -q -m temporal tests/temporal`: 73 passed, unchanged (nothing on the PIT path touched).
+  `pytest -q tests/integration`: 11 passed (up from 7 — the 4 new G1 tests plus 1 new feature-table
+  schema test). `pytest -q tests/integration/test_feast_registry_g1.py -v`: 4 passed in isolation.
+  `Get-FileHash` on the feature table matches the two build-time hashes. The verification script's
+  own command-level bookkeeping reported `PASS=8 FAIL=0` across its 8 checks — a separate count from
+  the `pytest` totals above, not conflated with them.
+- **Known gaps, not glossed over:** the same-step pair still never reaches Feast — the feature
+  table holds 11 distinct steps, unchanged from M030 Q1/gap 4. Idempotence is measured across 2
+  applies inside 1 process (with the imported module purged between them), not across 2 separate
+  `feast apply` CLI invocations — whether a fresh process agrees is CHUA DO DUOC. `ttl`/
+  `entity_columns` stay outside the checksum payload by design, so a future change to either will
+  not move it. `apply_total()` is called in-process, never through a spawned `feast` binary, so a
+  bug confined to the CLI's own argument-parsing layer would not be caught here. No `make`/
+  `make.ps1` target exists yet for the G1 lane or for `uv sync --group feast`. Determinism is shown
+  on one machine only (Windows 11, Feast 0.65.0, DuckDB pinned in `uv.lock`). Nothing is committed,
+  so no commit hash exists (pending); `train` was not re-run and no M019/M026/M027 metric or
+  checksum is restated. **Not claimed:** "T1 done", "Sprint 2 ready" — only the four pieces of work
+  in this entry, and the three G1 criteria they made measurable, are asserted.
+- Detail: [M031 log](milestones/M031-feast-feature-repo-and-g1-lane.md).
+
 ## 2026-08-03 — M030: ADR-006 Feast source Parquet and the T1 design spike
 
 - First step of Sprint 2 T1, taken without waiting for T2: the data source only. ADR-006 decision

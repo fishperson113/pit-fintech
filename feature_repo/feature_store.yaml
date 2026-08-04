@@ -1,0 +1,19 @@
+# Real Feast repo config for Sprint 2 T1 (ADR-006; guide sprint-2-implementation-guide.md §3.1).
+#
+# `local` profile only: DuckDB offline store (matches the SQL engine everywhere else in this
+# project, ADR-002/ADR-003) + SQLite online store. Guide §3.1's `hosted` profile (registry
+# artifact + Upstash Redis) is Sprint 3 scope and is not defined here.
+#
+# No secret lives in this file (guide §3.1). `registry`/online `path` are relative to this file's
+# directory, so `uv run feast apply` must be run from inside `feature_repo/`; both resolve to
+# `feature_repo/registry.db` and `feature_repo/online.db`, neither of which is committed
+# (`*.db` in .gitignore).
+project: pit_fintech
+provider: local
+registry: registry.db
+online_store:
+  type: sqlite
+  path: online.db
+offline_store:
+  type: duckdb
+entity_key_serialization_version: 3

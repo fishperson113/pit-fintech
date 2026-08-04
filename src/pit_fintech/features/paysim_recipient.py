@@ -14,8 +14,11 @@ import pyarrow as pa
 
 from pit_fintech.features.paysim_specs import (
     PAYSIM_AMOUNT_DECIMAL_TYPE,
+    PAYSIM_ENTITY,
+    PAYSIM_FEATURE_CONTRACT,
     PAYSIM_FEATURE_DEFINITION_VERSION,
     PAYSIM_HISTORY_FEATURE_NAMES,
+    PAYSIM_STATIC_FEATURE_NAMES,
 )
 
 PAYSIM_RECIPIENT_FEATURE_VERSION: Final = PAYSIM_FEATURE_DEFINITION_VERSION
@@ -141,6 +144,125 @@ def _derived_window_columns(window_steps: int) -> str:
             AS leaky_centered_count_{window_steps}h,
         ({prior_amount} + {current} + {future_amount})::DOUBLE
             AS leaky_centered_amount_{window_steps}h
+    """
+
+
+def _pre_decision_history_columns() -> tuple[str, tuple[str, ...]]:
+    """The nine history columns of the pre-decision projection, and the names they emit.
+
+    Same shape as :func:`_window_columns` minus the positive controls, which exist only for the
+    leakage diagnostics and are not contract fields. ``recipient_has_history_*`` is cast to
+    ``BIGINT`` because DuckDB types a bare ``CASE ... THEN 1`` as ``INTEGER`` while the contract
+    declares ``int64``; the leakage path never had to care, a Parquet schema does.
+    """
+
+    fragments: list[str] = []
+    names: list[str] = []
+    for window_steps in LEAKAGE_WINDOWS_STEPS:
+        prior = _prior_window_predicate(window_steps)
+        fragments.append(
+            f"""
+            (count(s.source_row_number) FILTER (WHERE {prior}))::BIGINT
+                AS pit_prior_count_{window_steps}h,
+            coalesce(
+                sum(CAST(s.amount AS {PAYSIM_AMOUNT_DECIMAL_TYPE})) FILTER (WHERE {prior}),
+                0.0
+            )::DOUBLE AS pit_prior_amount_{window_steps}h,
+            (CASE
+                WHEN (count(s.source_row_number) FILTER (WHERE {prior})) > 0 THEN 1 ELSE 0
+             END)::BIGINT AS recipient_has_history_{window_steps}h
+            """
+        )
+        names.extend(
+            (
+                f"pit_prior_count_{window_steps}h",
+                f"pit_prior_amount_{window_steps}h",
+                f"recipient_has_history_{window_steps}h",
+            )
+        )
+    return ",\n".join(fragment.strip() for fragment in fragments), tuple(names)
+
+
+# The columns `paysim_pre_decision_feature_sql` reads off its relation. They are exactly the seven
+# Silver columns the frozen contract may read: no balance column, no label, nothing post-outcome.
+PAYSIM_PRE_DECISION_SOURCE_COLUMNS: Final = (
+    "source_row_number",
+    "step",
+    "knowledge_step",
+    "transaction_type",
+    "amount",
+    "destination_entity_id",
+    "destination_entity_kind",
+)
+# Identity columns the projection carries alongside the twelve contract fields. `step` and
+# `knowledge_step` are the integer ordinals ADR-006 derives the Feast timestamps from in Python;
+# they are emitted so the caller can derive them, never so SQL can.
+PAYSIM_PRE_DECISION_IDENTITY_COLUMNS: Final = (
+    PAYSIM_ENTITY,
+    "source_row_number",
+    "step",
+    "knowledge_step",
+)
+
+
+def paysim_pre_decision_feature_sql(relation: str) -> str:
+    """One pre-decision vector per in-scope cutoff: the twelve frozen contract fields, in order.
+
+    ``relation`` is any DuckDB relation carrying ``PAYSIM_PRE_DECISION_SOURCE_COLUMNS``; the
+    self-join means every history row must be present in it, so the caller is responsible for
+    handing over a pool that already spans ``[cutoff_step - 168, cutoff_step]`` for every cutoff.
+
+    This exists because Feast computes no window aggregates (M030 Finding 1), so a `FeatureView`
+    has to read a table where the nine history fields are already materialized. Building it here,
+    from :func:`_prior_window_predicate` and :data:`PAYSIM_AMOUNT_DECIMAL_TYPE`, keeps that table
+    on the shipped SQL engine: comparing it against ``features/paysim_reference.py`` is then two
+    independent derivations, whereas a table built by the oracle and checked against the oracle
+    would be a tautology.
+
+    The join is bounded by the widest window and stops one step before the cutoff, so no same-step
+    row can enter any aggregate; each window then narrows further inside its own ``FILTER``.
+    """
+
+    history_columns, history_names = _pre_decision_history_columns()
+    if history_names != PAYSIM_HISTORY_FEATURE_NAMES:
+        raise RuntimeError(
+            "pre-decision projection no longer emits the frozen history fields in contract order: "
+            f"{history_names} != {PAYSIM_HISTORY_FEATURE_NAMES}"
+        )
+    if PAYSIM_STATIC_FEATURE_NAMES != ("current_amount", "event_step", "transaction_type_transfer"):
+        raise RuntimeError(
+            "request-time feature names changed; this projection emits current_amount/event_step/"
+            f"transaction_type_transfer, not {PAYSIM_STATIC_FEATURE_NAMES}"
+        )
+    contract = PAYSIM_FEATURE_CONTRACT
+    scorable_types = ", ".join(f"'{value}'" for value in contract.scoring_transaction_types)
+    scorable_kinds = ", ".join(f"'{value}'" for value in contract.scoring_destination_kinds)
+    return f"""
+        SELECT
+            c.{PAYSIM_ENTITY},
+            c.source_row_number,
+            c.step,
+            c.knowledge_step,
+            CAST(c.amount AS DOUBLE) AS current_amount,
+            CAST(c.step AS DOUBLE) AS event_step,
+            (CASE WHEN c.transaction_type = 'TRANSFER' THEN 1.0 ELSE 0.0 END)::DOUBLE
+                AS transaction_type_transfer,
+            {history_columns}
+        FROM {relation} AS c
+        LEFT JOIN {relation} AS s
+            ON s.{PAYSIM_ENTITY} = c.{PAYSIM_ENTITY}
+            AND s.step >= c.step - {MAX_LEAKAGE_WINDOW_STEPS}
+            AND s.step <= c.step - 1
+        WHERE c.transaction_type IN ({scorable_types})
+          AND c.destination_entity_kind IN ({scorable_kinds})
+        GROUP BY
+            c.{PAYSIM_ENTITY},
+            c.source_row_number,
+            c.step,
+            c.knowledge_step,
+            c.transaction_type,
+            c.amount
+        ORDER BY c.step, c.source_row_number
     """
 
 
