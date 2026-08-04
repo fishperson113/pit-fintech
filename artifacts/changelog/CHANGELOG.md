@@ -1,5 +1,37 @@
 # Project changelog
 
+## 2026-08-04 — M033: T2 Gold offline features run against real Silver, future-read audit fixed
+
+- **Implemented, not verified.** First real run of `build_offline_features` against real PaySim
+  Silver at `cutoff_start_step=cutoff_end_step=1`: `pre_decision_features` 664 rows,
+  `post_event_state_updates` 2708 rows. Two independent runs produced identical logical checksums
+  (`pre` `c4a8903a4da7adde3bd00a2ec7e00d6e5b672d694f2de71ba98d324abf3e1f8c`, `post`
+  `e55eac8791724840b71f5be081d4245e4f6699dbe438dd0e86d9a0e951fbe7cb`).
+  `compare_gold_against_reference` matched the SQL-built table against the independent Python oracle
+  on all 664 rows × 12 contract fields = 7968 fields, 0 mismatches.
+- **Same-step gap closed at Gold scale.** `probe_same_step_ties()` on real Gold step 1: 579 in-scope
+  pairs, 1256 any-pairs, 104 entities involved. The earlier concern (T1's 11-row fixture table has
+  0 same-step pairs) was scoped to that small fixture only; no artificial tie needs to be built for
+  T6.
+- **Bug fixed:** the future-read count was a dead-code `future_reads = ... if False else 0`, so
+  `GOLD_PROMOTION_PRECONDITIONS`'s `no_future_read_violations`/`max_source_step_below_every_cutoff`
+  always passed regardless of data. Replaced with `probe_future_read_violations()`, an
+  independently-written self-join that does not call the frozen SQL engine it audits, using `step`
+  for range membership and `knowledge_step >= cutoff_step` for the violation condition (using the
+  same column for both would make the check tautological). A hand-run mutation
+  (`>=` to `>`) turned the new unit test red; reverting restored green.
+- **Recorded limitation:** on current data `knowledge_step = step` at ingest (`data/paysim.py`), so
+  the audit never fires organically; what changed is that the `0` is now proven by an independent
+  computation, not assumed by a literal. `scope="random_sample"` in `compare_gold_against_reference`
+  and `export_feast_source_parquet` both remain `NotImplementedError`.
+- Two HANDOFF.md §6 decisions were finalized and the guide corrected to match: the idempotency-key
+  formula keeps its `policy_version` prefix (guide's literal 5-field formula was out of date; `\0`
+  separator, not `:`, because `dataset_snapshot_id` already contains `:`), and no `e2e` pytest
+  marker is added (`pyproject.toml` sits in both ADR-004 fingerprint boundaries).
+- Recorded checks: `ruff check` clean (81 files); unit 52 passed; temporal 73 passed; integration 13
+  passed.
+- Detail: [M033 log](milestones/M033-t2-gold-offline-features-real-silver.md).
+
 ## 2026-08-04 — M032: Sprint 2 round 0 scaffold and cross-module contracts
 
 - **Implemented, not verified.** Round 0 adds 19 new files (3,842 lines) for the remaining Sprint 2

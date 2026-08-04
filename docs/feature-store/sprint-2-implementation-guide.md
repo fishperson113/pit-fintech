@@ -48,6 +48,13 @@ blob không phải định danh ổn định). Cả hai là kết quả đo trê
 
 Không đụng `docs/adr/`: ADR là quyết định đã đóng băng, muốn đổi thì ra ADR mới.
 
+### 2026-08-04 — chốt hai quyết định treo từ vòng 0 T2 (Fisch + Dương)
+
+| Chỗ | Guide viết ban đầu | Đã sửa thành | Căn cứ |
+|---|---|---|---|
+| §5.2 idempotency key | `sha256(dataset_snapshot + entity_version + feature_version + start + end)`, không prefix | thêm prefix `policy_version` (`backfill-idempotency-key-v1`), separator `\0` thay vì ngụ ý `+` | Repo version-hoá mọi identity nó băm (`component-fingerprint-v1`, `feast-definitions-checksum-v1`); `dataset_snapshot_id` chứa `:` nên separator phải khác `:` |
+| §11 T9 test suite | Không nói gì về marker `e2e` | ghi rõ **không thêm** marker `e2e`, dùng path `tests/e2e` + marker `integration` sẵn có | ADR-004 liệt `pyproject.toml` trong cả hai boundary fingerprint (lakehouse, training); thêm marker sẽ đổi cả hai và vô hiệu hoá tái dùng exact-Silver |
+
 ---
 
 ## 0. Bản đồ artifact
@@ -279,9 +286,21 @@ Mỗi run có:
 
 ### 5.2. Idempotency key
 
+Key có prefix policy version, không phải 5 field trần:
+
 ```text
-sha256(dataset_snapshot + entity_version + feature_version + start + end)
+sha256(policy_version + "\0" + dataset_snapshot + "\0" + entity_version + "\0" +
+       feature_version + "\0" + start + "\0" + end)
 ```
+
+`policy_version` hiện tại là `backfill-idempotency-key-v1`. Separator là `\0` (NUL), không phải
+`:` — `dataset_snapshot_id` đã chứa `:` (`paysim1:16910f90577b0d98`), nên nối bằng `:` có thể làm
+hai input khác nhau đổ ra cùng một chuỗi byte trước khi băm.
+
+Lý do có prefix: repo này version-hoá mọi identity nó băm (`component-fingerprint-v1` ở
+`platform/lineage.py`, `feast-definitions-checksum-v1` ở `platform/feast_registry.py`). Một key
+không version-hoá thì về sau không migrate được sang scheme mới mà không va chạm âm thầm với
+scheme cũ. Prefix không đổi ngữ nghĩa key, chỉ thêm namespace.
 
 Cùng idempotency key:
 
@@ -599,6 +618,13 @@ dashboard/config contract cần cho reproducibility.
 ---
 
 ## 11. T9 — Test suite
+
+**Không thêm marker `e2e` vào `pyproject.toml`.** Lane E2E chọn bằng đường dẫn
+(`pytest tests/e2e`), dùng marker `integration` sẵn có. Lý do: ADR-004 đặt `pyproject.toml` trong
+cả hai boundary fingerprint (`component-fingerprint-v1` của lakehouse và của training). Thêm một
+dòng marker sẽ đổi cả hai fingerprint, khiến `component-fingerprint-v1` không còn nhận exact-Silver
+hiện có là input hợp lệ để tái dùng — dự án đang dựa vào việc tái dùng đó. Đừng "sửa cho đúng
+chuẩn pytest" rồi làm vỡ fingerprint.
 
 ### Unit
 

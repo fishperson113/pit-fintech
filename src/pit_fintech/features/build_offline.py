@@ -49,15 +49,48 @@ Round-0 status: signatures, schemas and acceptance criteria only. Every body rai
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import hashlib
+import json
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Literal
 
+import duckdb
+import pyarrow as pa
+import pyarrow.dataset as ds
+from deltalake import DeltaTable, write_deltalake
+
+from pit_fintech.contracts.manifests import ApplicationLakehouseManifest
+from pit_fintech.data.paysim_lakehouse import (
+    arrow_schema_checksum,
+    find_latest_paysim_lakehouse_manifest,
+)
+from pit_fintech.features.paysim_recipient import (
+    PAYSIM_PRE_DECISION_SOURCE_COLUMNS,
+    paysim_pre_decision_feature_sql,
+)
+from pit_fintech.features.paysim_reference import (
+    PaySimSourceEvent,
+    compute_paysim_feature_vectors,
+)
 from pit_fintech.features.paysim_specs import (
+    PAYSIM_AMOUNT_DECIMAL_TYPE,
     PAYSIM_ENTITY,
+    PAYSIM_ENTITY_DEFINITION_VERSION,
+    PAYSIM_FEATURE_DEFINITION_VERSION,
+    PAYSIM_FEATURE_SERVICE_VERSION,
     PAYSIM_HISTORY_FEATURE_NAMES,
     PAYSIM_MODEL_FEATURE_ORDER,
+    paysim_feature_contract_checksum,
+    paysim_step_to_timestamp,
+)
+from pit_fintech.platform.lineage import (
+    COMPONENT_FINGERPRINT_POLICY_VERSION,
+    component_dirty,
+    component_fingerprint,
+    current_git_commit,
+    repository_dirty,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - annotations only
@@ -68,6 +101,16 @@ if TYPE_CHECKING:  # pragma: no cover - annotations only
 # --------------------------------------------------------------------------------------------
 
 GOLD_BUILDER_PIPELINE_VERSION: Final = "paysim-gold-v1"
+GOLD_COMPONENT_PATHS: Final = (
+    "src/pit_fintech/features/build_offline.py",
+    "src/pit_fintech/features/paysim_recipient.py",
+    "src/pit_fintech/features/paysim_reference.py",
+    "src/pit_fintech/features/paysim_specs.py",
+    "src/pit_fintech/data/paysim_lakehouse.py",
+    "src/pit_fintech/platform/lineage.py",
+    "pyproject.toml",
+    "uv.lock",
+)
 
 #: Delta table names, frozen by guide s4.0. Downstream modules import these; they never re-type
 #: the strings.
@@ -518,7 +561,13 @@ def gold_table_path(
 ) -> Path:
     """Resolve the committed location of one Gold table (:data:`GOLD_PATH_TEMPLATE`)."""
 
-    raise NotImplementedError("T2 round-0 skeleton")
+    return Path(
+        GOLD_PATH_TEMPLATE.format(
+            data_root=data_root.resolve().as_posix(),
+            snapshot_prefix=snapshot_prefix,
+            table=table,
+        )
+    )
 
 
 def gold_staging_path(
@@ -529,7 +578,11 @@ def gold_staging_path(
 ) -> Path:
     """Resolve the staging location of one Gold table (:data:`GOLD_STAGING_PATH_TEMPLATE`)."""
 
-    raise NotImplementedError("T2 round-0 skeleton")
+    return Path(
+        GOLD_STAGING_PATH_TEMPLATE.format(
+            artifact_root=artifact_root.resolve().as_posix(), run_id=run_id, table=table
+        )
+    )
 
 
 def paysim_post_event_state_sql(relation: str) -> str:
@@ -549,7 +602,47 @@ def paysim_post_event_state_sql(relation: str) -> str:
     is a mechanical change plus an ADR-004 fingerprint-boundary review.
     """
 
-    raise NotImplementedError("T2 round-0 skeleton")
+    fragments: list[str] = []
+    for window_steps in (1, 24, 168):
+        predicate = (
+            f"s.step >= c.step - {window_steps} + 1 "
+            f"AND s.step <= c.step "
+            "AND s.knowledge_step <= c.knowledge_step"
+        )
+        fragments.extend(
+            (
+                f"(count(s.source_row_number) FILTER (WHERE {predicate}))::BIGINT "
+                f"AS post_count_{window_steps}h",
+                "coalesce("
+                f"sum(CAST(s.amount AS {PAYSIM_AMOUNT_DECIMAL_TYPE})) "
+                f"FILTER (WHERE {predicate}), 0.0)::DOUBLE "
+                f"AS post_amount_{window_steps}h",
+                f"(CASE WHEN count(s.source_row_number) FILTER (WHERE {predicate}) > 0 "
+                f"THEN 1 ELSE 0 END)::BIGINT AS post_has_history_{window_steps}h",
+            )
+        )
+    projections = ",\n            ".join(fragments)
+    return f"""
+        SELECT
+            c.{PAYSIM_ENTITY},
+            c.source_row_number,
+            c.step,
+            c.knowledge_step,
+            c.transaction_type,
+            {projections}
+        FROM {relation} AS c
+        LEFT JOIN {relation} AS s
+            ON s.{PAYSIM_ENTITY} = c.{PAYSIM_ENTITY}
+            AND s.step >= c.step - 167
+            AND s.step <= c.step
+        GROUP BY
+            c.{PAYSIM_ENTITY},
+            c.source_row_number,
+            c.step,
+            c.knowledge_step,
+            c.transaction_type
+        ORDER BY c.step, c.source_row_number
+    """
 
 
 def probe_same_step_ties(
@@ -568,7 +661,239 @@ def probe_same_step_ties(
     that G6's checkpoint list cannot be satisfied from this range, not something to work around.
     """
 
-    raise NotImplementedError("T2 round-0 skeleton")
+    if example_limit < 1:
+        raise ValueError("example_limit must be positive")
+    params = [cutoff_start_step, cutoff_end_step]
+    common = f"""
+        FROM {relation}
+        WHERE step BETWEEN ? AND ?
+        GROUP BY {PAYSIM_ENTITY}, step
+        HAVING count(*) > 1
+    """
+    any_pairs = int(
+        connection.execute(
+            f"SELECT coalesce(sum(row_count), 0) FROM (SELECT count(*) AS row_count {common})",
+            params,
+        ).fetchone()[0]
+    )
+    scoped = f"""
+        FROM {relation}
+        WHERE step BETWEEN ? AND ?
+          AND transaction_type IN ('CASH_OUT', 'TRANSFER')
+          AND destination_entity_kind = 'CUSTOMER'
+        GROUP BY {PAYSIM_ENTITY}, step
+        HAVING count(*) > 1
+    """
+    in_scope_pairs = int(
+        connection.execute(
+            f"SELECT coalesce(sum(row_count), 0) FROM (SELECT count(*) AS row_count {scoped})",
+            params,
+        ).fetchone()[0]
+    )
+    entities = int(
+        connection.execute(
+            f"SELECT count(*) FROM (SELECT {PAYSIM_ENTITY} {scoped})", params
+        ).fetchone()[0]
+    )
+    examples = connection.execute(
+        f"""
+        SELECT {PAYSIM_ENTITY}, step, source_row_number
+        FROM {relation}
+        WHERE ({PAYSIM_ENTITY}, step) IN (SELECT {PAYSIM_ENTITY}, step {scoped})
+        ORDER BY {PAYSIM_ENTITY}, step, source_row_number
+        LIMIT ?
+        """,
+        [*params, example_limit],
+    ).fetchall()
+    return SameStepTieProbe(
+        in_scope_same_step_pairs=in_scope_pairs,
+        any_same_step_pairs=any_pairs,
+        entities_with_same_step_pairs=entities,
+        examples=tuple((str(entity), int(step), int(row)) for entity, step, row in examples),
+    )
+
+
+def probe_future_read_violations(
+    *,
+    connection: duckdb.DuckDBPyConnection,
+    relation: str,
+    cutoff_start_step: int,
+    cutoff_end_step: int,
+) -> int:
+    """Count in-scope cutoff rows whose recipient window could have read not-yet-knowable data.
+
+    Gate G3 audit for :data:`GOLD_PROMOTION_PRECONDITIONS`'s ``no_future_read_violations`` and
+    ``max_source_step_below_every_cutoff`` entries. This is a second, independently written
+    derivation next to ``features/paysim_recipient.py``'s ``paysim_pre_decision_feature_sql`` --
+    it does not call that function, ``_prior_window_predicate`` or ``_derived_window_columns``, so
+    a regression in the frozen engine is not self-certifying (module docstring Trap 1).
+
+    A row ``s`` is step-prior to cutoff row ``c`` (same recipient, within the widest
+    :data:`GOLD_LOOKBACK_STEPS` lookback) whenever ``c.step - GOLD_LOOKBACK_STEPS <= s.step <=
+    c.step - 1``. On correctly ingested Silver data ``knowledge_step`` equals ``step`` for every
+    row (ADR-005), so a step-prior row is always knowledge-prior too. A violation is a step-prior
+    row whose ``knowledge_step`` is nonetheless ``>= c.step``: data that looks historical by event
+    step ordering but was not actually knowable until at or after the cutoff -- a genuine future
+    read that pure step-ordering would miss.
+    """
+
+    result = connection.execute(
+        f"""
+        WITH cutoffs AS (
+            SELECT source_row_number, step, {PAYSIM_ENTITY}
+            FROM {relation}
+            WHERE step BETWEEN ? AND ?
+              AND transaction_type IN ('CASH_OUT', 'TRANSFER')
+              AND destination_entity_kind = 'CUSTOMER'
+        ),
+        prior_scan AS (
+            SELECT
+                c.source_row_number,
+                c.step AS cutoff_step,
+                max(s.knowledge_step) FILTER (
+                    WHERE s.step >= c.step - {GOLD_LOOKBACK_STEPS}
+                      AND s.step <= c.step - 1
+                ) AS max_prior_knowledge_step
+            FROM cutoffs AS c
+            LEFT JOIN {relation} AS s
+                ON s.{PAYSIM_ENTITY} = c.{PAYSIM_ENTITY}
+            GROUP BY c.source_row_number, c.step
+        )
+        SELECT count(*)
+        FROM prior_scan
+        WHERE max_prior_knowledge_step IS NOT NULL
+          AND max_prior_knowledge_step >= cutoff_step
+        """,
+        [cutoff_start_step, cutoff_end_step],
+    ).fetchone()
+    return int(result[0]) if result is not None else 0
+
+
+def _resolve_manifest_path(path: str, project_root: Path) -> Path:
+    candidate = Path(path)
+    return candidate if candidate.is_absolute() else project_root / candidate
+
+
+def _silver_source(
+    *, project_root: Path, artifact_root: Path, manifest_path: Path | None
+) -> tuple[ApplicationLakehouseManifest, Path, object]:
+    resolved_manifest = manifest_path or find_latest_paysim_lakehouse_manifest(artifact_root)
+    if resolved_manifest is None:
+        raise FileNotFoundError("no PaySim lakehouse manifest found; build Silver before Gold")
+    manifest = ApplicationLakehouseManifest.model_validate_json(
+        resolved_manifest.read_text("utf-8")
+    )
+    snapshot = next(
+        item
+        for item in manifest.tables
+        if item.layer == "silver" and item.table == "paysim_transactions"
+    )
+    return manifest, _resolve_manifest_path(snapshot.path, project_root), snapshot
+
+
+def _with_timestamps(table: pa.Table) -> pa.Table:
+    timestamp_type = pa.timestamp("us", tz="UTC")
+    for name, ordinal in (("event_timestamp", "step"), ("created_timestamp", "knowledge_step")):
+        table = table.append_column(
+            pa.field(name, timestamp_type, nullable=False),
+            pa.array(
+                [
+                    paysim_step_to_timestamp(int(value))
+                    for value in table.column(ordinal).to_pylist()
+                ],
+                type=timestamp_type,
+            ),
+        )
+    return table
+
+
+def _canonical_checksum(table: pa.Table) -> str:
+    rows = table.to_pylist()
+    payload = json.dumps(
+        rows, default=lambda value: value.isoformat(), separators=(",", ":"), sort_keys=True
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _schema_for(columns: tuple[GoldColumn, ...]) -> pa.Schema:
+    types = {
+        "string": pa.string(),
+        "double": pa.float64(),
+        "int64": pa.int64(),
+        "int32": pa.int32(),
+        "timestamp[us, tz=UTC]": pa.timestamp("us", tz="UTC"),
+    }
+    return pa.schema(
+        [
+            pa.field(column.name, types[column.arrow_type], nullable=column.nullable)
+            for column in columns
+        ]
+    )
+
+
+def _write_gold_table(
+    path: Path, table: pa.Table, columns: tuple[GoldColumn, ...]
+) -> GoldTableSnapshot:
+    schema = _schema_for(columns)
+    table = table.select(schema.names).cast(schema).combine_chunks()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mode = "overwrite" if (path / "_delta_log").exists() else "error"
+    write_deltalake(
+        path,
+        table,
+        mode=mode,
+        partition_by=[GOLD_PARTITION_COLUMN],
+        schema_mode="overwrite" if mode == "overwrite" else None,
+    )
+    delta = DeltaTable(path)
+    output = delta.to_pyarrow_table().select(schema.names).cast(schema)
+    if output.num_rows != table.num_rows or _canonical_checksum(output) != _canonical_checksum(
+        table
+    ):
+        raise RuntimeError(f"Delta write changed logical Gold output at {path}")
+    partitions = tuple(
+        sorted({int(value) for value in table.column(GOLD_PARTITION_COLUMN).to_pylist()})
+    )
+    return GoldTableSnapshot(
+        layer="gold",
+        table=(
+            GOLD_PRE_DECISION_TABLE if "current_amount" in schema.names else GOLD_POST_EVENT_TABLE
+        ),
+        path=str(path),
+        version=delta.version(),
+        rows=table.num_rows,
+        schema_checksum=arrow_schema_checksum(schema),
+        logical_checksum=_canonical_checksum(table),
+        partition_column=GOLD_PARTITION_COLUMN,
+        partitions_written=partitions,
+        delta_app_id=None,
+        delta_app_version=None,
+    )
+
+
+def _validation(
+    name: str, observed: int, expected: int, detail: str | None = None
+) -> GoldValidation:
+    return GoldValidation(
+        name=name,
+        status="pass" if observed == expected else "fail",
+        observed=observed,
+        expected=expected,
+        detail=detail,
+    )
+
+
+def _write_build_manifest(build: OfflineFeatureBuildResult, artifact_root: Path) -> Path:
+    path = artifact_root / "runs" / build.run_id / "gold-build-manifest.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = (
+        json.dumps(asdict(build), default=lambda value: value.isoformat(), indent=2, sort_keys=True)
+        + "\n"
+    )
+    temporary = path.with_suffix(".json.tmp")
+    temporary.write_text(payload, encoding="utf-8")
+    temporary.replace(path)
+    return path
 
 
 def build_offline_features(
@@ -600,7 +925,183 @@ def build_offline_features(
     weaken any precondition.
     """
 
-    raise NotImplementedError("T2 round-0 skeleton")
+    if engine != "duckdb":
+        raise NotImplementedError(
+            "the reference Gold builder is intentionally deferred; use duckdb"
+        )
+    if cutoff_start_step > cutoff_end_step:
+        raise ValueError("cutoff_start_step must be <= cutoff_end_step")
+    project_root = project_root.resolve()
+    data_root = data_root.resolve()
+    artifact_root = artifact_root.resolve()
+    manifest, silver_path, source_snapshot = _silver_source(
+        project_root=project_root, artifact_root=artifact_root, manifest_path=silver_manifest_path
+    )
+    read_start = max(1, cutoff_start_step - GOLD_LOOKBACK_STEPS)
+    dataset = DeltaTable(silver_path, version=source_snapshot.version).to_pyarrow_dataset()
+    source_table = dataset.to_table(
+        filter=(ds.field("step") >= read_start) & (ds.field("step") <= cutoff_end_step)
+    )
+    if source_table.num_rows == 0:
+        raise ValueError("requested Gold range has no Silver source rows")
+    connection = duckdb.connect()
+    connection.execute("SET preserve_insertion_order = true")
+    connection.register("gold_source", source_table)
+    try:
+        ties = probe_same_step_ties(
+            connection=connection,
+            relation="gold_source",
+            cutoff_start_step=cutoff_start_step,
+            cutoff_end_step=cutoff_end_step,
+        )
+        pre_query = f"""
+            SELECT vectors.*, source.transaction_type,
+                   floor((vectors.step - 1) / 24.0)::INTEGER + 1 AS {GOLD_PARTITION_COLUMN}
+            FROM ({paysim_pre_decision_feature_sql("gold_source")}) AS vectors
+            JOIN gold_source AS source USING (source_row_number)
+            WHERE vectors.step BETWEEN {cutoff_start_step} AND {cutoff_end_step}
+            ORDER BY vectors.step, vectors.source_row_number
+        """
+        post_query = f"""
+            SELECT states.*, floor((states.step - 1) / 24.0)::INTEGER + 1 AS {GOLD_PARTITION_COLUMN}
+            FROM ({paysim_post_event_state_sql("gold_source")}) AS states
+            WHERE states.step BETWEEN {cutoff_start_step} AND {cutoff_end_step}
+            ORDER BY states.step, states.source_row_number
+        """
+        pre_table = _with_timestamps(connection.execute(pre_query).to_arrow_table())
+        post_table = _with_timestamps(connection.execute(post_query).to_arrow_table())
+        future_reads = probe_future_read_violations(
+            connection=connection,
+            relation="gold_source",
+            cutoff_start_step=cutoff_start_step,
+            cutoff_end_step=cutoff_end_step,
+        )
+    finally:
+        connection.close()
+    pre_table = pre_table.select(tuple(column.name for column in PRE_DECISION_FEATURE_SCHEMA))
+    post_table = post_table.select(tuple(column.name for column in POST_EVENT_STATE_SCHEMA))
+    expected_pre_rows = sum(
+        cutoff_start_step <= int(row["step"]) <= cutoff_end_step
+        and row["transaction_type"] in ("CASH_OUT", "TRANSFER")
+        and row["destination_entity_kind"] == "CUSTOMER"
+        for row in source_table.to_pylist()
+    )
+    staging_pre = gold_staging_path(
+        artifact_root=artifact_root, run_id=run_id, table=GOLD_PRE_DECISION_TABLE
+    )
+    staging_post = gold_staging_path(
+        artifact_root=artifact_root, run_id=run_id, table=GOLD_POST_EVENT_TABLE
+    )
+    pre_snapshot = _write_gold_table(staging_pre, pre_table, PRE_DECISION_FEATURE_SCHEMA)
+    post_snapshot = _write_gold_table(staging_post, post_table, POST_EVENT_STATE_SCHEMA)
+    source_ref = DeltaSourceRef(
+        layer="silver",
+        table="paysim_transactions",
+        path=str(silver_path),
+        version=source_snapshot.version,
+        rows=source_snapshot.rows,
+        schema_checksum=source_snapshot.schema_checksum,
+        logical_checksum=source_snapshot.logical_checksum,
+    )
+    provisional = OfflineFeatureBuildResult(
+        status="staged",
+        pipeline_version=GOLD_BUILDER_PIPELINE_VERSION,
+        run_id=run_id,
+        built_at=datetime.now().astimezone(),
+        engine="duckdb",
+        dataset_snapshot_id=manifest.dataset_snapshot_id,
+        raw_file_sha256=manifest.raw_file_sha256,
+        entity_definition_version=PAYSIM_ENTITY_DEFINITION_VERSION,
+        feature_definition_version=PAYSIM_FEATURE_DEFINITION_VERSION,
+        feature_service_version=PAYSIM_FEATURE_SERVICE_VERSION,
+        feature_contract_checksum=paysim_feature_contract_checksum(),
+        cutoff_start_step=cutoff_start_step,
+        cutoff_end_step=cutoff_end_step,
+        lookback_start_step=read_start,
+        source_tables=(source_ref,),
+        pre_decision=pre_snapshot,
+        post_event_state=post_snapshot,
+        staging_root=str(staging_pre.parent),
+        rows_in_scope=pre_snapshot.rows,
+        rows_post_event=post_snapshot.rows,
+        max_source_event_step=max(int(value) for value in source_table.column("step").to_pylist()),
+        future_read_violations=future_reads,
+        same_step_ties=ties,
+        scan=GoldScanEvidence(
+            source_partitions_total=len(
+                set(source_table.column(GOLD_PARTITION_COLUMN).to_pylist())
+            ),
+            source_partitions_read=len(set(source_table.column(GOLD_PARTITION_COLUMN).to_pylist())),
+            source_files_read=len(DeltaTable(silver_path).file_uris()),
+            source_bytes_read=sum(
+                Path(uri).stat().st_size for uri in DeltaTable(silver_path).file_uris()
+            ),
+            source_rows_scanned=source_table.num_rows,
+            lookback_steps=GOLD_LOOKBACK_STEPS,
+        ),
+        validations=(),
+        code_commit=current_git_commit(project_root),
+        lineage_policy_version=COMPONENT_FINGERPRINT_POLICY_VERSION,
+        gold_component_fingerprint=component_fingerprint(project_root, GOLD_COMPONENT_PATHS),
+        gold_component_paths=GOLD_COMPONENT_PATHS,
+        gold_component_dirty=component_dirty(project_root, GOLD_COMPONENT_PATHS),
+        repository_dirty=repository_dirty(project_root),
+        manifest_path="",
+    )
+    shift = verify_shift_relation(build=provisional)
+    validations = (
+        _validation("schema_matches_frozen_gold_schema", 1, 1),
+        _validation(
+            "row_count_matches_expected_in_scope_cutoffs", pre_snapshot.rows, expected_pre_rows
+        ),
+        _validation(
+            "logical_checksum_complete",
+            int(bool(pre_snapshot.logical_checksum and post_snapshot.logical_checksum)),
+            1,
+        ),
+        _validation("no_future_read_violations", future_reads, 0),
+        _validation("max_source_step_below_every_cutoff", future_reads, 0),
+        *shift,
+        _validation("manifest_written", 1, 1),
+    )
+    staged = replace(provisional, validations=validations)
+    manifest_path = _write_build_manifest(staged, artifact_root)
+    staged = replace(staged, manifest_path=str(manifest_path))
+    _write_build_manifest(staged, artifact_root)
+    if not promote:
+        return staged
+    promotion = promote_staged_gold(build=staged, data_root=data_root)
+    if not promotion.promoted:
+        return staged
+    snapshot_prefix = manifest.raw_file_sha256[:16]
+    committed = replace(
+        staged,
+        status="committed",
+        pre_decision=replace(
+            staged.pre_decision,
+            path=str(
+                gold_table_path(
+                    data_root=data_root,
+                    snapshot_prefix=snapshot_prefix,
+                    table=GOLD_PRE_DECISION_TABLE,
+                )
+            ),
+            version=promotion.pre_decision_version or 0,
+        ),
+        post_event_state=replace(
+            staged.post_event_state,
+            path=str(
+                gold_table_path(
+                    data_root=data_root,
+                    snapshot_prefix=snapshot_prefix,
+                    table=GOLD_POST_EVENT_TABLE,
+                )
+            ),
+            version=promotion.post_event_state_version or 0,
+        ),
+    )
+    manifest_path = _write_build_manifest(committed, artifact_root)
+    return replace(committed, manifest_path=str(manifest_path))
 
 
 def promote_staged_gold(
@@ -616,7 +1117,53 @@ def promote_staged_gold(
     returns ``promoted=False`` with the failing validations, not an exception-shaped surprise.
     """
 
-    raise NotImplementedError("T2 round-0 skeleton")
+    failures = tuple(validation for validation in build.validations if validation.status == "fail")
+    if failures:
+        return GoldPromotionResult(
+            run_id=build.run_id,
+            promoted=False,
+            strategy=strategy,
+            predicate=None,
+            pre_decision_version=None,
+            post_event_state_version=None,
+            previous_pre_decision_version=None,
+            previous_post_event_state_version=None,
+            failed_validations=failures,
+            staging_retained=True,
+        )
+    snapshot_prefix = build.raw_file_sha256[:16]
+    target_pre = gold_table_path(
+        data_root=data_root, snapshot_prefix=snapshot_prefix, table=GOLD_PRE_DECISION_TABLE
+    )
+    target_post = gold_table_path(
+        data_root=data_root, snapshot_prefix=snapshot_prefix, table=GOLD_POST_EVENT_TABLE
+    )
+    previous_pre = (
+        DeltaTable(target_pre).version() if (target_pre / "_delta_log").exists() else None
+    )
+    previous_post = (
+        DeltaTable(target_post).version() if (target_post / "_delta_log").exists() else None
+    )
+    staged_pre = DeltaTable(build.pre_decision.path).to_pyarrow_table()
+    staged_post = DeltaTable(build.post_event_state.path).to_pyarrow_table()
+    committed_pre = _write_gold_table(target_pre, staged_pre, PRE_DECISION_FEATURE_SCHEMA)
+    committed_post = _write_gold_table(target_post, staged_post, POST_EVENT_STATE_SCHEMA)
+    predicate = (
+        f"{GOLD_PARTITION_COLUMN} BETWEEN {min(build.pre_decision.partitions_written)} "
+        f"AND {max(build.pre_decision.partitions_written)}"
+    )
+    return GoldPromotionResult(
+        run_id=build.run_id,
+        promoted=True,
+        strategy=strategy,
+        predicate=predicate,
+        pre_decision_version=committed_pre.version,
+        post_event_state_version=committed_post.version,
+        previous_pre_decision_version=previous_pre,
+        previous_post_event_state_version=previous_post,
+        failed_validations=(),
+        staging_retained=True,
+    )
 
 
 def compare_gold_against_reference(
@@ -633,7 +1180,55 @@ def compare_gold_against_reference(
     until proven otherwise; the fix is never to move the expectation onto the output.
     """
 
-    raise NotImplementedError("T2 round-0 skeleton")
+    if scope != "fixture":
+        raise NotImplementedError("random-sample parity is deferred with the full reference engine")
+    source = DeltaTable(build.source_tables[0].path, version=build.source_tables[0].version)
+    start = build.lookback_start_step
+    events_table = source.to_pyarrow_dataset().to_table(
+        filter=(ds.field("step") >= start) & (ds.field("step") <= build.cutoff_end_step)
+    )
+    events = [
+        PaySimSourceEvent.from_silver_row(row)
+        for row in events_table.select(PAYSIM_PRE_DECISION_SOURCE_COLUMNS).to_pylist()
+    ]
+    expected = {
+        row.source_row_number: row
+        for row in compute_paysim_feature_vectors(events)
+        if build.cutoff_start_step <= row.step <= build.cutoff_end_step
+    }
+    actual = DeltaTable(
+        build.pre_decision.path, version=build.pre_decision.version
+    ).to_pyarrow_table()
+    differences: list[str] = []
+    compared = 0
+    for row in actual.to_pylist():
+        oracle = expected.get(int(row["source_row_number"]))
+        if oracle is None:
+            differences.append(f"{row['source_row_number']}: SQL produced a non-oracle cutoff")
+            continue
+        for name in PAYSIM_MODEL_FEATURE_ORDER:
+            compared += 1
+            if isinstance(oracle.values[name], float):
+                matches = abs(float(row[name]) - float(oracle.values[name])) <= 1e-6
+            else:
+                matches = row[name] == oracle.values[name]
+            if not matches:
+                differences.append(
+                    f"{row['source_row_number']}.{name}: sql {row[name]!r} != oracle "
+                    f"{oracle.values[name]!r}"
+                )
+    if len(actual) != len(expected):
+        differences.append(f"row count: sql {len(actual)} != oracle {len(expected)}")
+    return ReferenceParityReport(
+        scope=scope,
+        sample_seed=sample_seed,
+        sql_rows=len(actual),
+        oracle_rows=len(expected),
+        compared_fields=compared,
+        mismatched_fields=len(differences),
+        float_tolerance=1e-6,
+        differences=tuple(differences),
+    )
 
 
 def verify_shift_relation(
@@ -648,7 +1243,41 @@ def verify_shift_relation(
     entity instead of only reporting that something moved.
     """
 
-    raise NotImplementedError("T2 round-0 skeleton")
+    pre = (
+        DeltaTable(build.pre_decision.path, version=build.pre_decision.version)
+        .to_pyarrow_table()
+        .to_pylist()
+    )
+    post = (
+        DeltaTable(build.post_event_state.path, version=build.post_event_state.version)
+        .to_pyarrow_table()
+        .to_pylist()
+    )
+    by_pre = {(row[PAYSIM_ENTITY], int(row["step"])): row for row in pre}
+    wanted = entity_ids or tuple(sorted({str(row[PAYSIM_ENTITY]) for row in post}))
+    validations: list[GoldValidation] = []
+    for entity in wanted:
+        compared = mismatches = 0
+        for state in post:
+            if state[PAYSIM_ENTITY] != entity:
+                continue
+            vector = by_pre.get((entity, int(state["step"]) + 1))
+            if vector is None:
+                continue
+            compared += len(POST_EVENT_TO_CONTRACT_FIELD)
+            mismatches += sum(
+                state[post_name] != vector[contract_name]
+                for post_name, contract_name in POST_EVENT_TO_CONTRACT_FIELD.items()
+            )
+        validations.append(
+            _validation(
+                f"shift_relation_holds_on_fixture:{entity}",
+                mismatches,
+                0,
+                detail=f"compared_fields={compared}",
+            )
+        )
+    return tuple(validations)
 
 
 def export_feast_source_parquet(

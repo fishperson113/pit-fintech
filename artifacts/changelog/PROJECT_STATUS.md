@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-08-04 (M032). Status words are strict:
+Last updated: 2026-08-04 (M033). Status words are strict:
 
 - **planned**: present in the six-week guide, with no claim that code exists;
 - **implemented**: code/artifact exists but the relevant gate may not have run;
@@ -165,6 +165,40 @@ a proper subset relation by construction; neither fix relaxed a correctness crit
 holds 15 rows, 11 in scoring scope and 4 history-only. Still open: no test drives the two DuckDB
 engines against these extracted rows (the parity lane remains on hand-built `PARITY_ROWS`), and
 determinism is shown on one machine and one core count only. No e2e lane exists.
+
+**M033 T2 real-Silver Gold build is implemented, not verified.** `build_offline_features` ran
+against real PaySim Silver at `cutoff_start_step=cutoff_end_step=1`, producing
+`pre_decision_features` (664 rows) and `post_event_state_updates` (2708 rows) with identical
+logical checksums across two independent runs (`pre` `c4a8903a4da7adde3bd00a2ec7e00d6e5b672d694f2de71ba98d324abf3e1f8c`,
+`post` `e55eac8791724840b71f5be081d4245e4f6699dbe438dd0e86d9a0e951fbe7cb`). `compare_gold_against_reference`
+matched the SQL-built table against the independent Python oracle on 664 rows x 12 contract fields
+(7968 fields), 0 mismatches. `probe_same_step_ties()` on this Gold table found 579 in-scope
+same-step pairs across 104 entities, closing the tie-coverage gap M032/HANDOFF.md flagged for T1's
+11-row fixture table specifically — no artificial tie needs to be constructed for T6.
+
+A dead-code bug was fixed: the future-read count previously read `future_reads = ... if False else
+0`, so two `GOLD_PROMOTION_PRECONDITIONS` entries always passed regardless of data. Replaced with
+`probe_future_read_violations()`, an independently-written self-join (does not call the frozen
+`paysim_pre_decision_feature_sql` engine it audits), filtering by `step` and testing
+`knowledge_step >= cutoff_step` for the violation itself — using the same column for both would make
+the check tautological. A hand-run mutation (`>=` to `>`) turned the new unit test red; reverting
+restored green. **Known limitation:** on current data `knowledge_step = step` is fixed at ingest, so
+the audit cannot fire organically on this data; the `0` it reports is now proven by an independent
+computation rather than assumed by a literal, but it also cannot catch a boundary bug that lives
+only inside the frozen SQL engine itself. `compare_gold_against_reference(scope="random_sample")`
+and `export_feast_source_parquet()` both remain `NotImplementedError`; the near-quadratic oracle
+makes a naive random-sample implementation impractical over a wide step range.
+
+Two HANDOFF.md §6 pending decisions were finalized this session and the guide corrected to match
+(not the ADR): the idempotency-key formula keeps a `policy_version` prefix with `\0` separators
+(the guide's literal 5-field, unprefixed formula was the stale side — `dataset_snapshot_id` already
+contains `:`, so `:` cannot safely separate fields), and no `e2e` pytest marker is added, since
+`pyproject.toml` sits in both ADR-004 `component-fingerprint-v1` boundaries and a new marker line
+would invalidate exact-Silver reuse; E2E selection stays on path plus the `integration` marker.
+
+Recorded checks: `ruff check` clean (81 files); `pytest -q tests/unit` 52 passed; `pytest -q -m
+temporal tests/temporal` 73 passed; `pytest -q tests/integration` 13 passed. T3–T9 have not started
+under this milestone; no E2E path is claimed.
 
 ## Sprint 3
 
