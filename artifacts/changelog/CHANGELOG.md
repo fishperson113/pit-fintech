@@ -1,5 +1,29 @@
 # Project changelog
 
+## 2026-08-05 — M042: Install the training dependency group in CI and latch the T4 lane against a fake-green run
+
+- **Implemented, not verified.** GitHub Actions run 30995527627 (commit d2ce188) failed at the
+  "Delta sample snapshot and time travel" step: `make test-lakehouse` exited 2 with
+  `ModuleNotFoundError: No module named 'lightgbm'` in
+  `test_t4_train_candidate_logs_complete_mlflow_contract` (1 failed, 13 passed, 7 skipped; every
+  other step passed).
+- Root cause: the T4 lane calls `train_candidate()` and requires the optional `training` group
+  (lightgbm, mlflow, scikit-learn), but the workflow synced only `uv sync --frozen --group dev` and
+  the `test-lakehouse` target ran without a group flag.
+- `.github/workflows/ci.yml`: sync now installs `--group dev --group training`; the
+  "Delta sample snapshot and time travel" step alone sets `PIT_REQUIRE_TRAINING: "1"`.
+- `Makefile`: `test-lakehouse` now runs `uv run --group training pytest -q tests/integration`; new
+  self-contained local target `test-integration-full` (all-groups, matching the
+  `test-t3-smoke`/`test-t4-dataset` convention) added to `.PHONY`; a comment above `test-lakehouse`
+  documents the local group-pruning side effect.
+- `tests/integration/test_t4_training.py`: `_require_training()` mirrors `_require_feast()` and
+  escalates the skip to `pytest.fail` when `PIT_REQUIRE_TRAINING=1` — the latch against a fake-green
+  CI.
+- Verification (local, Windows): dry-run resolution of `dev + training` (194 packages, exit 0),
+  latch mutation test (without the variable 1 skipped/exit 0, with it 1 failed/exit 1), integration
+  21 passed, Ruff clean. No green CI run on ubuntu-latest yet; expected lane: 14 passed, 7 skipped,
+  0 failed.
+
 ## 2026-08-05 — M041: Optimize T4 training path and add Colab-style progress
 
 - Replaced repeated `to_pylist()` over millions of rows in entity dataframe build, retrieval,

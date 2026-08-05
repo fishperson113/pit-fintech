@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pyarrow as pa
@@ -16,6 +17,37 @@ from pit_fintech.training.dataset import (
     split_temporal,
 )
 from pit_fintech.training.pipeline import TrainingConfig, train_candidate
+
+
+def _require_training() -> None:
+    """Skip loudly when the optional training dependency group is missing.
+
+    Mirrors `_require_feast()` in `tests/integration/test_feast_registry_g1.py`: training is an
+    optional dependency group kept out of the CI correctness path on purpose (pyproject.toml), so
+    the lane skips with an actionable message instead of failing.
+
+    When `PIT_REQUIRE_TRAINING=1` is set (the CI "Delta sample snapshot and time travel" step),
+    the skip is escalated to a hard failure: this guard is the latch against a fake-green CI. If
+    someone drops `--group training` from ci.yml or from the Makefile lane, the T4 contract lane
+    must fail loudly instead of silently skipping.
+    """
+
+    try:
+        import lightgbm  # noqa: F401
+        import mlflow  # noqa: F401
+        import sklearn  # noqa: F401
+    except ImportError as exc:  # pragma: no cover - environment-dependent skip
+        if os.environ.get("PIT_REQUIRE_TRAINING") == "1":
+            pytest.fail(
+                "PIT_REQUIRE_TRAINING=1 but the training dependency group is missing, so the T4 "
+                "MLflow contract lane would have skipped silently instead of running. CI must "
+                f"install it with `uv sync --frozen --group dev --group training`. ({exc})"
+            )
+        pytest.skip(
+            "Training dependencies are not installed, so the T4 MLflow contract lane cannot run. "
+            "Training is an optional dependency group kept out of the correctness path on purpose "
+            f"(pyproject.toml). Install it with `uv sync --frozen --group training`. ({exc})"
+        )
 
 
 def _training_dataset(tmp_path: Path) -> TrainingDataset:
@@ -111,6 +143,7 @@ def _training_dataset(tmp_path: Path) -> TrainingDataset:
 
 
 def test_t4_train_candidate_logs_complete_mlflow_contract(tmp_path: Path) -> None:
+    _require_training()
     dataset = _training_dataset(tmp_path)
     result = train_candidate(
         dataset=dataset,

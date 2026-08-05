@@ -21,7 +21,7 @@ jobs:
       - name: Install Python
         run: uv python install 3.11
       - name: Sync locked environment
-        run: uv sync --frozen --group dev
+        run: uv sync --frozen --group dev --group training
       - name: Lint
         run: make lint
       - name: Build synthetic oracle
@@ -31,6 +31,8 @@ jobs:
       - name: Unit tests
         run: make test-unit
       - name: Delta sample snapshot and time travel
+        env:
+          PIT_REQUIRE_TRAINING: "1"
         run: make test-lakehouse
       - name: Build sample lakehouse
         run: make build-lakehouse DATASET=sample

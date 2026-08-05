@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-08-04 (M033). Status words are strict:
+Last updated: 2026-08-05 (M042). Status words are strict:
 
 - **planned**: present in the six-week guide, with no claim that code exists;
 - **implemented**: code/artifact exists but the relevant gate may not have run;
@@ -78,6 +78,20 @@ validation, T3 smoke lane, and T4 Gold-to-MLflow candidate path are now implemen
 verified; full T3 G2/G3 and full-scale T4 training remain open. The full Gold build/promote path was
 verified on a real range; no real T4 training was run in this work. Ray Train/Tune/Serve and external
 message brokers are out of the Sprint 2 MVP.
+
+**M042 is implemented, not verified.** It fixes the fast-fixture-ci failure (run 30995527627,
+commit d2ce188): the T4 MLflow contract lane requires the optional `training` dependency group
+(lightgbm, mlflow, scikit-learn), but the workflow synced only `uv sync --frozen --group dev` and
+the `test-lakehouse` target ran without a group flag. The workflow now syncs
+`--group dev --group training` and sets `PIT_REQUIRE_TRAINING: "1"` on the "Delta sample snapshot
+and time travel" step alone; `test-lakehouse` now runs `uv run --group training pytest -q
+tests/integration`; a new self-contained local target `test-integration-full` (all-groups, matching
+the `test-t3-smoke`/`test-t4-dataset` convention) is the full-lane local path and was added to
+`.PHONY`; `_require_training()` mirrors `_require_feast()` and escalates its skip to `pytest.fail`
+under `PIT_REQUIRE_TRAINING=1` — the latch against a fake-green CI. All evidence is local on Windows
+(dry-run resolution of `dev + training`, latch mutation test with and without the variable, 21
+passed integration, Ruff clean); no green CI run on ubuntu-latest yet, so status stays `implemented`
+(expected integration lane on CI: 14 passed, 7 skipped, 0 failed).
 
 **M041 is implemented and verified.** It optimizes the T4 Gold-to-training path for full-scale
 runs: Silver labels are narrowed to the join columns before the DuckDB join, and repeated

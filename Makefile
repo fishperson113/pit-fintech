@@ -64,8 +64,17 @@ test-temporal: data-sample ## Run exhaustive point-in-time correctness tests
 test-unit: ## Run fast non-temporal unit tests
 	uv run pytest -q tests/unit
 
+## NOTE: this lane runs with exactly the dependency groups CI installs (`uv sync --frozen
+## --group dev --group training`), so calling it locally re-syncs .venv to dev + training and
+## removes every other group (feast, serving, tracking). That is standard uv behavior, not a bug.
+## To run the full integration lane locally with every group installed, use
+## `make test-integration-full`.
 test-lakehouse: data-sample ## Run fixture Delta snapshot, schema, quality, and time-travel tests
-	uv run pytest -q tests/integration
+	uv run --group training pytest -q tests/integration
+
+test-integration-full: ## Run the full integration lane locally with every dependency group installed
+	UV_PROJECT_ENVIRONMENT=.venv uv run --frozen --all-groups pit data sample
+	UV_PROJECT_ENVIRONMENT=.venv uv run --frozen --all-groups pytest -q tests/integration
 
 test-t3-smoke: ## Run the T3 backfill seam smoke lane on an isolated fixture
 	UV_PROJECT_ENVIRONMENT=.venv uv run --frozen --all-groups python -m pytest tests/integration/test_gold_offline_features.py::test_t3_smoke_backfill_rerun_and_late_arrival_guard -q
@@ -122,4 +131,4 @@ logs: ## Follow core service logs
 down: ## Stop services without deleting data volumes
 	docker compose down
 
-.PHONY: help bootstrap doctor lab lab-training lab-container data-sample data-snapshot profile build-lakehouse lakehouse-history build-fixture features gold promote-gold test-temporal test-unit test-lakehouse test-t3-smoke test-t4-dataset train-gold-candidate test-notebooks model-spike train test lint format check changelog-check lock up-core status logs down
+.PHONY: help bootstrap doctor lab lab-training lab-container data-sample data-snapshot profile build-lakehouse lakehouse-history build-fixture features gold promote-gold test-temporal test-unit test-lakehouse test-integration-full test-t3-smoke test-t4-dataset train-gold-candidate test-notebooks model-spike train test lint format check changelog-check lock up-core status logs down
