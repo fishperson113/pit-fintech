@@ -50,6 +50,12 @@ build-fixture: ## Extract and score a small real-Silver PaySim temporal fixture
 features: ## Inspect the frozen PaySim FeatureSpec v2 and checksum
 	uv run pit features show --dataset paysim
 
+gold: ## Build Gold pre-decision and post-event tables into staging
+	uv run pit features build-gold --start $(START) --end $(END)
+
+promote-gold: ## Promote a staged Gold run into the committed tables
+	uv run pit features promote-gold --run-id $(RUN_ID)
+
 test-temporal: data-sample ## Run exhaustive point-in-time correctness tests
 	uv run pytest -q -m temporal tests/temporal
 
@@ -105,4 +111,4 @@ logs: ## Follow core service logs
 down: ## Stop services without deleting data volumes
 	docker compose down
 
-.PHONY: help bootstrap doctor lab lab-training lab-container data-sample data-snapshot profile build-lakehouse lakehouse-history build-fixture features test-temporal test-unit test-lakehouse test-notebooks model-spike train test lint format check changelog-check lock up-core status logs down
+.PHONY: help bootstrap doctor lab lab-training lab-container data-sample data-snapshot profile build-lakehouse lakehouse-history build-fixture features gold promote-gold test-temporal test-unit test-lakehouse test-notebooks model-spike train test lint format check changelog-check lock up-core status logs down

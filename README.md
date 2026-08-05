@@ -8,9 +8,9 @@ the FeathrPO/Spark speedups from the source paper.
 The repository is intentionally milestone-driven. Sprint 1 is complete: the temporal contract,
 PaySim feasibility evidence, versioned Bronze/Silver path and exact-Silver E1/E4 baseline are
 verified. See the [Sprint 1 completion report](docs/reports/sprint-1-completion-report.md).
-Redis/MLflow infrastructure is wired for the next vertical slice, while Feast, Gold backfill,
-promotion, serving, replay, and cloud remain explicitly planned rather than represented by
-placeholder commands.
+Redis/MLflow infrastructure is wired for the next vertical slice. Gold staging and explicit
+promotion are now represented by CLI/Make/PowerShell commands; Feast, serving, replay, and cloud
+remain explicitly planned rather than represented by placeholder commands.
 
 ## Quick start
 
@@ -128,6 +128,27 @@ $env:PIT_NOTEBOOK_RUN_TRAINING = "1"
 Keep the notebook file unchanged; enabling training by environment variable preserves clean Git
 lineage. See the [M019 reading guide](docs/reports/paysim-silver-training-baseline.md).
 
+### Build and promote Gold
+
+Gold is built into staging by default. The requested step range must cover complete `event_day`
+partitions: use `[1,24]`, `[25,48]`, or the final partial-day range `[721,743]`; `[2,2]` is
+rejected. Building does not promote or replace the committed Gold tables; promotion is a separate
+explicit command using the staged run manifest:
+
+```bash
+make gold START=25 END=48
+make promote-gold RUN_ID=<run-id-from-build-output>
+```
+
+```powershell
+.\make.ps1 gold -Start 25 -End 48
+.\make.ps1 promote-gold -RunId <run-id-from-build-output>
+```
+
+The `pit features build-gold` command reports both Gold table row counts, written partitions and
+logical checksums. `pit features promote-gold` reloads the staged `gold-build-manifest.json`,
+promotes both tables, and reports the Delta versions and predicate.
+
 ## Implemented command contract
 
 | Command | Outcome |
@@ -148,6 +169,8 @@ lineage. See the [M019 reading guide](docs/reports/paysim-silver-training-baseli
 | `test-notebooks` | Execute all Sprint 1 notebooks in memory without storing outputs |
 | `model-spike` | Run the standalone PaySim LightGBM E1–E4 candidate matrix with local MLflow |
 | `train` | Train locked E1/E4 baselines from exact PaySim Silver Delta versions |
+| `gold` | Build Gold pre-decision and post-event tables into staging for an inclusive step range |
+| `promote-gold` | Promote a staged Gold run into the committed tables |
 | `lint`, `test`, `check` | Run the same fast quality lane locally and in CI |
 | `changelog-check` | Ensure staged implementation changes update milestone audit logs |
 | `up-core`, `status`, `logs`, `down` | Operate Redis and MLflow without deleting volumes |

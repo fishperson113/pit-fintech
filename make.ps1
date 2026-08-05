@@ -16,7 +16,10 @@ param(
     [int]$ModelNonfraudSample = 5000,
     [int]$TrainNonfraudSamplePerType = 100000,
     [int]$ModelSeed = 20260727,
-    [double]$ModelFixedFpr = 0.01
+    [double]$ModelFixedFpr = 0.01,
+    [int]$Start = 1,
+    [int]$End = 1,
+    [string]$RunId = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -76,6 +79,20 @@ switch ($Target) {
     }
     "features" {
         Invoke-Checked "uv" @("run", "pit", "features", "show", "--dataset", "paysim")
+    }
+    "gold" {
+        Invoke-Checked "uv" @(
+            "run", "pit", "features", "build-gold",
+            "--start", "$Start", "--end", "$End"
+        )
+    }
+    "promote-gold" {
+        if ([string]::IsNullOrWhiteSpace($RunId)) {
+            throw "-RunId is required for promote-gold"
+        }
+        Invoke-Checked "uv" @(
+            "run", "pit", "features", "promote-gold", "--run-id", $RunId
+        )
     }
     "test-temporal" {
         Invoke-Checked "uv" @("run", "pit", "data", "sample")
@@ -159,6 +176,8 @@ switch ($Target) {
             @("lakehouse-history", "inspect Delta history for -Dataset"),
             @("build-fixture", "extract and score a small real-Silver PaySim temporal fixture"),
             @("features", "inspect the frozen PaySim FeatureSpec v2"),
+            @("gold", "build Gold tables into staging for -Start/-End"),
+            @("promote-gold", "promote a staged Gold run from -RunId"),
             @("test-temporal", "run PIT correctness suite"),
             @("test-unit", "run fast unit tests"),
             @("test-lakehouse", "run Delta snapshot and time-travel tests"),

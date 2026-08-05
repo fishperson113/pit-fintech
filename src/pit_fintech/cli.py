@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -25,6 +27,16 @@ from pit_fintech.data.paysim_lakehouse import (
     paysim_lakehouse_history,
 )
 from pit_fintech.data.sample import PARQUET_PATH, build_sample_fixture, profile_sample_fixture
+from pit_fintech.features.build_offline import (
+    DeltaSourceRef,
+    GoldScanEvidence,
+    GoldTableSnapshot,
+    GoldValidation,
+    OfflineFeatureBuildResult,
+    SameStepTieProbe,
+    build_offline_features,
+    promote_staged_gold,
+)
 from pit_fintech.platform.doctor import collect_checks
 from pit_fintech.platform.notebooks import verify_notebooks
 
@@ -360,6 +372,162 @@ def features_show(
         )
     console.print(table)
     console.print("forbidden model inputs: " + ", ".join(contract.forbidden_model_inputs))
+
+
+def _gold_roots() -> tuple[Path, Path, Path]:
+    project_root = resolve_project_root(Path.cwd())
+    settings = get_settings()
+    data_root = (
+        settings.data_root
+        if settings.data_root.is_absolute()
+        else project_root / settings.data_root
+    )
+    artifact_root = (
+        settings.artifact_root
+        if settings.artifact_root.is_absolute()
+        else project_root / settings.artifact_root
+    )
+    return project_root, data_root, artifact_root
+
+
+def _gold_build_manifest_path(*, artifact_root: Path, run_id: str) -> Path:
+    return artifact_root / "runs" / run_id / "gold-build-manifest.json"
+
+
+def _load_gold_build_result(path: Path) -> OfflineFeatureBuildResult:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    pre_decision = dict(payload["pre_decision"])
+    pre_decision["partitions_written"] = tuple(pre_decision["partitions_written"])
+    post_event_state = dict(payload["post_event_state"])
+    post_event_state["partitions_written"] = tuple(post_event_state["partitions_written"])
+    ties = dict(payload["same_step_ties"])
+    ties["examples"] = tuple(tuple(example) for example in ties["examples"])
+    return OfflineFeatureBuildResult(
+        status=payload["status"],
+        pipeline_version=payload["pipeline_version"],
+        run_id=payload["run_id"],
+        built_at=datetime.fromisoformat(payload["built_at"]),
+        engine=payload["engine"],
+        dataset_snapshot_id=payload["dataset_snapshot_id"],
+        raw_file_sha256=payload["raw_file_sha256"],
+        entity_definition_version=payload["entity_definition_version"],
+        feature_definition_version=payload["feature_definition_version"],
+        feature_service_version=payload["feature_service_version"],
+        feature_contract_checksum=payload["feature_contract_checksum"],
+        cutoff_start_step=payload["cutoff_start_step"],
+        cutoff_end_step=payload["cutoff_end_step"],
+        lookback_start_step=payload["lookback_start_step"],
+        source_tables=tuple(DeltaSourceRef(**source) for source in payload["source_tables"]),
+        pre_decision=GoldTableSnapshot(**pre_decision),
+        post_event_state=GoldTableSnapshot(**post_event_state),
+        staging_root=payload["staging_root"],
+        rows_in_scope=payload["rows_in_scope"],
+        rows_post_event=payload["rows_post_event"],
+        max_source_event_step=payload["max_source_event_step"],
+        future_read_violations=payload["future_read_violations"],
+        same_step_ties=SameStepTieProbe(**ties),
+        scan=GoldScanEvidence(**payload["scan"]),
+        validations=tuple(GoldValidation(**validation) for validation in payload["validations"]),
+        code_commit=payload["code_commit"],
+        lineage_policy_version=payload["lineage_policy_version"],
+        gold_component_fingerprint=payload["gold_component_fingerprint"],
+        gold_component_paths=tuple(payload["gold_component_paths"]),
+        gold_component_dirty=payload["gold_component_dirty"],
+        repository_dirty=payload["repository_dirty"],
+        manifest_path=payload["manifest_path"],
+    )
+
+
+@features_app.command("build-gold")
+def features_build_gold(
+    start: Annotated[
+        int,
+        typer.Option(
+            "--start",
+            min=1,
+            help="Inclusive full-event-day range start, e.g. 1, 25, or 721",
+        ),
+    ],
+    end: Annotated[
+        int,
+        typer.Option(
+            "--end",
+            min=1,
+            help="Inclusive full-event-day range end, e.g. 24, 48, or 743",
+        ),
+    ],
+    run_id: Annotated[str | None, typer.Option("--run-id", help="Staging run identifier")] = None,
+    dataset: Annotated[str, typer.Option(help="Application dataset to build")] = "paysim",
+) -> None:
+    """Build both Gold tables into staging without promoting them.
+
+    Ranges must cover complete event days: [1,24], [25,48], or [721,743].
+    """
+
+    if dataset != "paysim":
+        console.print("[red]Only the PaySim Gold builder is implemented.[/]")
+        raise typer.Exit(code=2)
+    if start > end:
+        console.print("[red]--start must be less than or equal to --end.[/]")
+        raise typer.Exit(code=2)
+
+    project_root, data_root, artifact_root = _gold_roots()
+    resolved_run_id = run_id or (
+        f"gold-{start}-{end}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%f%z')}"
+    )
+    build = build_offline_features(
+        project_root=project_root,
+        data_root=data_root,
+        artifact_root=artifact_root,
+        run_id=resolved_run_id,
+        cutoff_start_step=start,
+        cutoff_end_step=end,
+        promote=False,
+        progress=True,
+    )
+    console.print(f"run_id: {build.run_id}")
+    console.print(
+        f"pre_decision_features: rows={build.pre_decision.rows}; "
+        f"partitions_written={list(build.pre_decision.partitions_written)}; "
+        f"logical_checksum={build.pre_decision.logical_checksum}"
+    )
+    console.print(
+        f"post_event_state_updates: rows={build.post_event_state.rows}; "
+        f"partitions_written={list(build.post_event_state.partitions_written)}; "
+        f"logical_checksum={build.post_event_state.logical_checksum}"
+    )
+    console.print(f"status: {build.status}; promote: False")
+
+
+@features_app.command("promote-gold")
+def features_promote_gold(
+    run_id: Annotated[str, typer.Option("--run-id", help="Staged Gold run identifier")],
+    dataset: Annotated[str, typer.Option(help="Application dataset to promote")] = "paysim",
+) -> None:
+    """Promote a previously staged Gold build into the committed Gold tables."""
+
+    if dataset != "paysim":
+        console.print("[red]Only the PaySim Gold promoter is implemented.[/]")
+        raise typer.Exit(code=2)
+
+    _, data_root, artifact_root = _gold_roots()
+    manifest_path = _gold_build_manifest_path(artifact_root=artifact_root, run_id=run_id)
+    if not manifest_path.is_file():
+        console.print(f"[red]No staged Gold build manifest found at {manifest_path}.[/]")
+        raise typer.Exit(code=2)
+    try:
+        build = _load_gold_build_result(manifest_path)
+    except (KeyError, TypeError, ValueError, OSError) as exc:
+        console.print(f"[red]Could not load staged Gold build {manifest_path}: {exc}[/]")
+        raise typer.Exit(code=2) from exc
+
+    promotion = promote_staged_gold(build=build, data_root=data_root)
+    console.print(f"run_id: {promotion.run_id}")
+    console.print(f"promoted: {promotion.promoted}")
+    console.print(f"strategy: {promotion.strategy}")
+    console.print(f"predicate: {promotion.predicate}")
+    console.print(f"pre_decision_features_version: {promotion.pre_decision_version}")
+    console.print(f"post_event_state_updates_version: {promotion.post_event_state_version}")
 
 
 @model_app.command("spike")

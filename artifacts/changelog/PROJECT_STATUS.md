@@ -72,7 +72,10 @@ Last updated: 2026-08-04 (M033). Status words are strict:
 Thin Feast contract, CLI-built Gold features, full/range/incremental backfill, Redis
 materialization, local selected-model + MLflow run, gated promotion/rollback, FastAPI/Uvicorn
 scoring, one-producer ordered in-memory replay, offline/online parity, and sample E2E are all
-**planned**. Ray Train/Tune/Serve and external message brokers are out of the Sprint 2 MVP.
+**planned**. The Gold CLI staging/promotion wiring, event-day range guard, shared typed partition
+predicate, DuckDB Gold-path narrowing/materialization, CLI phase progress, and indexed shift-relation
+validation are now implemented but not verified; the full Gold build/promote path was not run in
+this work. Ray Train/Tune/Serve and external message brokers are out of the Sprint 2 MVP.
 
 **M032 Round 0 is implemented, not verified.** It adds 19 new files (3,842 lines) and modifies
 `compose.yaml`, creating the cross-module scaffolding for T2–T9: Gold-build, backfill,

@@ -65,7 +65,7 @@ def test_gold_fixture_build_is_atomic_contract_safe_and_deterministic(tmp_path: 
         artifact_root=artifact_root,
         run_id="gold-fixture-one",
         cutoff_start_step=1,
-        cutoff_end_step=5,
+        cutoff_end_step=24,
         silver_manifest_path=silver_manifest,
     )
     assert first.status == "staged"
@@ -97,7 +97,7 @@ def test_gold_fixture_build_is_atomic_contract_safe_and_deterministic(tmp_path: 
         artifact_root=artifact_root,
         run_id="gold-fixture-two",
         cutoff_start_step=1,
-        cutoff_end_step=5,
+        cutoff_end_step=24,
         silver_manifest_path=silver_manifest,
         promote=True,
     )
@@ -148,7 +148,7 @@ def test_promote_staged_gold_refuses_when_future_read_violations_reported(tmp_pa
         artifact_root=artifact_root,
         run_id="gold-fixture-future-read-violation",
         cutoff_start_step=1,
-        cutoff_end_step=5,
+        cutoff_end_step=24,
         silver_manifest_path=silver_manifest,
     )
     assert all(validation.status == "pass" for validation in staged.validations)

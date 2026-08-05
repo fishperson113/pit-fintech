@@ -1,5 +1,60 @@
 # Project changelog
 
+## 2026-08-05 — M038: Index shift-relation validation by entity
+
+- **Implemented, not verified.** `verify_shift_relation` now groups post-event rows by entity once
+  before comparing the one-step-shift relation, removing the previous full-table scan for every
+  entity.
+- The comparison fields, mismatch semantics, validation ordering and missing-vector behavior are
+  unchanged.
+- Verification: focused Gold tests 12 passed; Ruff clean; unit 87 passed; temporal 73 passed;
+  integration 17 passed with one existing Ibis deprecation warning.
+- No real Gold build or promotion was run.
+
+## 2026-08-05 — M037: Add low-overhead Gold build phase progress
+
+- **Implemented, not verified.** `pit features build-gold` now prints phase boundaries and elapsed
+  seconds when reading Silver, running audits/queries, writing staging, and validating shift relation.
+- Progress is disabled by default for library callers and enabled only by the CLI; no per-row
+  instrumentation or Gold business-logic change was introduced.
+- Verification: focused CLI/Gold tests 14 passed; Ruff clean; unit 87 passed; temporal 73 passed;
+  integration 17 passed with one existing Ibis deprecation warning.
+- No real Gold build or promotion was run.
+
+## 2026-08-05 — M036: Narrow and reuse the Gold DuckDB relation
+
+- **Implemented, not verified.** Gold now projects only the seven contract source columns plus
+  `event_day` during the Silver Delta read, materializes that narrow relation once in DuckDB for
+  repeated audits/queries, and computes expected row count in SQL instead of `source_table.to_pylist()`.
+- The optimization preserves the existing SQL producer, PIT predicates, audits, checksums and Gold
+  schemas; no batching or semantic change was introduced.
+- Verification: focused Gold fixture/range tests 12 passed; Ruff clean; unit 87 passed; temporal 73
+  passed; integration 17 passed with one existing Ibis deprecation warning.
+- No real Gold build or promotion was run.
+
+## 2026-08-05 — M035: Guard Gold ranges at event-day granularity
+
+- **Implemented, not verified.** Added the shared `validate_gold_cutoff_range` guard for complete
+  event-day ranges, including PaySim's final partial day `[721,743]`.
+- Reused the shared typed `IN` predicate in `_write_gold_table` and `promote_staged_gold`; T3
+  `plan_backfill` now applies the same range guard.
+- Added focused tests for invalid/valid ranges, T3 rejection, and predicate identity; existing
+  fixture Gold tests now request `[1,24]` rather than a partial day.
+- Updated CLI help and README with valid examples `[1,24]`, `[25,48]`, `[721,743]`.
+- Verification: Ruff clean; unit 87 passed; temporal 73 passed; integration 17 passed with one
+  existing Ibis deprecation warning. No real Gold build/promote was run.
+
+## 2026-08-05 — M034: Wire Gold build and promotion through CLI runners
+
+- **Implemented, not verified.** Added `pit features build-gold` with staging-only default and
+  `pit features promote-gold` with manifest reload and explicit promotion output.
+- Added matching `gold` and `promote-gold` targets to `Makefile` and switches to `make.ps1`.
+- Added CLI wiring integration tests using monkeypatched small objects; no real Gold build or
+  promotion was run.
+- Updated README command contract and Gold staging/promotion documentation.
+- Verification: Ruff clean; unit 77 passed; temporal 73 passed; integration 17 passed with one
+  existing Ibis deprecation warning. Full Gold build/promote remains unverified by scope.
+
 ## 2026-08-04 — M033: T2 Gold offline features run against real Silver, future-read audit fixed
 
 - **Implemented, not verified.** First real run of `build_offline_features` against real PaySim

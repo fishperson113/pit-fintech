@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -134,6 +135,8 @@ GOLD_STAGING_PATH_TEMPLATE: Final = "{artifact_root}/runs/{run_id}/staging/{tabl
 #: business calendar. Partitioning on it is what makes guide s4.2's "read only the partitions
 #: needed for the output range plus the lookback window" expressible as a pruning predicate.
 GOLD_PARTITION_COLUMN: Final = "event_day"
+#: PaySim1's frozen maximum step. The final event-day partition is partial (steps 721-743).
+GOLD_MAX_STEP: Final = 743
 
 #: The widest history window, in hour ordinals. An output range ``[start, end]`` must read source
 #: partitions covering ``[start - GOLD_LOOKBACK_STEPS, end]`` and no more (guide s4.2, s5.3).
@@ -815,6 +818,25 @@ def _canonical_checksum(table: pa.Table) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def validate_gold_cutoff_range(cutoff_start_step: int, cutoff_end_step: int) -> None:
+    """Require Gold output bounds to cover complete ``event_day`` partitions."""
+
+    if cutoff_start_step > cutoff_end_step:
+        raise ValueError("cutoff_start_step must be <= cutoff_end_step")
+    starts_at_day_boundary = (cutoff_start_step - 1) % 24 == 0
+    ends_at_day_boundary = cutoff_end_step % 24 == 0 or cutoff_end_step == GOLD_MAX_STEP
+    if starts_at_day_boundary and ends_at_day_boundary:
+        return
+    event_day = (cutoff_start_step - 1) // 24 + 1
+    day_start = (event_day - 1) * 24 + 1
+    day_end = min(event_day * 24, GOLD_MAX_STEP)
+    raise ValueError(
+        f"range [{cutoff_start_step}, {cutoff_end_step}] khong can bien event_day; "
+        f"event_day {event_day} = step [{day_start}, {day_end}]. "
+        f"Dung [{day_start}, {day_end}] hoac range tron ngay khac."
+    )
+
+
 def _schema_for(columns: tuple[GoldColumn, ...]) -> pa.Schema:
     types = {
         "string": pa.string(),
@@ -831,29 +853,56 @@ def _schema_for(columns: tuple[GoldColumn, ...]) -> pa.Schema:
     )
 
 
+def _partition_predicate(partitions: tuple[int, ...]) -> str:
+    return (
+        f"{GOLD_PARTITION_COLUMN} IN "
+        f"({', '.join(f'CAST({partition} AS INT)' for partition in partitions)})"
+    )
+
+
 def _write_gold_table(
     path: Path, table: pa.Table, columns: tuple[GoldColumn, ...]
 ) -> GoldTableSnapshot:
+    """Write one Gold range, replacing only its exact derived partition predicate.
+
+    ``IN`` is required instead of ``BETWEEN`` because a non-contiguous set such as ``{1, 3}``
+    would make ``BETWEEN`` scan and replace the middle partition: the observed result was
+    ``{1, 3}`` rather than the required ``{1, 2, 3}``. The ``event_day`` column is ``int32``, while
+    uncast predicate literals are parsed as ``Int64`` and Delta raises
+    ``Invalid comparison operation: Int32 <= Int64``; each literal is therefore cast to ``INT``.
+    The ``GoldPromotionResult.predicate`` is audit evidence for the pre-decision table only.
+    """
+
     schema = _schema_for(columns)
     table = table.select(schema.names).cast(schema).combine_chunks()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    mode = "overwrite" if (path / "_delta_log").exists() else "error"
-    write_deltalake(
-        path,
-        table,
-        mode=mode,
-        partition_by=[GOLD_PARTITION_COLUMN],
-        schema_mode="overwrite" if mode == "overwrite" else None,
-    )
-    delta = DeltaTable(path)
-    output = delta.to_pyarrow_table().select(schema.names).cast(schema)
-    if output.num_rows != table.num_rows or _canonical_checksum(output) != _canonical_checksum(
-        table
-    ):
-        raise RuntimeError(f"Delta write changed logical Gold output at {path}")
     partitions = tuple(
         sorted({int(value) for value in table.column(GOLD_PARTITION_COLUMN).to_pylist()})
     )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if (path / "_delta_log").exists():
+        write_deltalake(
+            path,
+            table,
+            mode="overwrite",
+            partition_by=[GOLD_PARTITION_COLUMN],
+            predicate=_partition_predicate(partitions),
+        )
+    else:
+        write_deltalake(path, table, mode="error", partition_by=[GOLD_PARTITION_COLUMN])
+    delta = DeltaTable(path)
+    output = delta.to_pyarrow_table().select(schema.names).cast(schema)
+    output = output.filter(
+        pa.array(
+            [int(value) in partitions for value in output.column(GOLD_PARTITION_COLUMN).to_pylist()]
+        )
+    )
+    sort_keys = [(name, "ascending") for name in schema.names]
+    output = output.take(pa.compute.sort_indices(output, sort_keys=sort_keys))
+    expected = table.take(pa.compute.sort_indices(table, sort_keys=sort_keys))
+    if output.num_rows != expected.num_rows or _canonical_checksum(output) != _canonical_checksum(
+        expected
+    ):
+        raise RuntimeError(f"Delta write changed logical Gold output at {path}")
     return GoldTableSnapshot(
         layer="gold",
         table=(
@@ -907,6 +956,7 @@ def build_offline_features(
     engine: Literal["duckdb", "reference"] = "duckdb",
     silver_manifest_path: Path | None = None,
     promote: bool = False,
+    progress: bool = False,
 ) -> OfflineFeatureBuildResult:
     """Compute both Gold tables for ``[cutoff_start_step, cutoff_end_step]`` into staging.
 
@@ -925,12 +975,18 @@ def build_offline_features(
     weaken any precondition.
     """
 
+    progress_started = time.perf_counter()
+
+    def report(message: str) -> None:
+        if progress:
+            elapsed = time.perf_counter() - progress_started
+            print(f"[gold +{elapsed:8.1f}s] {message}", flush=True)
+
     if engine != "duckdb":
         raise NotImplementedError(
             "the reference Gold builder is intentionally deferred; use duckdb"
         )
-    if cutoff_start_step > cutoff_end_step:
-        raise ValueError("cutoff_start_step must be <= cutoff_end_step")
+    validate_gold_cutoff_range(cutoff_start_step, cutoff_end_step)
     project_root = project_root.resolve()
     data_root = data_root.resolve()
     artifact_root = artifact_root.resolve()
@@ -938,22 +994,30 @@ def build_offline_features(
         project_root=project_root, artifact_root=artifact_root, manifest_path=silver_manifest_path
     )
     read_start = max(1, cutoff_start_step - GOLD_LOOKBACK_STEPS)
+    report(f"reading Silver steps [{read_start}, {cutoff_end_step}]")
     dataset = DeltaTable(silver_path, version=source_snapshot.version).to_pyarrow_dataset()
+    source_columns = (*PAYSIM_PRE_DECISION_SOURCE_COLUMNS, GOLD_PARTITION_COLUMN)
     source_table = dataset.to_table(
-        filter=(ds.field("step") >= read_start) & (ds.field("step") <= cutoff_end_step)
+        columns=list(source_columns),
+        filter=(ds.field("step") >= read_start) & (ds.field("step") <= cutoff_end_step),
     )
     if source_table.num_rows == 0:
         raise ValueError("requested Gold range has no Silver source rows")
+    report(f"Silver loaded: {source_table.num_rows:,} rows")
     connection = duckdb.connect()
     connection.execute("SET preserve_insertion_order = true")
-    connection.register("gold_source", source_table)
+    connection.register("gold_source_arrow", source_table)
+    connection.execute("CREATE TEMP TABLE gold_source AS SELECT * FROM gold_source_arrow")
+    connection.unregister("gold_source_arrow")
     try:
+        report("same-step audit started")
         ties = probe_same_step_ties(
             connection=connection,
             relation="gold_source",
             cutoff_start_step=cutoff_start_step,
             cutoff_end_step=cutoff_end_step,
         )
+        report("same-step audit complete")
         pre_query = f"""
             SELECT vectors.*, source.transaction_type,
                    floor((vectors.step - 1) / 24.0)::INTEGER + 1 AS {GOLD_PARTITION_COLUMN}
@@ -968,32 +1032,46 @@ def build_offline_features(
             WHERE states.step BETWEEN {cutoff_start_step} AND {cutoff_end_step}
             ORDER BY states.step, states.source_row_number
         """
+        report("pre-decision query started")
         pre_table = _with_timestamps(connection.execute(pre_query).to_arrow_table())
+        report(f"pre-decision query complete: {pre_table.num_rows:,} rows")
+        report("post-event query started")
         post_table = _with_timestamps(connection.execute(post_query).to_arrow_table())
+        report(f"post-event query complete: {post_table.num_rows:,} rows")
+        report("future-read audit started")
         future_reads = probe_future_read_violations(
             connection=connection,
             relation="gold_source",
             cutoff_start_step=cutoff_start_step,
             cutoff_end_step=cutoff_end_step,
         )
+        report(f"future-read audit complete: {future_reads} violations")
+        expected_pre_rows = int(
+            connection.execute(
+                f"""
+                SELECT count(*)
+                FROM gold_source
+                WHERE step BETWEEN {cutoff_start_step} AND {cutoff_end_step}
+                  AND transaction_type IN ('CASH_OUT', 'TRANSFER')
+                  AND destination_entity_kind = 'CUSTOMER'
+                """
+            ).fetchone()[0]
+        )
+        report(f"row-count validation complete: expected {expected_pre_rows:,} pre rows")
     finally:
         connection.close()
     pre_table = pre_table.select(tuple(column.name for column in PRE_DECISION_FEATURE_SCHEMA))
     post_table = post_table.select(tuple(column.name for column in POST_EVENT_STATE_SCHEMA))
-    expected_pre_rows = sum(
-        cutoff_start_step <= int(row["step"]) <= cutoff_end_step
-        and row["transaction_type"] in ("CASH_OUT", "TRANSFER")
-        and row["destination_entity_kind"] == "CUSTOMER"
-        for row in source_table.to_pylist()
-    )
     staging_pre = gold_staging_path(
         artifact_root=artifact_root, run_id=run_id, table=GOLD_PRE_DECISION_TABLE
     )
     staging_post = gold_staging_path(
         artifact_root=artifact_root, run_id=run_id, table=GOLD_POST_EVENT_TABLE
     )
+    report("writing Gold staging tables")
     pre_snapshot = _write_gold_table(staging_pre, pre_table, PRE_DECISION_FEATURE_SCHEMA)
     post_snapshot = _write_gold_table(staging_post, post_table, POST_EVENT_STATE_SCHEMA)
+    report("Gold staging tables written")
     source_ref = DeltaSourceRef(
         layer="silver",
         table="paysim_transactions",
@@ -1048,7 +1126,9 @@ def build_offline_features(
         repository_dirty=repository_dirty(project_root),
         manifest_path="",
     )
+    report("shift-relation validation started")
     shift = verify_shift_relation(build=provisional)
+    report("shift-relation validation complete")
     validations = (
         _validation("schema_matches_frozen_gold_schema", 1, 1),
         _validation(
@@ -1068,6 +1148,7 @@ def build_offline_features(
     manifest_path = _write_build_manifest(staged, artifact_root)
     staged = replace(staged, manifest_path=str(manifest_path))
     _write_build_manifest(staged, artifact_root)
+    report(f"staging complete: {run_id}")
     if not promote:
         return staged
     promotion = promote_staged_gold(build=staged, data_root=data_root)
@@ -1148,10 +1229,7 @@ def promote_staged_gold(
     staged_post = DeltaTable(build.post_event_state.path).to_pyarrow_table()
     committed_pre = _write_gold_table(target_pre, staged_pre, PRE_DECISION_FEATURE_SCHEMA)
     committed_post = _write_gold_table(target_post, staged_post, POST_EVENT_STATE_SCHEMA)
-    predicate = (
-        f"{GOLD_PARTITION_COLUMN} BETWEEN {min(build.pre_decision.partitions_written)} "
-        f"AND {max(build.pre_decision.partitions_written)}"
-    )
+    predicate = _partition_predicate(build.pre_decision.partitions_written)
     return GoldPromotionResult(
         run_id=build.run_id,
         promoted=True,
@@ -1240,7 +1318,8 @@ def verify_shift_relation(
 
     "Hai view phai duoc sinh tu cung feature spec/reducer, va fixture phai chung minh quan he shift
     giua chung." Returns one :class:`GoldValidation` per entity checked so a failure names the
-    entity instead of only reporting that something moved.
+    entity instead of only reporting that something moved. Post-event rows are indexed by entity
+    before comparison so validation does not rescan the full table for every entity.
     """
 
     pre = (
@@ -1254,13 +1333,14 @@ def verify_shift_relation(
         .to_pylist()
     )
     by_pre = {(row[PAYSIM_ENTITY], int(row["step"])): row for row in pre}
-    wanted = entity_ids or tuple(sorted({str(row[PAYSIM_ENTITY]) for row in post}))
+    post_by_entity: dict[str, list[dict]] = {}
+    for state in post:
+        post_by_entity.setdefault(str(state[PAYSIM_ENTITY]), []).append(state)
+    wanted = entity_ids or tuple(sorted(post_by_entity))
     validations: list[GoldValidation] = []
     for entity in wanted:
         compared = mismatches = 0
-        for state in post:
-            if state[PAYSIM_ENTITY] != entity:
-                continue
+        for state in post_by_entity.get(entity, ()):
             vector = by_pre.get((entity, int(state["step"]) + 1))
             if vector is None:
                 continue
