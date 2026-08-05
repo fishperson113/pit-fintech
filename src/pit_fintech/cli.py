@@ -521,7 +521,7 @@ def features_promote_gold(
         console.print(f"[red]Could not load staged Gold build {manifest_path}: {exc}[/]")
         raise typer.Exit(code=2) from exc
 
-    promotion = promote_staged_gold(build=build, data_root=data_root)
+    promotion = promote_staged_gold(build=build, data_root=data_root, progress=True)
     console.print(f"run_id: {promotion.run_id}")
     console.print(f"promoted: {promotion.promoted}")
     console.print(f"strategy: {promotion.strategy}")

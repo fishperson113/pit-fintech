@@ -17,6 +17,10 @@ param(
     [int]$TrainNonfraudSamplePerType = 100000,
     [int]$ModelSeed = 20260727,
     [double]$ModelFixedFpr = 0.01,
+    [ValidateSet("E1", "E4")]
+    [string]$T4Experiment = "E4",
+    [ValidateSet("static", "pit")]
+    [string]$T4FeatureSet = "pit",
     [int]$Start = 1,
     [int]$End = 1,
     [string]$RunId = ""
@@ -103,6 +107,31 @@ switch ($Target) {
         Invoke-Checked "uv" @("run", "pit", "data", "sample")
         Invoke-Checked "uv" @("run", "pytest", "-q", "tests/integration")
     }
+    "test-t3-smoke" {
+        $env:UV_PROJECT_ENVIRONMENT = ".venv"
+        Invoke-Checked "uv" @(
+            "run", "--frozen", "--all-groups", "python", "-m", "pytest",
+            "tests/integration/test_gold_offline_features.py::test_t3_smoke_backfill_rerun_and_late_arrival_guard",
+            "-q"
+        )
+    }
+    "test-t4-dataset" {
+        & $PSCommandPath "test-t3-smoke"
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        $env:UV_PROJECT_ENVIRONMENT = ".venv"
+        Invoke-Checked "uv" @(
+            "run", "--frozen", "--all-groups", "python", "-m", "pytest",
+            "tests/integration/test_gold_offline_features.py::test_t4_gold_to_training_dataset_fixture",
+            "-q"
+        )
+    }
+    "train-gold-candidate" {
+        $env:UV_PROJECT_ENVIRONMENT = ".venv"
+        Invoke-Checked "uv" @(
+            "run", "--frozen", "--all-groups", "python", "scripts/run_t4_training.py",
+            "--experiment", $T4Experiment, "--feature-set", $T4FeatureSet
+        )
+    }
     "test-notebooks" {
         Invoke-Checked "uv" @("run", "pit", "data", "sample")
         Invoke-Checked "uv" @("run", "--group", "dev", "pit", "notebooks", "verify")
@@ -181,6 +210,9 @@ switch ($Target) {
             @("test-temporal", "run PIT correctness suite"),
             @("test-unit", "run fast unit tests"),
             @("test-lakehouse", "run Delta snapshot and time-travel tests"),
+            @("test-t3-smoke", "run T3 backfill seam smoke lane on an isolated fixture"),
+            @("test-t4-dataset", "run T4 Gold-to-training dataset fixture lane"),
+            @("train-gold-candidate", "train one E1/E4 candidate from committed Gold into local MLflow"),
             @("test-notebooks", "execute Sprint 1 notebooks in memory"),
             @("model-spike", "run the PaySim LightGBM E1-E4 candidate matrix"),
             @("train", "train locked E1/E4 models from exact Silver versions"),

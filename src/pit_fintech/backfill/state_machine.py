@@ -89,6 +89,12 @@ def _event_day_for_step(step: int) -> int:
     return (step - 1) // 24 + 1
 
 
+def _event_day_end_step(step: int) -> int:
+    """Return the inclusive step end of the partition containing ``step``."""
+
+    return min(_GOLD_FULL_RANGE_END_STEP, _event_day_for_step(step) * 24)
+
+
 def _resolve_relative(path: str, project_root: Path) -> Path:
     candidate = Path(path)
     return candidate if candidate.is_absolute() else project_root / candidate
@@ -181,6 +187,7 @@ class BackfillPlan:
     entity_definition_version: str
     feature_definition_version: str
     staging_root: str
+    silver_manifest_path: str
     resume_action: BackfillResumeAction
     previous_run_id: str | None
 
@@ -239,7 +246,7 @@ def plan_backfill(
 
     project_root = project_root.resolve()
     artifact_root = artifact_root.resolve()
-    manifest, silver_snapshot, _ = _resolve_silver_snapshot(
+    manifest, silver_snapshot, resolved_manifest_path = _resolve_silver_snapshot(
         artifact_root=artifact_root,
         project_root=project_root,
         silver_manifest_path=silver_manifest_path,
@@ -283,6 +290,7 @@ def plan_backfill(
         entity_definition_version=manifest.entity_definition_version,
         feature_definition_version=manifest.feature_definition_version,
         staging_root=staging_root,
+        silver_manifest_path=str(resolved_manifest_path),
         resume_action=resolution.action,
         previous_run_id=resolution.existing_run_id,
     )
@@ -532,7 +540,9 @@ def execute_backfill(
         # against whatever "latest" now means would silently violate the version the plan (and its
         # idempotency key) were computed against.
         _, current_silver, resolved_manifest_path = _resolve_silver_snapshot(
-            artifact_root=artifact_root, project_root=project_root, silver_manifest_path=None
+            artifact_root=artifact_root,
+            project_root=project_root,
+            silver_manifest_path=Path(plan.silver_manifest_path),
         )
         if current_silver.version != plan.source_silver_transactions_version:
             raise RuntimeError(
@@ -1064,7 +1074,15 @@ def inject_late_arrival_correction(
     existing_rows = silver_table.to_pyarrow_table()
     schema = existing_rows.schema
     injected_source_row_number = int(max(existing_rows.column("source_row_number").to_pylist())) + 1
-    template_row = existing_rows.to_pylist()[-1]
+    template_row = sorted(
+        (
+            row
+            for row in existing_rows.to_pylist()
+            if row["transaction_type"] in ("CASH_OUT", "TRANSFER")
+            and row["destination_entity_kind"] == "CUSTOMER"
+        ),
+        key=lambda row: int(row["source_row_number"]),
+    )[0]
     injected_row = dict(template_row)
     injected_row.update(
         source_row_number=injected_source_row_number,
@@ -1105,7 +1123,9 @@ def inject_late_arrival_correction(
 
     # Step 3: the impacted range -- every window that could have read the late-arriving row.
     impacted_start_step = injected_step
-    impacted_end_step = min(_GOLD_FULL_RANGE_END_STEP, injected_step + GOLD_LOOKBACK_STEPS)
+    impacted_end_step = _event_day_end_step(
+        min(_GOLD_FULL_RANGE_END_STEP, injected_step + GOLD_LOOKBACK_STEPS)
+    )
 
     # Steps 4/5: backfill the impacted range against the now-updated Silver and commit it.
     correction_plan = plan_backfill(

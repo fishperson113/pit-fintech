@@ -6,6 +6,14 @@ from pathlib import Path
 import pytest
 from deltalake import DeltaTable
 
+from pit_fintech.backfill.records import BackfillMode, BackfillState
+from pit_fintech.backfill.state_machine import (
+    compare_reruns,
+    execute_backfill,
+    inject_late_arrival_correction,
+    plan_backfill,
+)
+from pit_fintech.contracts.manifests import ApplicationLakehouseManifest
 from pit_fintech.data.paysim import DEFAULT_FILENAME
 from pit_fintech.data.paysim_lakehouse import build_paysim_lakehouse
 from pit_fintech.features.build_offline import (
@@ -18,6 +26,11 @@ from pit_fintech.features.build_offline import (
     gold_table_path,
     promote_staged_gold,
     verify_shift_relation,
+)
+from pit_fintech.training.dataset import (
+    EntityDataframeSpec,
+    build_entity_dataframe,
+    retrieve_historical_features,
 )
 
 pytestmark = pytest.mark.integration
@@ -173,3 +186,107 @@ def test_promote_staged_gold_refuses_when_future_read_violations_reported(tmp_pa
         snapshot_prefix=broken.raw_file_sha256[:16],
         table=GOLD_PRE_DECISION_TABLE,
     ).exists()
+
+
+def test_t3_smoke_backfill_rerun_and_late_arrival_guard(tmp_path: Path) -> None:
+    """Smoke the T3 seams without touching the real PaySim lakehouse."""
+
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    csv_path = _write_fixture_csv(project_root)
+    data_root = project_root / "data"
+    artifact_root = project_root / "artifacts"
+    _, silver_manifest = build_paysim_lakehouse(
+        csv_path,
+        project_root=project_root,
+        data_root=data_root,
+        artifact_root=artifact_root,
+        batch_size=4,
+    )
+
+    plan = plan_backfill(
+        project_root=project_root,
+        data_root=data_root,
+        artifact_root=artifact_root,
+        mode=BackfillMode.RANGE,
+        cutoff_start_step=1,
+        cutoff_end_step=24,
+        run_id="t3-smoke-initial",
+        silver_manifest_path=silver_manifest,
+    )
+    first = execute_backfill(
+        plan=plan,
+        project_root=project_root,
+        data_root=data_root,
+        artifact_root=artifact_root,
+    )
+    assert first.state is BackfillState.COMMITTED
+    assert first.committed_gold_pre_decision_version is not None
+    assert first.committed_gold_post_event_version is not None
+
+    rerun = replace(first, run_id="t3-smoke-rerun")
+    comparison = compare_reruns(first=first, second=rerun)
+    assert comparison.passed
+    assert comparison.logical_checksums_match
+    assert comparison.partition_checksums_match
+
+    with pytest.raises(RuntimeError, match="no_future_read_violations"):
+        inject_late_arrival_correction(
+            project_root=project_root,
+            data_root=data_root,
+            artifact_root=artifact_root,
+            watermark_step=24,
+            injected_step=1,
+            injected_knowledge_step=25,
+        )
+
+
+def test_t4_gold_to_training_dataset_fixture(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    csv_path = _write_fixture_csv(project_root)
+    data_root = project_root / "data"
+    artifact_root = project_root / "artifacts"
+    _, silver_manifest_path = build_paysim_lakehouse(
+        csv_path,
+        project_root=project_root,
+        data_root=data_root,
+        artifact_root=artifact_root,
+        batch_size=4,
+    )
+    build = build_offline_features(
+        project_root=project_root,
+        data_root=data_root,
+        artifact_root=artifact_root,
+        run_id="t4-dataset-fixture",
+        cutoff_start_step=1,
+        cutoff_end_step=24,
+        silver_manifest_path=silver_manifest_path,
+    )
+    manifest = ApplicationLakehouseManifest.model_validate_json(
+        silver_manifest_path.read_text(encoding="utf-8")
+    )
+    labels = next(item for item in manifest.tables if item.table == "paysim_labels")
+    spec = EntityDataframeSpec(
+        dataset_snapshot_id=manifest.dataset_snapshot_id,
+        entity_definition_version=build.entity_definition_version,
+        feature_definition_version=build.feature_definition_version,
+        feature_service_version=build.feature_service_version,
+        feature_contract_checksum=build.feature_contract_checksum,
+        gold_pre_decision=build.pre_decision,
+        label_table_path=labels.path,
+        label_table_version=labels.version,
+        start_step=1,
+        end_step=24,
+        retrieval_backend="duckdb_gold",
+    )
+    dataframe_path = build_entity_dataframe(spec=spec, artifact_root=artifact_root)
+    retrieval = retrieve_historical_features(
+        spec=spec,
+        entity_dataframe_path=dataframe_path,
+        artifact_root=artifact_root,
+    )
+    assert retrieval.rows == build.rows_in_scope
+    assert retrieval.ordered_feature_names
+    assert retrieval.training_dataset_checksum
+    assert all(assertion.status == "pass" for assertion in retrieval.assertions)

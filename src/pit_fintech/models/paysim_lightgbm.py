@@ -126,6 +126,7 @@ class TrainingDependencies:
     mlflow: Any
     mlflow_sklearn: Any
     numpy: Any
+    pandas: Any
     average_precision_score: Any
     roc_auc_score: Any
     roc_curve: Any
@@ -152,6 +153,7 @@ def _load_training_dependencies() -> TrainingDependencies:
         import mlflow
         import mlflow.sklearn
         import numpy
+        import pandas
         from sklearn.metrics import average_precision_score, roc_auc_score, roc_curve
         from sklearn.model_selection import train_test_split
     except ImportError as exc:
@@ -164,6 +166,7 @@ def _load_training_dependencies() -> TrainingDependencies:
         mlflow=mlflow,
         mlflow_sklearn=mlflow.sklearn,
         numpy=numpy,
+        pandas=pandas,
         average_precision_score=average_precision_score,
         roc_auc_score=roc_auc_score,
         roc_curve=roc_curve,

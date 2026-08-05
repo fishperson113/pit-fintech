@@ -73,9 +73,38 @@ Thin Feast contract, CLI-built Gold features, full/range/incremental backfill, R
 materialization, local selected-model + MLflow run, gated promotion/rollback, FastAPI/Uvicorn
 scoring, one-producer ordered in-memory replay, offline/online parity, and sample E2E are all
 **planned**. The Gold CLI staging/promotion wiring, event-day range guard, shared typed partition
-predicate, DuckDB Gold-path narrowing/materialization, CLI phase progress, and indexed shift-relation
-validation are now implemented but not verified; the full Gold build/promote path was not run in
-this work. Ray Train/Tune/Serve and external message brokers are out of the Sprint 2 MVP.
+predicate, DuckDB Gold-path narrowing/materialization, CLI phase progress, indexed shift-relation
+validation, T3 smoke lane, and T4 Gold-to-MLflow candidate path are now implemented but not fully
+verified; full T3 G2/G3 and full-scale T4 training remain open. The full Gold build/promote path was
+verified on a real range; no real T4 training was run in this work. Ray Train/Tune/Serve and external
+message brokers are out of the Sprint 2 MVP.
+
+**M041 is implemented and verified.** It optimizes the T4 Gold-to-training path for full-scale
+runs: Silver labels are narrowed to the join columns before the DuckDB join, and repeated
+`to_pylist()` over millions of rows in retrieval, future-read audit and temporal split are replaced
+with Arrow compute. `train_candidate` and the dataset stages gained `[t4 +Xs]` phase progress and
+LightGBM `log_evaluation(period=10)` prints every-10-rounds training progress. No contract or
+checksum changed; defaults preserve prior behavior. T4/Gold fixtures 6 passed, unit 87, temporal 73,
+integration 21, Ruff clean.
+
+**M041 is implemented and verified.** It optimizes the T4 Gold-to-training path for full-scale
+runs: Silver labels are narrowed to the join columns before the DuckDB join, and repeated
+`to_pylist()` over millions of rows in retrieval, future-read audit and temporal split are replaced
+with Arrow compute. `train_candidate` and the dataset stages gained `[t4 +Xs]` phase progress and
+LightGBM `log_evaluation(period=10)` prints every-10-rounds training progress. No contract or
+checksum changed; defaults preserve prior behavior. T4/Gold fixtures 6 passed, unit 87, temporal 73,
+integration 21, Ruff clean. Real-run verification: user ran `train-gold-candidate` twice on
+committed Gold v6 (full 1..743); both runs produced `test_pr_auc 0.362883` with complete MLflow
+tags/artifacts, confirming deterministic reproducible T4 training. T4 is ready for T5.
+
+**M040 is implemented and verified.** It optimizes the Gold promote read-back verification in
+`_write_gold_table`: partition discovery uses `pa.compute.unique`, the read-back uses Arrow dataset
+predicate pushdown (`isin(partitions)`) instead of loading the whole committed table, and the
+logical-output check compares sorted Arrow tables with `Table.equals` instead of two full-table
+`to_pylist()` + `json.dumps` checksum passes. Published `logical_checksum` values are unchanged
+(same `_canonical_checksum` on the input table). Gold fixture tests 4/4, unit 87, temporal 73,
+integration 21, Ruff clean. The real in-flight full-range promote still runs the old code; the fix
+applies to the next run.
 
 **M032 Round 0 is implemented, not verified.** It adds 19 new files (3,842 lines) and modifies
 `compose.yaml`, creating the cross-module scaffolding for T2–T9: Gold-build, backfill,

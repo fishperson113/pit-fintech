@@ -876,7 +876,12 @@ def _write_gold_table(
     schema = _schema_for(columns)
     table = table.select(schema.names).cast(schema).combine_chunks()
     partitions = tuple(
-        sorted({int(value) for value in table.column(GOLD_PARTITION_COLUMN).to_pylist()})
+        sorted(
+            {
+                int(value)
+                for value in pa.compute.unique(table.column(GOLD_PARTITION_COLUMN)).to_pylist()
+            }
+        )
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     if (path / "_delta_log").exists():
@@ -890,18 +895,15 @@ def _write_gold_table(
     else:
         write_deltalake(path, table, mode="error", partition_by=[GOLD_PARTITION_COLUMN])
     delta = DeltaTable(path)
-    output = delta.to_pyarrow_table().select(schema.names).cast(schema)
-    output = output.filter(
-        pa.array(
-            [int(value) in partitions for value in output.column(GOLD_PARTITION_COLUMN).to_pylist()]
-        )
+    output = delta.to_pyarrow_dataset().to_table(
+        columns=schema.names,
+        filter=ds.field(GOLD_PARTITION_COLUMN).isin(list(partitions)),
     )
+    output = output.select(schema.names).cast(schema)
     sort_keys = [(name, "ascending") for name in schema.names]
     output = output.take(pa.compute.sort_indices(output, sort_keys=sort_keys))
     expected = table.take(pa.compute.sort_indices(table, sort_keys=sort_keys))
-    if output.num_rows != expected.num_rows or _canonical_checksum(output) != _canonical_checksum(
-        expected
-    ):
+    if output.num_rows != expected.num_rows or not output.equals(expected, check_metadata=False):
         raise RuntimeError(f"Delta write changed logical Gold output at {path}")
     return GoldTableSnapshot(
         layer="gold",
@@ -1190,6 +1192,7 @@ def promote_staged_gold(
     build: OfflineFeatureBuildResult,
     data_root: Path,
     strategy: Literal["delta_transaction", "partition_overwrite", "merge"] = "partition_overwrite",
+    progress: bool = False,
 ) -> GoldPromotionResult:
     """Promote staged output to the main Gold tables, or refuse and leave them untouched.
 
@@ -1198,8 +1201,17 @@ def promote_staged_gold(
     returns ``promoted=False`` with the failing validations, not an exception-shaped surprise.
     """
 
+    progress_started = time.perf_counter()
+
+    def report(message: str) -> None:
+        if progress:
+            elapsed = time.perf_counter() - progress_started
+            print(f"[promote +{elapsed:8.1f}s] {message}", flush=True)
+
+    report(f"validating staged Gold build {build.run_id}")
     failures = tuple(validation for validation in build.validations if validation.status == "fail")
     if failures:
+        report(f"refusing promotion: {len(failures)} failing validation(s)")
         return GoldPromotionResult(
             run_id=build.run_id,
             promoted=False,
@@ -1225,11 +1237,19 @@ def promote_staged_gold(
     previous_post = (
         DeltaTable(target_post).version() if (target_post / "_delta_log").exists() else None
     )
+    report("reading staged pre_decision_features")
     staged_pre = DeltaTable(build.pre_decision.path).to_pyarrow_table()
+    report("reading staged post_event_state_updates")
     staged_post = DeltaTable(build.post_event_state.path).to_pyarrow_table()
+    report(f"promoting pre_decision_features ({staged_pre.num_rows:,} rows)")
     committed_pre = _write_gold_table(target_pre, staged_pre, PRE_DECISION_FEATURE_SCHEMA)
+    report(f"promoting post_event_state_updates ({staged_post.num_rows:,} rows)")
     committed_post = _write_gold_table(target_post, staged_post, POST_EVENT_STATE_SCHEMA)
     predicate = _partition_predicate(build.pre_decision.partitions_written)
+    report(
+        f"committed pre_decision_features v{committed_pre.version} and "
+        f"post_event_state_updates v{committed_post.version}"
+    )
     return GoldPromotionResult(
         run_id=build.run_id,
         promoted=True,

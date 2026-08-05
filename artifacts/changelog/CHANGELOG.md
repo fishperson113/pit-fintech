@@ -1,5 +1,47 @@
 # Project changelog
 
+## 2026-08-05 — M041: Optimize T4 training path and add Colab-style progress
+
+- Replaced repeated `to_pylist()` over millions of rows in entity dataframe build, retrieval,
+  future-read audit and temporal split with Arrow compute (`unique/max/sum/greater_equal`); labels
+  are narrowed to the two join columns before the DuckDB join.
+- Added `progress` flags (`[t4 +Xs]` phase lines) to dataset/pipeline stages and
+  `lightgbm.log_evaluation(period=10)` in `train_candidate`, so `train-gold-candidate` prints
+  every-10-rounds training progress like a notebook/Colab run.
+- No contract/checksum change; defaults preserve prior behavior.
+- Verification: T4/Gold fixtures 6 passed, unit 87, temporal 73, integration 21, Ruff clean.
+- Real-run verification: user ran `train-gold-candidate` twice on committed Gold v6 (full
+  1..743); both runs produced `test_pr_auc 0.362883` with complete MLflow tags/artifacts,
+  confirming deterministic reproducible T4 training on the real lakehouse.
+- Warning cleanup: `train_candidate` now passes feature-named DataFrames and uses LightGBM
+  `eval_X`/`eval_y`, removing the `eval_set` deprecation and sklearn feature-name warnings from
+  the T4 path.
+
+## 2026-08-05 — M040: Optimize Gold promote read-back verification
+
+- Optimized `_write_gold_table` (promote path) to verify written partitions via Arrow dataset
+  predicate pushdown and `Table.equals`, replacing full-table `to_pylist()` and two full-table
+  `json.dumps` checksum passes.
+- Added `[promote +Xs]` phase progress to `promote_staged_gold` (opt-in `progress` flag) and enabled
+  it in the `promote-gold` CLI, matching the Gold build progress style.
+- Published `logical_checksum` values are byte-identical (same `_canonical_checksum` on the input
+  table); no contract, schema, predicate or validation changed.
+- Verification: Gold fixture tests 4/4, unit 87, temporal 73, integration 21, Ruff clean. The real
+  in-flight promote continues on the old code; this fix applies to the next run.
+
+## 2026-08-05 — M039: Add T3 smoke lane and T4 Gold training path
+
+- **Implemented, partially verified.** Added isolated T3 smoke coverage for backfill execution,
+  rerun comparison and expected late-arrival future-read refusal; wired `test-t3-smoke` in both
+  runners. The smoke lane also fixed exact Silver-manifest pinning and deterministic late-arrival
+  template selection after exposing a real ordering flake.
+- Implemented T4 Gold exact-version dataset retrieval, label join, leakage assertions, frozen temporal
+  split/checksum, LightGBM candidate training and MLflow required artifact/tag verification.
+- Wired `test-t4-dataset` and `train-gold-candidate` in `Makefile` and `make.ps1`; the candidate runner help was verified.
+- Verification: T3 smoke pass, T4 dataset fixture pass, T4 MLflow fixture pass, unit 87, temporal 73,
+  integration 20; Ruff clean. Full-scale T4 training and T3 G2/G3 correction-success evidence remain
+  open. No real T4 training was run.
+
 ## 2026-08-05 — M038: Index shift-relation validation by entity
 
 - **Implemented, not verified.** `verify_shift_relation` now groups post-event rows by entity once

@@ -9,6 +9,8 @@ MODEL_NONFRAUD_SAMPLE ?= 5000
 MODEL_SEED ?= 20260727
 MODEL_FIXED_FPR ?= 0.01
 TRAIN_NONFRAUD_PER_TYPE ?= 100000
+T4_EXPERIMENT ?= E4
+T4_FEATURE_SET ?= pit
 
 help: ## Show implemented targets and their purpose
 	@awk 'BEGIN {FS = ":.*?## "}; /^[a-zA-Z0-9_.-]+:.*?## / {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -65,6 +67,15 @@ test-unit: ## Run fast non-temporal unit tests
 test-lakehouse: data-sample ## Run fixture Delta snapshot, schema, quality, and time-travel tests
 	uv run pytest -q tests/integration
 
+test-t3-smoke: ## Run the T3 backfill seam smoke lane on an isolated fixture
+	UV_PROJECT_ENVIRONMENT=.venv uv run --frozen --all-groups python -m pytest tests/integration/test_gold_offline_features.py::test_t3_smoke_backfill_rerun_and_late_arrival_guard -q
+
+test-t4-dataset: test-t3-smoke ## Run the T4 Gold-to-training dataset fixture lane
+	UV_PROJECT_ENVIRONMENT=.venv uv run --frozen --all-groups python -m pytest tests/integration/test_gold_offline_features.py::test_t4_gold_to_training_dataset_fixture -q
+
+train-gold-candidate: ## Train one E1/E4 candidate from committed Gold into local MLflow
+	UV_PROJECT_ENVIRONMENT=.venv uv run --frozen --all-groups python scripts/run_t4_training.py --experiment $(T4_EXPERIMENT) --feature-set $(T4_FEATURE_SET)
+
 test-notebooks: data-sample ## Execute all Sprint 1 notebooks in memory
 	uv run --group dev pit notebooks verify
 
@@ -111,4 +122,4 @@ logs: ## Follow core service logs
 down: ## Stop services without deleting data volumes
 	docker compose down
 
-.PHONY: help bootstrap doctor lab lab-training lab-container data-sample data-snapshot profile build-lakehouse lakehouse-history build-fixture features gold promote-gold test-temporal test-unit test-lakehouse test-notebooks model-spike train test lint format check changelog-check lock up-core status logs down
+.PHONY: help bootstrap doctor lab lab-training lab-container data-sample data-snapshot profile build-lakehouse lakehouse-history build-fixture features gold promote-gold test-temporal test-unit test-lakehouse test-t3-smoke test-t4-dataset train-gold-candidate test-notebooks model-spike train test lint format check changelog-check lock up-core status logs down

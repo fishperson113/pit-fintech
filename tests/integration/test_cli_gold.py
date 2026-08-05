@@ -105,7 +105,7 @@ def test_features_promote_gold_loads_staged_manifest_and_promotes(
     )
 
     assert result.exit_code == 0, result.stdout
-    assert calls == [{"build": build, "data_root": tmp_path}]
+    assert calls == [{"build": build, "data_root": tmp_path, "progress": True}]
     assert "promoted: True" in result.stdout
     assert "pre_decision_features_version: 3" in result.stdout
     assert "post_event_state_updates_version: 4" in result.stdout
