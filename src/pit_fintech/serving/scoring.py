@@ -25,11 +25,22 @@ Round-0 status: signatures only. Every body raises ``NotImplementedError``.
 
 from __future__ import annotations
 
+import logging
+import time
+import uuid
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
+from pit_fintech.materialization.records import FeatureStatus
 from pit_fintech.serving.feature_provider import FeatureProvider, FeatureVectorResponse
-from pit_fintech.serving.schemas import ScoreRequest, ScoreResponse
+from pit_fintech.serving.schemas import (
+    LatencyBreakdown,
+    ScoreRequest,
+    ScoreResponse,
+    derive_entity_id,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -66,6 +77,10 @@ class ScoringContext:
 
     provider: FeatureProvider
     policy: FailurePolicy
+    #: The loaded scikit-learn/LightGBM estimator (``.predict_proba``). Typed ``Any`` rather than
+    #: imported from ``lightgbm``/``sklearn`` at module scope, so importing this module never pulls
+    #: in the ``training``/``tracking`` optional dependency groups (module docstring).
+    model: Any
     model_version: str
     deployment_id: str | None
     decision_threshold: float
@@ -88,6 +103,42 @@ class VersionCheck:
     detail: str
 
 
+class VersionMismatchError(RuntimeError):
+    """Guide s9.4: version mismatch is fail-closed and not configurable by :class:`FailurePolicy`.
+
+    Raised by :func:`score_transaction`; the FastAPI route layer (``app.py``) is the only place
+    that turns this into an HTTP response, so :func:`score_transaction` itself never has to decide
+    a status code.
+    """
+
+    def __init__(self, check: VersionCheck) -> None:
+        super().__init__(check.detail)
+        self.check = check
+
+
+class StaleFeaturesError(RuntimeError):
+    """Raised only when :attr:`FailurePolicy.on_stale_features` is ``"fail_closed"``."""
+
+    def __init__(self, *, entity_id: str, staleness_steps: int | None) -> None:
+        super().__init__(
+            f"stale features for entity_id={entity_id!r} (staleness_steps={staleness_steps})"
+        )
+        self.entity_id = entity_id
+        self.staleness_steps = staleness_steps
+
+
+class MissingEntityRejectedError(RuntimeError):
+    """Raised only when :attr:`FailurePolicy.on_missing_entity` is ``"reject"``."""
+
+    def __init__(self, *, entity_id: str, feature_service_version: str) -> None:
+        super().__init__(
+            f"entity_id={entity_id!r} missing under "
+            f"feature_service_version={feature_service_version!r} and policy=reject"
+        )
+        self.entity_id = entity_id
+        self.feature_service_version = feature_service_version
+
+
 def derive_request_features(*, request: ScoreRequest) -> dict[str, float]:
     """Step 2: the three request-time fields, from the shared contract.
 
@@ -97,9 +148,17 @@ def derive_request_features(*, request: ScoreRequest) -> dict[str, float]:
     ``features/paysim_recipient.py: paysim_pre_decision_feature_sql`` emits offline. They are
     written in one place per side and must be derived from the specs rather than re-typed, because
     a divergence here is a G6 mismatch on a *request-time* field, which is the confusing kind.
+
+    These three expressions are copied verbatim from the independent Python oracle
+    (``features/paysim_reference.py: compute_paysim_feature_row``), not re-derived, so this is the
+    same formula proven correct offline rather than a second implementation of it.
     """
 
-    raise NotImplementedError("T7 round-0 skeleton")
+    return {
+        "current_amount": float(request.amount),
+        "event_step": float(request.step),
+        "transaction_type_transfer": 1.0 if request.transaction_type == "TRANSFER" else 0.0,
+    }
 
 
 def check_versions(
@@ -114,7 +173,28 @@ def check_versions(
     checksum is the stronger of the two and the string alone can agree while semantics have moved.
     """
 
-    raise NotImplementedError("T7 round-0 skeleton")
+    matches = (
+        features.feature_service_version == context.feature_service_version
+        and features.feature_contract_checksum == context.feature_contract_checksum
+    )
+    detail = (
+        "feature vector matches the expected service version and contract checksum"
+        if matches
+        else (
+            "feature version mismatch: service_version observed="
+            f"{features.feature_service_version!r} expected={context.feature_service_version!r}; "
+            f"contract_checksum observed={features.feature_contract_checksum!r} "
+            f"expected={context.feature_contract_checksum!r}"
+        )
+    )
+    return VersionCheck(
+        matches=matches,
+        expected_feature_service_version=context.feature_service_version,
+        observed_feature_service_version=features.feature_service_version,
+        expected_contract_checksum=context.feature_contract_checksum,
+        observed_contract_checksum=features.feature_contract_checksum,
+        detail=detail,
+    )
 
 
 def build_model_vector(
@@ -131,7 +211,11 @@ def build_model_vector(
     cold start once it reaches the model, and only one of the two is legitimate.
     """
 
-    raise NotImplementedError("T7 round-0 skeleton")
+    combined: dict[str, int | float] = {**request_features, **history_features}
+    missing = [name for name in ordered_feature_names if name not in combined]
+    if missing:
+        raise KeyError(f"cannot build model vector, missing features: {missing}")
+    return tuple(float(combined[name]) for name in ordered_feature_names)
 
 
 def score_transaction(*, request: ScoreRequest, context: ScoringContext) -> ScoreResponse:
@@ -143,7 +227,99 @@ def score_transaction(*, request: ScoreRequest, context: ScoringContext) -> Scor
     from ever being one refactor away.
     """
 
-    raise NotImplementedError("T7 round-0 skeleton")
+    request_started = time.perf_counter()
+
+    # Step 1: validate request. FastAPI has already parsed the body into `ScoreRequest`
+    # (`extra="forbid"` plus field constraints), so by the time this function runs the request is
+    # already validated; there is nothing further to check here.
+    validation_ms = 0.0
+
+    # Step 2: derive entity id / request-time features via the one shared contract.
+    entity_id = derive_entity_id(name_dest=request.name_dest)
+    request_features = derive_request_features(request=request)
+
+    # Step 3: retrieve history features from the versioned online store.
+    retrieval_started = time.perf_counter()
+    features = context.provider.get_online_features(entity_id=entity_id, request_step=request.step)
+    retrieval_ms = (time.perf_counter() - retrieval_started) * 1000.0
+
+    if features.status == FeatureStatus.MISSING and context.policy.on_missing_entity == "reject":
+        raise MissingEntityRejectedError(
+            entity_id=entity_id, feature_service_version=context.feature_service_version
+        )
+
+    # Step 4: check version/freshness. Version mismatch is fail-closed, full stop (guide s9.4).
+    version_check = check_versions(context=context, features=features)
+    if not version_check.matches:
+        raise VersionMismatchError(version_check)
+    if features.status == FeatureStatus.STALE:
+        if context.policy.on_stale_features == "fail_closed":
+            raise StaleFeaturesError(entity_id=entity_id, staleness_steps=features.staleness_steps)
+        if context.policy.log_stale_warning:
+            logger.warning(
+                "serving stale features for entity_id=%s staleness_steps=%s "
+                "(policy=fail_open, feature_service_version=%s)",
+                entity_id,
+                features.staleness_steps,
+                features.feature_service_version,
+            )
+
+    # Step 5: build the ordered model vector.
+    vector = build_model_vector(
+        request_features=request_features,
+        history_features=features.values,
+        ordered_feature_names=context.ordered_feature_names,
+    )
+
+    # Step 6: score.
+    inference_started = time.perf_counter()
+    import pandas as pd  # optional `training`/`tracking` dependency; imported lazily on purpose
+
+    frame = pd.DataFrame([vector], columns=list(context.ordered_feature_names))
+    fraud_probability = float(context.model.predict_proba(frame)[0, 1])
+    inference_ms = (time.perf_counter() - inference_started) * 1000.0
+    prediction = 1 if fraud_probability >= context.decision_threshold else 0
+
+    total_ms = (time.perf_counter() - request_started) * 1000.0
+
+    # Step 7: emit structured log/metrics. Kept to a single log line here; request-rate/latency
+    # counters are the FastAPI process's job (app.py's `/metrics`), not this pure function's.
+    logger.info(
+        "scored transaction_id=%s entity_id=%s prediction=%d fraud_probability=%.6f "
+        "feature_status=%s total_ms=%.2f",
+        request.transaction_id,
+        entity_id,
+        prediction,
+        fraud_probability,
+        features.status.value,
+        total_ms,
+    )
+
+    return ScoreResponse(
+        prediction=prediction,
+        fraud_probability=fraud_probability,
+        decision_threshold=context.decision_threshold,
+        entity_id=entity_id,
+        model_version=context.model_version,
+        feature_service_version=features.feature_service_version,
+        feature_timestamp=features.feature_timestamp,
+        materialization_watermark=features.materialization_watermark,
+        feature_status=features.status.value,
+        request_id=str(uuid.uuid4()),
+        latency_ms=LatencyBreakdown(
+            total=total_ms,
+            feature_retrieval=retrieval_ms,
+            model_inference=inference_ms,
+            validation=validation_ms,
+        ),
+        deployment_id=context.deployment_id,
+        feature_definition_version=features.feature_definition_version,
+        feature_contract_checksum=features.feature_contract_checksum,
+        feature_step=features.feature_step,
+        materialization_watermark_step=features.materialization_watermark_step,
+        staleness_steps=features.staleness_steps,
+        feature_provider=features.provider_name,
+    )
 
 
 def commit_post_event_state(
@@ -159,4 +335,9 @@ def commit_post_event_state(
     :attr:`~pit_fintech.replay.driver.ReplayStepResult.read_before_update`.
     """
 
-    raise NotImplementedError("T7 round-0 skeleton")
+    # Out of scope for this pass: writing post-event state is T5/T6's job
+    # (materialization/materializer.py, not yet implemented) and this repo's serving-only slice
+    # only needs to *read* the online store. Left as NotImplementedError rather than a stub that
+    # silently does nothing, per the same "no green for work that doesn't exist" rule tests/e2e
+    # follows.
+    raise NotImplementedError("T7 round-0 skeleton: post-event commit is T5/T6 scope, not T7")

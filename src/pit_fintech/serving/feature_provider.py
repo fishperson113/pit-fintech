@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
-from pit_fintech.materialization.records import FeatureStatus
+from pit_fintech.materialization.records import FeatureStatus, OnlineReadResult
 
 if TYPE_CHECKING:  # pragma: no cover - annotations only
     from pathlib import Path
@@ -150,21 +150,106 @@ class RedisFeatureProvider(FeatureProvider):
     name = "redis"
 
     def __init__(self, *, store: OnlineStoreConfig, expected_feature_service_version: str) -> None:
-        raise NotImplementedError("T7 round-0 skeleton")
+        self._store = store
+        self._expected_feature_service_version = expected_feature_service_version
 
     def get_online_features(self, *, entity_id: str, request_step: int) -> FeatureVectorResponse:
-        raise NotImplementedError("T7 round-0 skeleton")
+        from pit_fintech.materialization.materializer import read_online_features
+
+        result = read_online_features(
+            store=self._store, entity_id=entity_id, request_step=request_step
+        )
+        return self._to_response(result)
 
     def get_online_features_batch(
         self, *, entity_ids: tuple[str, ...], request_step: int
     ) -> tuple[FeatureVectorResponse, ...]:
-        raise NotImplementedError("T7 round-0 skeleton")
+        return tuple(
+            self.get_online_features(entity_id=entity_id, request_step=request_step)
+            for entity_id in entity_ids
+        )
 
     def health(self) -> ProviderHealth:
-        raise NotImplementedError("T7 round-0 skeleton")
+        from pit_fintech.materialization.materializer import read_watermark
+
+        try:
+            watermark = read_watermark(store=self._store)
+        except Exception as exc:
+            return ProviderHealth(
+                provider_name=self.name,
+                reachable=False,
+                feature_service_version=self._expected_feature_service_version,
+                feature_service_version_matches=False,
+                watermark_step=None,
+                entities_known=None,
+                detail=f"read_watermark failed: {exc}",
+            )
+        return ProviderHealth(
+            provider_name=self.name,
+            reachable=True,
+            feature_service_version=self._store.feature_service_version,
+            feature_service_version_matches=(
+                self._store.feature_service_version == self._expected_feature_service_version
+            ),
+            watermark_step=watermark[0] if watermark is not None else None,
+            entities_known=None,
+            detail="ok" if watermark is not None else "reachable, but no watermark set yet",
+        )
 
     def close(self) -> None:
-        raise NotImplementedError("T7 round-0 skeleton")
+        """No-op: this adapter holds no connection of its own.
+
+        Every call defers to ``materialization.materializer``, which owns the store handle --
+        keeping the one-place-knows-the-layout rule from the module docstring.
+        """
+
+    def _to_response(self, result: OnlineReadResult) -> FeatureVectorResponse:
+        from pit_fintech.features.paysim_specs import (
+            PAYSIM_FEATURE_DEFINITION_VERSION,
+            paysim_feature_contract_checksum,
+        )
+
+        record = result.record
+        if record is not None:
+            entity = record.entity
+            feature_service_version = record.feature_service_version
+            feature_definition_version = record.feature_definition_version
+            feature_contract_checksum = record.feature_contract_checksum
+            feature_step: int | None = record.feature_step
+            feature_timestamp = record.feature_timestamp
+            materialization_watermark_step: int | None = record.materialization_watermark_step
+            materialization_watermark = record.materialization_watermark
+        else:
+            # MISSING: nothing was ever written for this entity, so there is no *observed*
+            # version/timestamp to report. Report the frozen application contract's own identity
+            # instead of leaving these required fields empty -- honest framing of "this is what
+            # was looked up under, and nothing was there" rather than inventing an observed value.
+            entity = self._store.entity
+            feature_service_version = self._store.feature_service_version
+            feature_definition_version = PAYSIM_FEATURE_DEFINITION_VERSION
+            feature_contract_checksum = paysim_feature_contract_checksum()
+            feature_step = None
+            feature_timestamp = None
+            materialization_watermark_step = None
+            materialization_watermark = None
+
+        return FeatureVectorResponse(
+            entity_id=result.entity_id,
+            entity=entity,
+            values=result.feature_values,
+            status=result.status,
+            is_cold_start=result.status == FeatureStatus.MISSING,
+            feature_service_version=feature_service_version,
+            feature_definition_version=feature_definition_version,
+            feature_contract_checksum=feature_contract_checksum,
+            feature_step=feature_step,
+            feature_timestamp=feature_timestamp,
+            materialization_watermark_step=materialization_watermark_step,
+            materialization_watermark=materialization_watermark,
+            staleness_steps=result.staleness_steps,
+            provider_name=self.name,
+            retrieval_latency_ms=result.read_latency_ms,
+        )
 
 
 class SqliteFeatureProvider(FeatureProvider):
@@ -273,6 +358,28 @@ def build_feature_provider(
     ``expected_feature_service_version`` is required for every adapter, not optional: guide s9.4
     makes a version mismatch fail-closed, and a provider that does not know what it expects cannot
     detect one.
+
+    Only ``kind="redis"`` is wired up in this pass -- T5 materialization only ever writes Redis
+    (and its SQLite unit-test twin, which is not implemented here either). The other three kinds
+    raise a clear, typed error rather than silently falling back to Redis.
     """
 
-    raise NotImplementedError("T7 round-0 skeleton")
+    if kind == "redis":
+        if store is None:
+            raise ValueError("build_feature_provider(kind='redis') requires `store`")
+        return RedisFeatureProvider(
+            store=store, expected_feature_service_version=expected_feature_service_version
+        )
+    if kind == "sqlite":
+        raise NotImplementedError(
+            "SqliteFeatureProvider is not implemented in this pass; only kind='redis' is wired up"
+        )
+    if kind == "feast":
+        raise NotImplementedError(
+            "FeastFeatureProvider is not implemented in this pass; only kind='redis' is wired up"
+        )
+    if kind == "upstash":
+        raise NotImplementedError(
+            "UpstashFeatureProvider is Sprint 3 scope; only kind='redis' is wired up in this pass"
+        )
+    raise ValueError(f"unknown feature provider kind: {kind!r}")

@@ -11,6 +11,7 @@ MODEL_FIXED_FPR ?= 0.01
 TRAIN_NONFRAUD_PER_TYPE ?= 100000
 T4_EXPERIMENT ?= E4
 T4_FEATURE_SET ?= pit
+WATERMARK ?= 743
 
 help: ## Show implemented targets and their purpose
 	@awk 'BEGIN {FS = ":.*?## "}; /^[a-zA-Z0-9_.-]+:.*?## / {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -119,6 +120,55 @@ changelog-check: ## Verify staged implementation changes include milestone audit
 lock: ## Resolve and refresh the exact uv dependency lock
 	uv lock
 
+materialize: ## Materialize Gold post-event state into the online store up to WATERMARK
+	uv run pit materialize run --watermark $(WATERMARK)
+
+serve: ## Start the FastAPI scoring service against the local Redis online store
+	uv run pit serving up
+
+mlflow-ui: ## Run the MLflow server on the Windows HOST (Artifacts tab works); stops the container first
+	@echo "Stopping the container MLflow to free port 5000..."
+	docker compose stop mlflow
+	uv run mlflow server --backend-store-uri sqlite:///artifacts/mlflow/tracking.db --host 127.0.0.1 --port 5000
+
+demo: ## Run the end-to-end demo: Redis -> Gold -> materialize -> serve -> score
+	uv run python scripts/run_demo_e2e.py
+
+# --- demo-* quick commands (short, easy to remember for a live demo) ---
+
+demo-score: ## Score one normal and one suspicious transaction against a running API
+	uv run python scripts/demo_score.py
+
+demo-bad: ## Prove invalid requests are rejected before scoring (metrics before/after)
+	uv run python scripts/demo_bad_request.py
+
+demo-metrics: ## Show the in-process /metrics counters
+	uv run python scripts/demo_metrics.py
+
+demo-medallion: ## Show grain (version/rows/cols) of the five medallion tables from Delta
+	uv run python scripts/demo_medallion.py
+
+demo-contract: ## Show the frozen PaySim FeatureSpec v2
+	uv run pit features show --dataset paysim
+
+demo-history: ## Show Delta version history for Bronze/Silver
+	uv run pit data lakehouse-history --dataset paysim
+
+demo-watermark: ## Show the online store materialization watermark
+	uv run pit materialize show
+
+demo-lineage: ## Show MLflow run lineage (required tags/metrics/artifacts) from the local sqlite
+	uv run python scripts/demo_lineage.py
+
+demo-ablation: ## Show the E1-E4 ablation table from the spike experiment (same cohort)
+	uv run python scripts/demo_ablation.py
+
+redis-up: ## Start the local Redis container
+	docker compose up -d redis
+
+redis-down: ## Stop the local Redis container
+	docker compose stop redis
+
 up-core: ## Start Redis and MLflow local infrastructure
 	docker compose up -d redis mlflow
 
@@ -131,4 +181,4 @@ logs: ## Follow core service logs
 down: ## Stop services without deleting data volumes
 	docker compose down
 
-.PHONY: help bootstrap doctor lab lab-training lab-container data-sample data-snapshot profile build-lakehouse lakehouse-history build-fixture features gold promote-gold test-temporal test-unit test-lakehouse test-integration-full test-t3-smoke test-t4-dataset train-gold-candidate test-notebooks model-spike train test lint format check changelog-check lock up-core status logs down
+.PHONY: help bootstrap doctor lab lab-training lab-container data-sample data-snapshot profile build-lakehouse lakehouse-history build-fixture features gold promote-gold test-temporal test-unit test-lakehouse test-integration-full test-t3-smoke test-t4-dataset train-gold-candidate test-notebooks model-spike train test lint format check changelog-check lock materialize serve mlflow-ui demo demo-score demo-bad demo-metrics demo-medallion demo-contract demo-history demo-watermark demo-lineage demo-ablation redis-up redis-down up-core status logs down

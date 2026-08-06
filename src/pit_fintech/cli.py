@@ -37,18 +37,31 @@ from pit_fintech.features.build_offline import (
     build_offline_features,
     promote_staged_gold,
 )
+from pit_fintech.materialization.materializer import (
+    OnlineStoreConfig,
+    materialize_to_watermark,
+    read_online_features,
+    read_watermark,
+)
+from pit_fintech.materialization.records import OnlineStoreKind
 from pit_fintech.platform.doctor import collect_checks
 from pit_fintech.platform.notebooks import verify_notebooks
+from pit_fintech.serving import app as serving_runtime
+from pit_fintech.serving.scoring import FailurePolicy
 
 app = typer.Typer(no_args_is_help=True, help="PIT Fintech local control plane")
 data_app = typer.Typer(no_args_is_help=True, help="Dataset and fixture commands")
 notebooks_app = typer.Typer(no_args_is_help=True, help="Notebook quality commands")
 model_app = typer.Typer(no_args_is_help=True, help="Exploratory and gated model commands")
 features_app = typer.Typer(no_args_is_help=True, help="Versioned feature contract commands")
+materialize_app = typer.Typer(no_args_is_help=True, help="Online store materialization commands")
+serving_app = typer.Typer(no_args_is_help=True, help="Scoring API commands")
 app.add_typer(data_app, name="data")
 app.add_typer(notebooks_app, name="notebooks")
 app.add_typer(model_app, name="model")
 app.add_typer(features_app, name="features")
+app.add_typer(materialize_app, name="materialize")
+app.add_typer(serving_app, name="serving")
 console = Console()
 
 
@@ -758,6 +771,165 @@ def notebooks_verify(
     for path in paths:
         console.print(f"[green]PASS[/] {path.name}")
     console.print(f"verified {len(paths)} notebooks")
+
+
+@materialize_app.command("run")
+def materialize_run(
+    watermark: Annotated[
+        int,
+        typer.Option("--watermark", min=1, help="Gold post-event step to materialize up to"),
+    ],
+    store: Annotated[str, typer.Option("--store", help="Online store kind")] = "redis",
+    uri: Annotated[
+        str,
+        typer.Option("--uri", help="Online store connection URI"),
+    ] = "redis://127.0.0.1:6379/0",
+    run_id: Annotated[
+        str | None, typer.Option("--run-id", help="Materialization run identifier")
+    ] = None,
+) -> None:
+    """Materialize Gold post-event state into the online store up to a watermark."""
+
+    if store != "redis":
+        console.print(f"[red]Unknown store: {store}. Use redis.[/]")
+        raise typer.Exit(code=2)
+
+    from pit_fintech.features.paysim_specs import PAYSIM_ENTITY, PAYSIM_FEATURE_SERVICE_VERSION
+
+    project_root, data_root, artifact_root = _gold_roots()
+    resolved_run_id = run_id or (
+        f"materialize-{watermark}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%f%z')}"
+    )
+    store_config = OnlineStoreConfig(
+        kind=OnlineStoreKind.REDIS,
+        uri=uri,
+        feature_service_version=PAYSIM_FEATURE_SERVICE_VERSION,
+        entity=PAYSIM_ENTITY,
+    )
+    result = materialize_to_watermark(
+        project_root=project_root,
+        data_root=data_root,
+        artifact_root=artifact_root,
+        store=store_config,
+        watermark_step=watermark,
+        run_id=resolved_run_id,
+    )
+    table = Table(title="Materialization run")
+    table.add_column("Field")
+    table.add_column("Value")
+    table.add_row("run_id", result.run_id)
+    table.add_row("status", result.status)
+    table.add_row("watermark_step", str(result.watermark_step))
+    table.add_row("gold_post_event_version", str(result.gold_post_event_version))
+    table.add_row("records_written", str(result.records_written))
+    table.add_row("records_noop", str(result.records_noop))
+    table.add_row("records_rejected", str(result.records_rejected))
+    table.add_row("wall_seconds", f"{result.wall_seconds:.2f}")
+    table.add_row("manifest", result.manifest_path)
+    console.print(table)
+    if result.status != "completed":
+        raise typer.Exit(code=1)
+
+
+@materialize_app.command("show")
+def materialize_show(
+    entity_id: Annotated[
+        str | None, typer.Option("--entity-id", help="Entity to read back from the online store")
+    ] = None,
+    request_step: Annotated[
+        int | None,
+        typer.Option("--request-step", help="Step to evaluate freshness against"),
+    ] = None,
+    uri: Annotated[
+        str,
+        typer.Option("--uri", help="Online store connection URI"),
+    ] = "redis://127.0.0.1:6379/0",
+) -> None:
+    """Read one entity's online feature state, or the current watermark."""
+
+    from pit_fintech.features.paysim_specs import PAYSIM_ENTITY, PAYSIM_FEATURE_SERVICE_VERSION
+
+    store_config = OnlineStoreConfig(
+        kind=OnlineStoreKind.REDIS,
+        uri=uri,
+        feature_service_version=PAYSIM_FEATURE_SERVICE_VERSION,
+        entity=PAYSIM_ENTITY,
+    )
+
+    if entity_id is None:
+        watermark = read_watermark(store=store_config)
+        if watermark is None:
+            console.print("[yellow]No watermark set. Run materialize run first.[/]")
+            raise typer.Exit(code=1)
+        step, timestamp = watermark
+        console.print(f"watermark_step: [cyan]{step}[/]")
+        console.print(f"watermark_timestamp: {timestamp}")
+        return
+
+    if request_step is None:
+        console.print("[red]--request-step is required together with --entity-id.[/]")
+        raise typer.Exit(code=2)
+
+    result = read_online_features(
+        store=store_config, entity_id=entity_id, request_step=request_step
+    )
+    table = Table(title=f"Online features: {entity_id}")
+    table.add_column("Field")
+    table.add_column("Value")
+    table.add_row("status", result.status)
+    table.add_row("staleness_steps", str(result.staleness_steps))
+    table.add_row("read_latency_ms", f"{result.read_latency_ms:.3f}")
+    for key, value in result.feature_values.items():
+        table.add_row(key, str(value))
+    console.print(table)
+
+
+@serving_app.command("up")
+def serving_up(
+    host: Annotated[
+        str, typer.Option("--host", help="Bind host for the scoring API")
+    ] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", help="Bind port for the scoring API")] = 8000,
+    mlflow_run_id: Annotated[
+        str | None,
+        typer.Option("--mlflow-run-id", help="Optional MLflow run identity to pin at startup"),
+    ] = None,
+    mlflow_tracking_uri: Annotated[
+        str | None,
+        typer.Option(
+            "--mlflow-tracking-uri",
+            help="MLflow tracking URI to resolve the model through; defaults to the local "
+            "SQLite backend (artifacts/mlflow/tracking.db)",
+        ),
+    ] = None,
+) -> None:
+    """Start the FastAPI scoring service against the local Redis online store."""
+
+    from pit_fintech.features.paysim_specs import PAYSIM_FEATURE_SERVICE_VERSION
+    from pit_fintech.models.paysim_lightgbm import default_tracking_uri
+
+    _, _, artifact_root = _gold_roots()
+    settings_kwargs: dict[str, object] = {
+        "host": host,
+        "port": port,
+        "provider_kind": "redis",
+        "online_store_uri": "redis://127.0.0.1:6379/0",
+        "feast_repo_path": None,
+        "mlflow_tracking_uri": (
+            mlflow_tracking_uri
+            if mlflow_tracking_uri is not None
+            else default_tracking_uri(artifact_root)
+        ),
+        "registered_model_name": "paysim-fraud-lightgbm",
+        "feature_service_version": PAYSIM_FEATURE_SERVICE_VERSION,
+        "policy": FailurePolicy(),
+        "log_json": True,
+    }
+    settings_fields = serving_runtime.ServingSettings.__dataclass_fields__
+    if mlflow_run_id is not None and "mlflow_run_id" in settings_fields:
+        settings_kwargs["mlflow_run_id"] = mlflow_run_id
+    settings = serving_runtime.ServingSettings(**settings_kwargs)
+    serving_runtime.run(settings=settings)
 
 
 if __name__ == "__main__":

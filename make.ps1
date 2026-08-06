@@ -23,7 +23,8 @@ param(
     [string]$T4FeatureSet = "pit",
     [int]$Start = 1,
     [int]$End = 1,
-    [string]$RunId = ""
+    [string]$RunId = "",
+    [int]$Watermark = 743
 )
 
 $ErrorActionPreference = "Stop"
@@ -185,6 +186,35 @@ switch ($Target) {
         Invoke-Checked "uv" @("run", "python", "scripts/verify_milestone_changelog.py")
     }
     "lock" { Invoke-Checked "uv" @("lock") }
+    "materialize" {
+        Invoke-Checked "uv" @("run", "pit", "materialize", "run", "--watermark", "$Watermark")
+    }
+    "serve" { Invoke-Checked "uv" @("run", "pit", "serving", "up") }
+    "mlflow-ui" {
+        Write-Host "Stopping the container MLflow to free port 5000..."
+        Invoke-Checked "docker" @("compose", "stop", "mlflow")
+        Invoke-Checked "uv" @(
+            "run", "mlflow", "server",
+            "--backend-store-uri", "sqlite:///artifacts/mlflow/tracking.db",
+            "--host", "127.0.0.1", "--port", "5000"
+        )
+    }
+    "demo" { Invoke-Checked "uv" @("run", "python", "scripts/run_demo_e2e.py") }
+    "demo-score" { Invoke-Checked "uv" @("run", "python", "scripts/demo_score.py") }
+    "demo-bad" { Invoke-Checked "uv" @("run", "python", "scripts/demo_bad_request.py") }
+    "demo-metrics" { Invoke-Checked "uv" @("run", "python", "scripts/demo_metrics.py") }
+    "demo-medallion" { Invoke-Checked "uv" @("run", "python", "scripts/demo_medallion.py") }
+    "demo-contract" {
+        Invoke-Checked "uv" @("run", "pit", "features", "show", "--dataset", "paysim")
+    }
+    "demo-history" {
+        Invoke-Checked "uv" @("run", "pit", "data", "lakehouse-history", "--dataset", "paysim")
+    }
+    "demo-watermark" { Invoke-Checked "uv" @("run", "pit", "materialize", "show") }
+    "demo-lineage" { Invoke-Checked "uv" @("run", "python", "scripts/demo_lineage.py") }
+    "demo-ablation" { Invoke-Checked "uv" @("run", "python", "scripts/demo_ablation.py") }
+    "redis-up" { Invoke-Checked "docker" @("compose", "up", "-d", "redis") }
+    "redis-down" { Invoke-Checked "docker" @("compose", "stop", "redis") }
     "up-core" { Invoke-Checked "docker" @("compose", "up", "-d", "redis", "mlflow") }
     "status" { Invoke-Checked "docker" @("compose", "ps") }
     "logs" { Invoke-Checked "docker" @("compose", "logs", "--tail=200", "-f", "redis", "mlflow") }
@@ -222,6 +252,21 @@ switch ($Target) {
             @("check", "run lint plus tests"),
             @("changelog-check", "require milestone logs for staged implementation changes"),
             @("lock", "refresh uv.lock"),
+            @("materialize", "materialize Gold post-event state into the online store up to -Watermark"),
+            @("serve", "start the FastAPI scoring service against the local Redis online store"),
+            @("mlflow-ui", "run the MLflow server on the Windows HOST (Artifacts tab works); stops the container first"),
+            @("demo", "run the end-to-end demo: Redis -> Gold -> materialize -> serve -> score"),
+            @("demo-score", "score one normal and one suspicious transaction against a running API"),
+            @("demo-bad", "prove invalid requests are rejected before scoring (metrics before/after)"),
+            @("demo-metrics", "show the in-process /metrics counters"),
+            @("demo-medallion", "show grain (version/rows/cols) of the five medallion tables from Delta"),
+            @("demo-contract", "show the frozen PaySim FeatureSpec v2"),
+            @("demo-history", "show Delta version history for Bronze/Silver"),
+            @("demo-watermark", "show the online store materialization watermark"),
+            @("demo-lineage", "show MLflow run lineage (required tags/metrics/artifacts) from the local sqlite"),
+            @("demo-ablation", "show the E1-E4 ablation table from the spike experiment (same cohort)"),
+            @("redis-up", "start the local Redis container"),
+            @("redis-down", "stop the local Redis container"),
             @("up-core", "start Redis and MLflow"),
             @("status", "show local service state"),
             @("logs", "follow local service logs"),
