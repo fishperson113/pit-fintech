@@ -14,7 +14,7 @@ fields are mapped onto the twelve contract names through
 vocabularies meet, and the rename exists to make "training on post-event state" a ``KeyError``
 rather than a leak.
 
-Round-0 status: dataclasses and frozen constants only; the key builder raises.
+Round-1 status (T5): the key builders are implemented; dataclasses and constants unchanged.
 """
 
 from __future__ import annotations
@@ -112,7 +112,26 @@ def online_record_key(
     builder and it validates that no component carries the ``:`` separator.
     """
 
-    raise NotImplementedError("T5 round-0 skeleton")
+    for component in (feature_service_version, entity, entity_id):
+        if ":" in component:
+            raise ValueError(f"online key component must not contain ':': {component!r}")
+    return ONLINE_KEY_TEMPLATE.format(
+        feature_service_version=feature_service_version,
+        entity=entity,
+        entity_id=entity_id,
+    )
+
+
+def online_watermark_key(*, feature_service_version: str) -> str:
+    """Build the global watermark key for one service version."""
+
+    return ONLINE_WATERMARK_KEY_TEMPLATE.format(feature_service_version=feature_service_version)
+
+
+def online_run_key(*, feature_service_version: str) -> str:
+    """Build the run-metadata key for one service version."""
+
+    return ONLINE_RUN_KEY_TEMPLATE.format(feature_service_version=feature_service_version)
 
 
 # --------------------------------------------------------------------------------------------

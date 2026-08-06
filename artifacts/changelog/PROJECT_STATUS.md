@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-08-05 (M042). Status words are strict:
+Last updated: 2026-08-06 (M043). Status words are strict:
 
 - **planned**: present in the six-week guide, with no claim that code exists;
 - **implemented**: code/artifact exists but the relevant gate may not have run;
@@ -76,8 +76,37 @@ scoring, one-producer ordered in-memory replay, offline/online parity, and sampl
 predicate, DuckDB Gold-path narrowing/materialization, CLI phase progress, indexed shift-relation
 validation, T3 smoke lane, and T4 Gold-to-MLflow candidate path are now implemented but not fully
 verified; full T3 G2/G3 and full-scale T4 training remain open. The full Gold build/promote path was
-verified on a real range; no real T4 training was run in this work. Ray Train/Tune/Serve and external
+verified on a real range; no real T4 training was run in this work. Since then T4 training was
+verified on Gold v6 (M041: two runs, `test_pr_auc 0.362883`), and T5 Redis materialization + T7
+FastAPI scoring + the demo script were implemented and verified on the happy path (M043). Ray Train/Tune/Serve and external
 message brokers are out of the Sprint 2 MVP.
+
+**M043 is implemented, verified on happy path** (no gate claim). It closes the online path for
+the demo: `materialization/records.py` + `materializer.py` implement the Redis backend —
+`online_record_key`/watermark/run key helpers; `materialize_to_watermark` reads
+`gold.post_event_state_updates` (DeltaTable + DuckDB, version pinned at run start), keeps the
+latest row per entity by `(step DESC, source_row_number DESC)`, renames the nine `post_*` fields
+via `POST_EVENT_TO_CONTRACT_FIELD`, writes JSON payloads (amounts as decimal strings) through
+5000-batch Redis pipelines with `evaluate_write` on every candidate, and writes the watermark key
+last; `evaluate_write`/`write_record` (WATCH/MULTI/EXEC)/`read_online_features`
+(fresh/stale/missing with contract defaults)/`read_watermark`/`reset_online_store` (SCAN-scoped)
+are implemented; SQLITE, `rematerialize_after_reset` (G8) and `push_to_feast_online_store`
+(Feast PushSource) remain NotImplementedError. `serving/{schemas,feature_provider,scoring,app}.py`
+serve exactly four routes (`POST /score`, `/health/live`, `/health/ready`, `/metrics`), loading
+the model with `mlflow.sklearn.load_model("runs:/<run_id>/model")` (newest FINISHED run of
+`pit-fintech-gold-training`, `8f9c709782704f1eba89cc9e3fde83c1` in the demo round;
+`model_version` = run id, `deployment_id=None` — no model registry, G11 not met). `cli.py` adds
+`pit materialize run|show` and `pit serving up`; Makefile adds `materialize`/`serve`/`demo`/
+`redis-up`/`redis-down`; `scripts/run_demo_e2e.py` chains Redis -> Gold -> materialize -> serve ->
+score 3 cases -> tear down. Verified locally: ruff clean on `src/` + `scripts/`; unit 87 passed;
+temporal 73 passed; real materialization on Gold v6 (w24: 249,521 records / 32.3 s; w743:
+2,722,362 entities, 2,527,816 written / 194,546 NOOP / 0 rejected / 384.8 s; re-run at 24:
+0 written / 249,521 NOOP; two-run checksum probe identical `a8bf4b6e...`); demo `--skip-
+materialize` 3/3 PASS in 41.95 s (case A C1470998563 step 744 fresh/staleness 1; case B step
+1243 stale/500; case C C0000000000 missing, nine zero history fields). Not done: T6 parity, SQLITE
+backend, G8 recovery lane, Feast PushSource, model registry/G11; `tests/e2e/` still 12 skipped;
+G5/G7/G9 are NOT declared passed (no test lane pins their criteria); the work is uncommitted in
+the working tree at time of writing.
 
 **M042 is implemented, not verified.** It fixes the fast-fixture-ci failure (run 30995527627,
 commit d2ce188): the T4 MLflow contract lane requires the optional `training` dependency group

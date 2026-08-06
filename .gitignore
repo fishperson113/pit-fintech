@@ -44,3 +44,5 @@ mlartifacts/
 
 # Notebook runtime files
 .ipynb_checkpoints/
+
+.claude/

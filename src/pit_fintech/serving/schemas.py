@@ -179,4 +179,10 @@ def derive_entity_id(*, name_dest: str) -> str:
     that failure appears as a G6 ``MISSING_ENTITY`` mismatch far from its cause.
     """
 
-    raise NotImplementedError("T7 round-0 skeleton")
+    from pit_fintech.features.paysim_reference import paysim_destination_kind
+
+    # The classifier's return value is not needed to compute the id (ADR-002 decision 4: the
+    # entity id is `nameDest` itself, unhashed) -- it is called anyway so this is the one and only
+    # place PaySim's C/M prefix rule is evaluated for a scoring request.
+    paysim_destination_kind(name_dest)
+    return name_dest
