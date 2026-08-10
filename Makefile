@@ -12,12 +12,17 @@ TRAIN_NONFRAUD_PER_TYPE ?= 100000
 T4_EXPERIMENT ?= E4
 T4_FEATURE_SET ?= pit
 WATERMARK ?= 743
+LOCUST_HOST ?= http://127.0.0.1:8000
 
 help: ## Show implemented targets and their purpose
 	@awk 'BEGIN {FS = ":.*?## "}; /^[a-zA-Z0-9_.-]+:.*?## / {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 bootstrap: ## Install locked core + development dependencies and hooks
 	uv sync --frozen --group dev
+	uv run pre-commit install
+
+setup: ## Install every dependency group (dev, training, tracking, feast, serving) and hooks in one shot
+	uv sync --frozen --all-groups
 	uv run pre-commit install
 
 doctor: ## Inspect Python, Docker, resources, ports, Delta and credentials
@@ -126,6 +131,16 @@ materialize: ## Materialize Gold post-event state into the online store up to WA
 serve: ## Start the FastAPI scoring service against the local Redis online store
 	uv run pit serving up
 
+serve-otel: ## Start FastAPI scoring with OTel traces/metrics (reads PIT_OTEL_ENDPOINT from .env)
+	uv run pit serving up --otel
+
+tools: ## Install hand-installed dev tools (locust + OpenTelemetry) into the current env
+	uv pip install locust
+	uv pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http opentelemetry-instrumentation-fastapi opentelemetry-instrumentation-logging
+
+locust: ## Run the Locust web UI (http://localhost:8089) + offline/online parity harness against a running service
+	uv run locust -f scripts/locust_parity.py --host $(LOCUST_HOST)
+
 mlflow-ui: ## Run the MLflow server on the Windows HOST (Artifacts tab works); stops the container first
 	@echo "Stopping the container MLflow to free port 5000..."
 	docker compose stop mlflow
@@ -181,4 +196,4 @@ logs: ## Follow core service logs
 down: ## Stop services without deleting data volumes
 	docker compose down
 
-.PHONY: help bootstrap doctor lab lab-training lab-container data-sample data-snapshot profile build-lakehouse lakehouse-history build-fixture features gold promote-gold test-temporal test-unit test-lakehouse test-integration-full test-t3-smoke test-t4-dataset train-gold-candidate test-notebooks model-spike train test lint format check changelog-check lock materialize serve mlflow-ui demo demo-score demo-bad demo-metrics demo-medallion demo-contract demo-history demo-watermark demo-lineage demo-ablation redis-up redis-down up-core status logs down
+.PHONY: help bootstrap setup doctor lab lab-training lab-container data-sample data-snapshot profile build-lakehouse lakehouse-history build-fixture features gold promote-gold test-temporal test-unit test-lakehouse test-integration-full test-t3-smoke test-t4-dataset train-gold-candidate test-notebooks model-spike train test lint format check changelog-check lock materialize serve serve-otel tools locust mlflow-ui demo demo-score demo-bad demo-metrics demo-medallion demo-contract demo-history demo-watermark demo-lineage demo-ablation redis-up redis-down up-core status logs down

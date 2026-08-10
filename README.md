@@ -154,6 +154,10 @@ promotes both tables, and reports the Delta versions and predicate.
 | Command | Outcome |
 |---|---|
 | `bootstrap` | Sync the exact `uv.lock` environment and install pre-commit hooks |
+| `setup` | Sync the full locked environment — every dependency group (`dev`, `training`, `tracking`, `feast`, `serving`) — and install pre-commit hooks |
+| `tools` | Install hand-installed dev tools (locust + the ADR-008 OpenTelemetry packages) into the current env |
+| `serve-otel` | Start the scoring API with OTel traces/metrics, reading `PIT_OTEL_ENDPOINT` from `.env` |
+| `locust` | Run the Locust web UI + offline/online parity harness against a running service (`LOCUST_HOST`) |
 | `doctor` | Read-only host, dependency, Delta, resource, port, Git, and credential checks |
 | `lab` | Start JupyterLab with project code importable from the locked environment |
 | `lab-training` | Start JupyterLab with the development and training dependency groups |

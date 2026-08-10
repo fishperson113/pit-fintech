@@ -330,14 +330,13 @@ def commit_post_event_state(
 ) -> None:
     """Step 8: apply post-event state, only after :func:`score_transaction` has returned.
 
-    Called by the replay driver, never from inside the scoring path. ADR-003 and AGENTS.md s11 both
-    state the ordering as a hard invariant, and T6 asserts it per event via
-    :attr:`~pit_fintech.replay.driver.ReplayStepResult.read_before_update`.
+    Implemented by the online write path (ADR-008): the serving pipeline maintains the entity's
+    windowed feature state itself. ADR-003 and AGENTS.md s11 state the read-before-update ordering
+    as a hard invariant, so this runs only after scoring.
     """
 
-    # Out of scope for this pass: writing post-event state is T5/T6's job
-    # (materialization/materializer.py, not yet implemented) and this repo's serving-only slice
-    # only needs to *read* the online store. Left as NotImplementedError rather than a stub that
-    # silently does nothing, per the same "no green for work that doesn't exist" rule tests/e2e
-    # follows.
-    raise NotImplementedError("T7 round-0 skeleton: post-event commit is T5/T6 scope, not T7")
+    # Implemented in the online write path module (serving/online_state.py, ADR-008). This thin
+    # wrapper is kept for the pipeline's step numbering; app.py calls the maintainer directly.
+    raise NotImplementedError(
+        "ADR-008: use serving.online_state.OnlineWindowState via the /score write path"
+    )

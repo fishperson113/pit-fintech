@@ -51,7 +51,8 @@ Common targets (see `README.md` "Implemented command contract" for the full tabl
 
 | Task | Command |
 |---|---|
-| Install env + hooks | `.\make.ps1 bootstrap` |
+| Install env + hooks (dev only) | `.\make.ps1 bootstrap` |
+| Install full env (all groups) + hooks | `.\make.ps1 setup` |
 | Environment checks | `.\make.ps1 doctor` |
 | Lint + format check | `.\make.ps1 lint` (fix with `format`) |
 | Full test suite | `.\make.ps1 test` |

@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     jupyter_port: int = Field(default=8888, ge=1, le=65535)
     log_level: str = "INFO"
     log_json: bool = False
+    #: Self-hosted OTLP/HTTP collector base URL (env `PIT_OTEL_ENDPOINT`), e.g.
+    #: ``http://<collector-host>:4318``. Fed into `pit serving up --otel` as the default
+    #: `--otel-endpoint`; an explicit CLI flag still overrides it.
+    otel_endpoint: str | None = None
 
 
 @lru_cache(maxsize=1)

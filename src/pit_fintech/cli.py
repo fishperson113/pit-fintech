@@ -902,6 +902,18 @@ def serving_up(
             "SQLite backend (artifacts/mlflow/tracking.db)",
         ),
     ] = None,
+    otel: Annotated[
+        bool,
+        typer.Option("--otel/--no-otel", help="Export OTLP traces/metrics + trace-correlated logs"),
+    ] = False,
+    otel_endpoint: Annotated[
+        str | None,
+        typer.Option(
+            "--otel-endpoint",
+            help="OTLP/HTTP collector base URL (e.g. http://host:4318); "
+            "defaults to PIT_OTEL_ENDPOINT, then OTEL_EXPORTER_OTLP_ENDPOINT",
+        ),
+    ] = get_settings().otel_endpoint,
 ) -> None:
     """Start the FastAPI scoring service against the local Redis online store."""
 
@@ -924,6 +936,8 @@ def serving_up(
         "feature_service_version": PAYSIM_FEATURE_SERVICE_VERSION,
         "policy": FailurePolicy(),
         "log_json": True,
+        "otel_enabled": otel,
+        "otel_endpoint": otel_endpoint,
     }
     settings_fields = serving_runtime.ServingSettings.__dataclass_fields__
     if mlflow_run_id is not None and "mlflow_run_id" in settings_fields:

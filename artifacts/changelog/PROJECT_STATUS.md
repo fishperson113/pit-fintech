@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-08-06 (M043). Status words are strict:
+Last updated: 2026-08-10 (M048). Status words are strict:
 
 - **planned**: present in the six-week guide, with no claim that code exists;
 - **implemented**: code/artifact exists but the relevant gate may not have run;
@@ -41,6 +41,8 @@ Last updated: 2026-08-06 (M043). Status words are strict:
 | M031 Feast `feature_repo/`, definitions checksum, G1 lane | verified (within the scope re-run recorded in `verify.md`) | Closes M030's four T1 gaps: precomputed feature table on disk (`data/fixtures/paysim_feature_table.parquet`, 11 rows/16 cols, SHA-256 `A6E6B9B00FA62966E19397D9C0A7737FCB48D8C9C81A5C7300CCE047B3B997C5`, 132/132 fields match the oracle), real `feature_repo/feature_store.yaml`+`definitions.py` applied against installed Feast 0.65.0, a definitions-based registry checksum in `src/pit_fintech/platform/feast_registry.py` (`d330edefbbc0d3a075b4b5f145a6d169e2aa910d39cfae33c70478289432f443`, stable across 2 applies; registry **blob** digest still moves `98fe137e...`->`fd09313e...`, confirming M030 Finding 2 stays live), and a real `pytest` G1 lane (`tests/integration/test_feast_registry_g1.py`, 4 tests). All three guide §3.4 G1 criteria pass: historical retrieval matches oracle (132/132 fields), `feast apply` idempotent by definitions checksum, `paysim-fraud-scoring-v2` resolves 12 fields in contract order. New Feast 0.65.0 findings: `FeatureView.schema` loses field order (must read `.features` instead), `feast apply` does not read the source file at apply time, `FeatureView.name` must be `.isidentifier()`-safe while `FeatureService.name` is not, `entity.join_keys` does not exist post-construction (`entity.join_key` does). Independently re-run: `ruff check` all checks passed; `pytest -q tests/unit` 50 passed (41->50); `pytest -q -m temporal` 73 passed (unchanged); `pytest -q tests/integration` 11 passed (7->11); G1 lane alone 4 passed. **Known gaps, not closed here:** the same-step pair still never reaches Feast (feature table holds 11 distinct steps, M030 gap 4 unchanged); idempotence measured across 2 applies in 1 process, not across 2 separate `feast apply` CLI processes; `ttl`/`entity_columns` excluded from the checksum payload by design, so a future change to either will not move it; one machine only; no `make`/`make.ps1` target yet for the G1 lane; nothing committed, no commit hash (pending); `train` not re-run |
 | Ten-minute PIT meetup speaker script | verified | `docs/reports/pit-fintech-meetup-10min-script.md`; compressed four-slide talk track targets 9:20 plus buffer, keeps slide 3 as the technical core, and separates six concise mentor Q&A prompts from the spoken script; four slide headings, four closing claims, six Q&A prompts and required status/architecture claims pass the content scan; `git diff --check` passes |
 | Vietnamese PIT terminology catalog | verified | `docs/reports/catalog.md`; required-term scan, reader-aid structure and `git diff --check` pass |
+| M047 one-shot `setup` + OTel collector endpoint env | implemented (agent static analysis only) | `setup` target (`Makefile` + `make.ps1`) runs `uv sync --frozen --all-groups` then `uv run pre-commit install`, installing every dependency group at once; `Settings.otel_endpoint` reads `PIT_OTEL_ENDPOINT` from `.env` and feeds `pit serving up --otel-endpoint` as its default (`serving/telemetry.py` `OTEL_EXPORTER_OTLP_ENDPOINT` fallback unchanged). Owner gates pending: `.\make.ps1 setup`, `.\make.ps1 lint`, `uv run pit serving up --otel` |
+| M048 Locust/OTel make targets + deprecation cleanup | implemented (agent static analysis only) | `tools`/`locust`/`serve-otel` targets in `Makefile`+`make.ps1` (`LOCUST_HOST`/`-LocustHost`); `scripts/spike_feast_t1.py` (M030 throwaway) marked for `git rm`; stale `replay` references in `feature_repo/definitions.py`, `tests/e2e/test_sprint2_e2e.py` (test renamed `test_score_reads_before_it_updates`), `scripts/locust_parity.py` (prefers `PIT_OTEL_ENDPOINT`) and `serving/telemetry.py` updated for ADR-008. Owner gates pending: `.\make.ps1 tools`, `.\make.ps1 lint`, `git rm scripts/spike_feast_t1.py`, then `redis-up`+`serve-otel`+`locust` |
 
 ## Sprint 1
 
@@ -107,6 +109,62 @@ materialize` 3/3 PASS in 41.95 s (case A C1470998563 step 744 fresh/staleness 1;
 backend, G8 recovery lane, Feast PushSource, model registry/G11; `tests/e2e/` still 12 skipped;
 G5/G7/G9 are NOT declared passed (no test lane pins their criteria); the work is uncommitted in
 the working tree at time of writing.
+
+**M046 completes ADR-008: `/score` now reads the serving-owned event-log store, plus an OpenTelemetry
+exporter.** `WindowStateFeatureProvider` reads the per-entity event log and computes the nine window
+features live at `request_step`; `build_scoring_context` uses it, so online read + online write +
+offline oracle share one independent state. Added `serving/telemetry.py` — OTLP/HTTP traces + metrics
+to the user's external collector (`--otel-endpoint`/`OTEL_EXPORTER_OTLP_ENDPOINT`), trace-correlated
+logs, FastAPI instrumentation; instruments cover scores, online writes, parity mismatches and
+score/read/write latency; `/score` opens a `score` span with a child `online_write` span. OTel is
+**not** a project dependency (kept out of pyproject to preserve ADR-004 fingerprints) — installed by
+hand into the serving env like `locust`; absent/disabled ⇒ no-op. `pit serving up` gains
+`--otel`/`--otel-endpoint`. Agent static analysis only (`ruff` clean); the service, OTLP export and
+Grafana dashboards are the owner's to run. Nothing committed.
+
+**M045 (ADR-008) supersedes M044: replay dropped, serving owns the online write path, parity via
+Locust.** Owner review concluded the M044 replay/parity was near-vacuous (online = materialized copy
+of offline, and the replay harness bypassed `serving/app.py`). ADR-007 is superseded by ADR-008
+(accepted). Removed: the whole `src/pit_fintech/replay/` package, its three test files, the
+`pit replay parity` command, and the `test-parity`/`parity` Make/PS targets. Added
+`serving/online_state.py` — an independent windowed feature maintainer (per-entity Redis event log,
+`[step - w, step)` windows re-implemented from the offline oracle, Decimal money, append+evict under
+`WATCH`/`MULTI`/`EXEC`); `/score` now runs this write step after scoring (read-before-write kept).
+Parity/load is a manual `scripts/locust_parity.py` (not pytest): it bombards `/score` and compares
+the online state the service maintained against the independent offline oracle at window-edge,
+same-step and late-arrival cutoffs. Agent static analysis only (`ruff` clean on the four files); the
+scoring **read** path still uses the materialized provider — switching it to the event-log store is
+the immediate follow-up. Nothing committed. The M044 paragraph below is retained as history but its
+code no longer exists.
+
+**M044 (T6 replay driver + offline/online parity harness) is implemented; pure logic unit-tested;
+G6 not claimed.** `replay/driver.py` and `replay/parity.py` move from round-0 skeleton to working
+code. `ReplayDriver` is the single logical producer (rejects a queue not sorted by
+`(step, source_row_number)`, runs read->score->commit->append per event with no overlap, records
+`read_before_update`, `out_of_order_events=0`, `concurrent_emissions=0`). The parity primitives
+`canonicalize_vector` and `classify_mismatch` are pure (integers exact, float tolerance 1e-6 only,
+structural causes named before a numeric diff) and unit-tested; `plan_checkpoints`,
+`compare_at_checkpoint`, `run_parity_harness` and `write_parity_report` read Gold + the online store
+and are the user-run G6 path. `SAME_SECOND_TIE` requires the T2 probe flag and `SYNTHETIC_LATE_
+ARRIVAL` is always reported as a gap, so a partial checkpoint cover cannot masquerade as a pass.
+**Open, surfaced not hidden:** parity is exact only in the one-step-shift arrangement
+(`GOLD_SHIFT_RELATION`); a cutoff whose entity's latest prior event is >1 step back reads STALE and a
+same-step tie reads the tied prior event offline excludes — both are emitted as classified
+mismatches keeping `passed=False`, since how serving should treat a stale/tied cutoff is the open
+T5/T6 design item. New CLI `pit replay parity`; Make/PS `test-parity` (no Redis) and `parity` (G6,
+needs Redis + Gold). This session was agent static analysis only (`ruff` clean on the four files);
+no repo env run — unit/temporal/parity gates and the real `parity` run on Gold v6 are pending the
+project owner. `tests/e2e/` is still 12 skipped. Nothing committed yet.
+
+**ADR-007 (proposed) reframes what G6 proves.** Because the online store is a materialized copy of
+offline Gold and serving does no computation, the M044 parity harness compares offline against a
+copy of itself: it is an integration test of the materialize + shift-relation plumbing, not the
+train/serve-skew correctness proof G6 is presented as. `docs/adr/007-parity-requires-an-independent-
+online-computation.md` records the finding and offers two directions — (A) keep MVP materialize-only
+scope and reclassify the check honestly, deferring G6-as-correctness; or (B) add an independent
+incremental windowed feature maintainer on the write path so parity genuinely catches drift. Status
+`proposed`; no code or contract changed; the A/B choice is the next decision and it does not block
+committing M044.
 
 **M042 is implemented, not verified.** It fixes the fast-fixture-ci failure (run 30995527627,
 commit d2ce188): the T4 MLflow contract lane requires the optional `training` dependency group

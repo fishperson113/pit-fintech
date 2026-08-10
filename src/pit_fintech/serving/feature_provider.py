@@ -96,11 +96,13 @@ class ProviderHealth:
 class FeatureProvider(ABC):
     """The versioned retrieval boundary every scoring path goes through.
 
-    Implementations must not compute features. Feast is a thin registry/retrieval contract and does
-    not compute aggregates (AGENTS.md s11, guide s3.2.1, measured in M030); Redis holds what T5
-    materialized. A provider that derived a window aggregate at read time would be a second,
-    unverified implementation of the frozen contract sitting on the serving path -- exactly what
-    the independent oracle exists to prevent.
+    **ADR-008 changed the rule here.** The materialize-only design forbade a provider from
+    computing features (the online store was a copy of offline Gold, so any read-time computation
+    would be an unverified second implementation). ADR-008 makes that independent computation the
+    *point*: the serving process now maintains the windowed state itself
+    (:mod:`pit_fintech.serving.online_state`) and offline/online parity against the oracle verifies
+    it. :class:`WindowStateFeatureProvider` therefore computes at read time by design; the older
+    :class:`RedisFeatureProvider` (materialized copy) is retained for the bulk warm-start path.
     """
 
     #: Stable identifier reported in :attr:`FeatureVectorResponse.provider_name` and logged with
@@ -252,6 +254,98 @@ class RedisFeatureProvider(FeatureProvider):
         )
 
 
+class WindowStateFeatureProvider(FeatureProvider):
+    """ADR-008 default: compute the history vector from the serving-owned online event log.
+
+    Reads the per-entity log written by ``serving/online_state.py`` and computes the nine window
+    features live at ``request_step`` -- the independent online implementation that offline/online
+    parity verifies. A live read is never stale (computed at the exact cutoff), so
+    ``staleness_steps`` is ``0`` and there is no materialization watermark; a cold entity (no log
+    key) is ``MISSING`` with contract defaults, exactly as guide s9.4 requires.
+    """
+
+    name = "window_state"
+
+    def __init__(self, *, store: OnlineStoreConfig, expected_feature_service_version: str) -> None:
+        self._store = store
+        self._expected_feature_service_version = expected_feature_service_version
+
+    def get_online_features(self, *, entity_id: str, request_step: int) -> FeatureVectorResponse:
+        import time
+
+        from pit_fintech.features.paysim_specs import (
+            PAYSIM_FEATURE_DEFINITION_VERSION,
+            PAYSIM_FEATURE_SERVICE_VERSION,
+            paysim_feature_contract_checksum,
+            paysim_step_to_timestamp,
+        )
+        from pit_fintech.serving.online_state import read_window_state
+
+        started = time.perf_counter()
+        values, present = read_window_state(
+            store=self._store, entity_id=entity_id, cutoff_step=request_step
+        )
+        latency_ms = (time.perf_counter() - started) * 1000.0
+        status = FeatureStatus.FRESH if present else FeatureStatus.MISSING
+        return FeatureVectorResponse(
+            entity_id=entity_id,
+            entity=self._store.entity,
+            values=values,
+            status=status,
+            is_cold_start=not present,
+            feature_service_version=PAYSIM_FEATURE_SERVICE_VERSION,
+            feature_definition_version=PAYSIM_FEATURE_DEFINITION_VERSION,
+            feature_contract_checksum=paysim_feature_contract_checksum(),
+            # A live computation is current at the cutoff by construction -- no watermark, no
+            # staleness. The feature step is the request step itself.
+            feature_step=request_step,
+            feature_timestamp=paysim_step_to_timestamp(request_step),
+            materialization_watermark_step=None,
+            materialization_watermark=None,
+            staleness_steps=0,
+            provider_name=self.name,
+            retrieval_latency_ms=latency_ms,
+        )
+
+    def get_online_features_batch(
+        self, *, entity_ids: tuple[str, ...], request_step: int
+    ) -> tuple[FeatureVectorResponse, ...]:
+        return tuple(
+            self.get_online_features(entity_id=entity_id, request_step=request_step)
+            for entity_id in entity_ids
+        )
+
+    def health(self) -> ProviderHealth:
+        from pit_fintech.serving.online_state import _redis_client
+
+        try:
+            _redis_client(self._store).ping()
+        except Exception as exc:
+            return ProviderHealth(
+                provider_name=self.name,
+                reachable=False,
+                feature_service_version=self._expected_feature_service_version,
+                feature_service_version_matches=False,
+                watermark_step=None,
+                entities_known=None,
+                detail=f"redis ping failed: {exc}",
+            )
+        return ProviderHealth(
+            provider_name=self.name,
+            reachable=True,
+            feature_service_version=self._store.feature_service_version,
+            feature_service_version_matches=(
+                self._store.feature_service_version == self._expected_feature_service_version
+            ),
+            watermark_step=None,
+            entities_known=None,
+            detail="ok (live window-state provider; no materialization watermark)",
+        )
+
+    def close(self) -> None:
+        """No persistent handle: each call builds a short-lived redis client."""
+
+
 class SqliteFeatureProvider(FeatureProvider):
     """SQLite adapter -- the deterministic mode of guide s7.3.
 
@@ -347,7 +441,7 @@ class UpstashFeatureProvider(FeatureProvider):
 
 def build_feature_provider(
     *,
-    kind: Literal["redis", "sqlite", "feast", "upstash"],
+    kind: Literal["window_state", "redis", "sqlite", "feast", "upstash"],
     store: OnlineStoreConfig | None = None,
     repo_path: Path | None = None,
     feature_service_name: str | None = None,
@@ -364,6 +458,12 @@ def build_feature_provider(
     raise a clear, typed error rather than silently falling back to Redis.
     """
 
+    if kind == "window_state":
+        if store is None:
+            raise ValueError("build_feature_provider(kind='window_state') requires `store`")
+        return WindowStateFeatureProvider(
+            store=store, expected_feature_service_version=expected_feature_service_version
+        )
     if kind == "redis":
         if store is None:
             raise ValueError("build_feature_provider(kind='redis') requires `store`")

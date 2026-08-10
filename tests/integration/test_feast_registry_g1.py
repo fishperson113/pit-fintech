@@ -10,8 +10,9 @@ real `feature_repo/` and the real precomputed feature table, once per module:
    to be unstable across a no-op apply;
 3. `paysim-fraud-scoring-v2` resolves all twelve fields in `PAYSIM_MODEL_FEATURE_ORDER` order.
 
-Until now this evidence only existed in throwaway scripts (M030's `scripts/spike_feast_t1.py`, and
-a scratch probe). A gate that is re-measured by hand is not a gate, so it lives here.
+Until now this evidence only existed in throwaway scripts (M030's `scripts/spike_feast_t1.py`,
+superseded by this lane, and a scratch probe). A gate that is re-measured by hand is not a gate, so
+it lives here.
 
 Two runtime requirements are not always satisfiable, and both skip loudly rather than silently:
 Feast is an optional dependency group (`pyproject.toml` keeps it out of the correctness path on

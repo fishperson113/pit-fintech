@@ -31,10 +31,11 @@ output (`features/paysim_recipient.py`, not the Python oracle), one row per cuto
 source_row_number` (`src/pit_fintech/data/paysim_fixture.py: PAYSIM_FEATURE_TABLE_COLUMNS`). This
 module does not build that table and does not assume it exists on disk.
 
-Deliberately narrower than guide §3.2: no `PushSource` is defined here. The guide's `PushSource`
-wraps the `FileSource` for the online-write path fed by the replay/materializer (T5, not yet
-built); the locked T1 scope for this file is the offline/historical retrieval path (G1's first
-criterion), so `FeatureView` reads the `FileSource` directly. Adding the `PushSource` layer is
+Deliberately narrower than guide §3.2: no `PushSource` is defined here. ADR-008 makes the
+serving process own the online write path (`serving/online_state.py` writes the per-entity event
+log straight to Redis; there is no Feast-backed push in the MVP), so a `PushSource` would serve no
+producer; the locked T1 scope for this file is the offline/historical retrieval path (G1's first
+criterion), so `FeatureView` reads the `FileSource` directly. Adding a `PushSource` layer later is
 next-step work, not a correction.
 
 Also deliberately narrower than guide §3.2's last bullet: the three `request_available` fields

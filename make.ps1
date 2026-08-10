@@ -24,7 +24,8 @@ param(
     [int]$Start = 1,
     [int]$End = 1,
     [string]$RunId = "",
-    [int]$Watermark = 743
+    [int]$Watermark = 743,
+    [string]$LocustHost = "http://127.0.0.1:8000"
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,6 +42,10 @@ function Invoke-Checked {
 switch ($Target) {
     "bootstrap" {
         Invoke-Checked "uv" @("sync", "--frozen", "--group", "dev")
+        Invoke-Checked "uv" @("run", "pre-commit", "install")
+    }
+    "setup" {
+        Invoke-Checked "uv" @("sync", "--frozen", "--all-groups")
         Invoke-Checked "uv" @("run", "pre-commit", "install")
     }
     "doctor" { Invoke-Checked "uv" @("run", "pit", "doctor") }
@@ -190,6 +195,22 @@ switch ($Target) {
         Invoke-Checked "uv" @("run", "pit", "materialize", "run", "--watermark", "$Watermark")
     }
     "serve" { Invoke-Checked "uv" @("run", "pit", "serving", "up") }
+    "serve-otel" { Invoke-Checked "uv" @("run", "pit", "serving", "up", "--otel") }
+    "tools" {
+        Invoke-Checked "uv" @("pip", "install", "locust")
+        Invoke-Checked "uv" @(
+            "pip", "install",
+            "opentelemetry-sdk",
+            "opentelemetry-exporter-otlp-proto-http",
+            "opentelemetry-instrumentation-fastapi",
+            "opentelemetry-instrumentation-logging"
+        )
+    }
+    "locust" {
+        Invoke-Checked "uv" @(
+            "run", "locust", "-f", "scripts/locust_parity.py", "--host", $LocustHost
+        )
+    }
     "mlflow-ui" {
         Write-Host "Stopping the container MLflow to free port 5000..."
         Invoke-Checked "docker" @("compose", "stop", "mlflow")
@@ -224,6 +245,7 @@ switch ($Target) {
         Write-Host ""
         @(
             @("bootstrap", "install locked dev environment"),
+            @("setup", "install every dependency group and hooks in one shot"),
             @("doctor", "inspect local prerequisites without printing secrets"),
             @("lab", "start local JupyterLab"),
             @("lab-training", "start JupyterLab with LightGBM and MLflow"),
@@ -254,6 +276,9 @@ switch ($Target) {
             @("lock", "refresh uv.lock"),
             @("materialize", "materialize Gold post-event state into the online store up to -Watermark"),
             @("serve", "start the FastAPI scoring service against the local Redis online store"),
+            @("serve-otel", "start FastAPI scoring with OTel traces/metrics (reads PIT_OTEL_ENDPOINT from .env)"),
+            @("tools", "install hand-installed dev tools (locust + OpenTelemetry) into the current env"),
+            @("locust", "run the Locust web UI + offline/online parity harness against a running service"),
             @("mlflow-ui", "run the MLflow server on the Windows HOST (Artifacts tab works); stops the container first"),
             @("demo", "run the end-to-end demo: Redis -> Gold -> materialize -> serve -> score"),
             @("demo-score", "score one normal and one suspicious transaction against a running API"),

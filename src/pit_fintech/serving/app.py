@@ -84,6 +84,17 @@ class ServingSettings:
     #: :data:`TRAINING_EXPERIMENT_NAME`.
     mlflow_run_id: str | None = None
 
+    # --- OpenTelemetry (ADR-008 observability; optional, off by default) ------------------------
+    #: When true, traces + metrics are exported over OTLP/HTTP to :attr:`otel_endpoint` and logs are
+    #: emitted with trace correlation. The OTel packages are NOT project dependencies (they are not
+    #: in pyproject, to keep the ADR-004 component fingerprints stable); install them into the
+    #: serving env manually. When they are absent, telemetry silently no-ops.
+    otel_enabled: bool = False
+    otel_service_name: str = "pit-fintech-serving"
+    #: OTLP/HTTP collector endpoint (e.g. ``http://<collector-host>:4318``). When ``None``, the
+    #: standard ``OTEL_EXPORTER_OTLP_ENDPOINT`` environment variable is used.
+    otel_endpoint: str | None = None
+
 
 def build_scoring_context(*, settings: ServingSettings) -> ScoringContext:
     """Resolve the champion model, threshold and provider once, at startup.
@@ -144,8 +155,12 @@ def build_scoring_context(*, settings: ServingSettings) -> ScoringContext:
         feature_service_version=settings.feature_service_version,
         entity=PAYSIM_ENTITY,
     )
+    # ADR-008: scoring reads from the serving-owned event-log store (WindowStateFeatureProvider),
+    # the same independent online state the /score write path maintains -- so online read, online
+    # write and the offline oracle all refer to one source. The store backend is still Redis
+    # (validated above); only the provider that reads it changed.
     provider = build_feature_provider(
-        kind=settings.provider_kind,
+        kind="window_state",
         store=store,
         expected_feature_service_version=settings.feature_service_version,
     )
@@ -284,15 +299,43 @@ def create_app(*, settings: ServingSettings) -> FastAPI:
     Imports FastAPI inside the body -- it is the optional ``serving`` group.
     """
 
+    import time
+
     from fastapi import FastAPI
     from fastapi.responses import JSONResponse, PlainTextResponse
+
+    from pit_fintech.features.paysim_specs import PAYSIM_ENTITY
+    from pit_fintech.materialization.materializer import OnlineStoreConfig
+    from pit_fintech.materialization.records import OnlineStoreKind
+    from pit_fintech.serving import online_state
+    from pit_fintech.serving.schemas import derive_entity_id
+    from pit_fintech.serving.telemetry import configure_telemetry
 
     context = build_scoring_context(settings=settings)
     metrics = _MetricsState()
 
+    # ADR-008: the serving process owns the online write path. build_scoring_context has already
+    # rejected any provider_kind other than 'redis', so this store shares that endpoint/namespace.
+    online_store = OnlineStoreConfig(
+        kind=OnlineStoreKind.REDIS,
+        uri=settings.online_store_uri,
+        feature_service_version=settings.feature_service_version,
+        entity=PAYSIM_ENTITY,
+    )
+
+    # ADR-008 observability: OTLP traces/metrics + trace-correlated logs to the user's collector.
+    # A no-op when otel_enabled is false or the OpenTelemetry packages are not installed.
+    telemetry = configure_telemetry(
+        service_name=settings.otel_service_name,
+        endpoint=settings.otel_endpoint,
+        enabled=settings.otel_enabled,
+    )
+
     app = FastAPI(title="pit-fintech scoring", version=context.model_version)
     app.state.scoring_context = context
     app.state.metrics = metrics
+    app.state.telemetry = telemetry
+    telemetry.instrument_fastapi(app)
 
     def _error(*, status_code: int, code: str, message: str, request_id: str) -> JSONResponse:
         error = ErrorResponse(
@@ -308,7 +351,13 @@ def create_app(*, settings: ServingSettings) -> FastAPI:
     def score(payload: ScoreRequest):
         request_id = str(uuid.uuid4())
         try:
-            response = score_transaction(request=payload, context=context)
+            with telemetry.span(
+                "score",
+                transaction_id=payload.transaction_id,
+                entity_id=payload.name_dest,
+                step=payload.step,
+            ):
+                response = score_transaction(request=payload, context=context)
         except VersionMismatchError as exc:
             metrics.record_error()
             logger.warning(
@@ -350,6 +399,36 @@ def create_app(*, settings: ServingSettings) -> FastAPI:
                 message=str(exc),
                 request_id=request_id,
             )
+        # ADR-008 write path (step 8): after scoring, update the entity's online history log. This
+        # runs strictly after score_transaction has read + scored, preserving read-before-write
+        # (AGENTS.md s11). History counts every event to a destination regardless of type, so the
+        # append is unconditional. A write failure is logged but does not fail an already-computed
+        # score; the next read would then be stale, which the freshness fields already surface.
+        try:
+            write_started = time.perf_counter()
+            with telemetry.span("online_write", entity_id=payload.name_dest, step=payload.step):
+                log_length = online_state.apply_event(
+                    store=online_store,
+                    entity_id=derive_entity_id(name_dest=payload.name_dest),
+                    step=payload.step,
+                    amount=payload.amount,
+                    knowledge_step=payload.knowledge_step,
+                )
+            telemetry.record_online_write(
+                latency_ms=(time.perf_counter() - write_started) * 1000.0, log_length=log_length
+            )
+        except Exception as exc:
+            logger.warning(
+                "online write-path apply_event failed for transaction_id=%s: %s",
+                payload.transaction_id,
+                exc,
+            )
+        telemetry.record_score(
+            prediction=response.prediction,
+            feature_status=response.feature_status,
+            latency_ms=response.latency_ms.total,
+        )
+        telemetry.record_online_read(latency_ms=response.latency_ms.feature_retrieval)
         metrics.record_success(response.latency_ms.total)
         return JSONResponse(status_code=200, content=response.model_dump(mode="json"))
 
