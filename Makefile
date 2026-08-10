@@ -128,11 +128,23 @@ lock: ## Resolve and refresh the exact uv dependency lock
 materialize: ## Materialize Gold post-event state into the online store up to WATERMARK
 	uv run pit materialize run --watermark $(WATERMARK)
 
+parity-reconcile: ## Reconcile online aggregates against the offline DuckDB reference (async, ADR-009)
+	uv run pit parity reconcile
+
 serve: ## Start the FastAPI scoring service against the local Redis online store
 	uv run pit serving up
 
 serve-otel: ## Start FastAPI scoring with OTel traces/metrics (reads PIT_OTEL_ENDPOINT from .env)
 	uv run pit serving up --otel
+
+worker: ## Run the pit-online-worker: consume score events and maintain the online store (ADR-010)
+	uv run pit serving worker
+
+worker-up: ## Start the pit-online-worker Docker container
+	docker compose up -d pit-online-worker
+
+worker-down: ## Stop the pit-online-worker container
+	docker compose stop pit-online-worker
 
 tools: ## Install hand-installed dev tools (locust + OpenTelemetry) into the current env
 	uv pip install locust
@@ -196,4 +208,4 @@ logs: ## Follow core service logs
 down: ## Stop services without deleting data volumes
 	docker compose down
 
-.PHONY: help bootstrap setup doctor lab lab-training lab-container data-sample data-snapshot profile build-lakehouse lakehouse-history build-fixture features gold promote-gold test-temporal test-unit test-lakehouse test-integration-full test-t3-smoke test-t4-dataset train-gold-candidate test-notebooks model-spike train test lint format check changelog-check lock materialize serve serve-otel tools locust mlflow-ui demo demo-score demo-bad demo-metrics demo-medallion demo-contract demo-history demo-watermark demo-lineage demo-ablation redis-up redis-down up-core status logs down
+.PHONY: help bootstrap setup doctor lab lab-training lab-container data-sample data-snapshot profile build-lakehouse lakehouse-history build-fixture features gold promote-gold test-temporal test-unit test-lakehouse test-integration-full test-t3-smoke test-t4-dataset train-gold-candidate test-notebooks model-spike train test lint format check changelog-check lock materialize parity-reconcile serve serve-otel worker worker-up worker-down tools locust mlflow-ui demo demo-score demo-bad demo-metrics demo-medallion demo-contract demo-history demo-watermark demo-lineage demo-ablation redis-up redis-down up-core status logs down

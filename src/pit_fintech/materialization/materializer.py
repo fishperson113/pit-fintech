@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Final
 
 import duckdb
+import pyarrow as pa
 from deltalake import DeltaTable
 
 from pit_fintech.contracts.manifests import ApplicationLakehouseManifest
@@ -40,6 +41,7 @@ from pit_fintech.features.build_offline import (
     POST_EVENT_TO_CONTRACT_FIELD,
     gold_table_path,
 )
+from pit_fintech.features.paysim_reference import PAYSIM_WINDOW_STEPS, exact_money
 from pit_fintech.features.paysim_specs import (
     PAYSIM_ENTITY,
     PAYSIM_FEATURE_DEFINITION_VERSION,
@@ -289,6 +291,10 @@ def materialize_to_watermark(
     data_root = data_root.resolve()
     artifact_root = artifact_root.resolve()
 
+    # Lazy import to avoid a module-level circular import
+    # (serving.online_state imports this module).
+    from pit_fintech.serving.online_state import winlog_key
+
     report("resolving gold.post_event_state_updates", force=True)
     table_path, version = _resolve_gold_post_event(
         project_root=project_root,
@@ -319,9 +325,31 @@ def materialize_to_watermark(
             ORDER BY {PAYSIM_ENTITY}
             """
         ).fetch_arrow_table()
+
+        # Warm-start (ADR-010): seed each entity's winlog -- the write-path event log the
+        # pit-online-worker recomputes from -- from GOLD (not Silver; medallion layering), using
+        # the per-event `amount` added to gold.post_event_state_updates. Reads the same source_table
+        # the materialization itself consumed, restricted to the entity's widest window (168h)
+        # around its latest step, so live writes after materialize are applied instead of hitting
+        # `not_warm_started` or a false `noop_identical`.
+        connection.register("latest_per_entity", latest)
+        winlog_rows = connection.execute(
+            f"""
+            SELECT c.{PAYSIM_ENTITY} AS destination_entity_id,
+                   c.source_row_number, c.step, c.knowledge_step, c.amount
+            FROM gold_post_event AS c
+            JOIN latest_per_entity AS l
+                ON l.{PAYSIM_ENTITY} = c.{PAYSIM_ENTITY}
+            WHERE c.step >= l.step - {max(PAYSIM_WINDOW_STEPS) - 1}
+              AND c.step <= l.step
+            ORDER BY c.{PAYSIM_ENTITY}, c.step, c.source_row_number
+            """
+        ).fetch_arrow_table()
     finally:
         connection.close()
     report(f"latest-per-entity rows: {latest.num_rows:,}")
+    winlog_by_entity = _build_winlog_by_entity(winlog_rows)
+    report(f"warm-start winlogs seeded for {len(winlog_by_entity):,} entities")
 
     previous_watermark = read_watermark(store=store)
     if previous_watermark is not None:
@@ -377,6 +405,7 @@ def materialize_to_watermark(
 
         stored_payloads = client.mget(keys)
         to_write: list[tuple[str, str]] = []
+        winlog_writes: list[tuple[str, str]] = []
         for record, key, payload, stored_payload in zip(
             records, keys, payloads, stored_payloads, strict=True
         ):
@@ -388,11 +417,24 @@ def materialize_to_watermark(
                 stored=stored,
                 watermark_step=watermark_step,
             )
+            # Warm-start (ADR-010): also (re)seed the entity's winlog so the write path has history.
+            # Written for both WRITTEN and NOOP_IDENTICAL -- a prior materialize (older code) may
+            # have written the aggregate without a winlog, and this run must fill the gap. Never for
+            # a rejected (older/future) write, which must not clobber a newer entity's state.
+            winlog_payload = winlog_by_entity.get(record.entity_id)
             if decision.outcome is MaterializationWriteOutcome.WRITTEN:
                 written += 1
                 to_write.append((key, payload))
+                if winlog_payload:
+                    winlog_writes.append(
+                        (winlog_key(store=store, entity_id=record.entity_id), winlog_payload)
+                    )
             elif decision.outcome is MaterializationWriteOutcome.NOOP_IDENTICAL:
                 noop += 1
+                if winlog_payload:
+                    winlog_writes.append(
+                        (winlog_key(store=store, entity_id=record.entity_id), winlog_payload)
+                    )
             else:
                 rejected += 1
                 rejected_by_outcome[decision.outcome.value] = (
@@ -401,9 +443,11 @@ def materialize_to_watermark(
                 if decision.outcome is MaterializationWriteOutcome.REJECTED_FUTURE:
                     future_writes += 1
 
-        if to_write:
+        if to_write or winlog_writes:
             pipeline = client.pipeline(transaction=True)
             for key, payload in to_write:
+                pipeline.set(key, payload)
+            for key, payload in winlog_writes:
                 pipeline.set(key, payload)
             pipeline.execute()
         report(f"batch done: {written:,} written / {noop:,} noop / {rejected:,} rejected")
@@ -817,3 +861,28 @@ def post_event_row_to_record(
         materialization_run_id=materialization_run_id,
         written_at=written_at,
     )
+
+
+def _build_winlog_by_entity(rows: pa.Table) -> dict[str, str]:
+    """Group warm-start Silver rows into per-entity winlog payloads (ADR-010).
+
+    Each entity's winlog is the encoded ``LoggedEvent`` list the write path recomputes from --
+    ``[step, knowledge_step, amount]`` within the entity's widest window. Amounts go through
+    ``exact_money`` so the stored decimal string matches the offline ``DECIMAL(18,2)`` sum exactly
+    (no float noise). Imported lazily to avoid a module-level circular import with
+    ``serving/online_state`` (which imports this module).
+    """
+
+    from pit_fintech.serving.online_state import LoggedEvent, _encode_log
+
+    by_entity: dict[str, list[LoggedEvent]] = {}
+    for row in rows.to_pylist():
+        entity = str(row["destination_entity_id"])
+        by_entity.setdefault(entity, []).append(
+            LoggedEvent(
+                step=int(row["step"]),
+                knowledge_step=int(row["knowledge_step"]),
+                amount=exact_money(row["amount"]),
+            )
+        )
+    return {entity: _encode_log(events) for entity, events in by_entity.items()}

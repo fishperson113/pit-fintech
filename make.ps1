@@ -194,8 +194,14 @@ switch ($Target) {
     "materialize" {
         Invoke-Checked "uv" @("run", "pit", "materialize", "run", "--watermark", "$Watermark")
     }
+    "parity-reconcile" {
+        Invoke-Checked "uv" @("run", "pit", "parity", "reconcile")
+    }
     "serve" { Invoke-Checked "uv" @("run", "pit", "serving", "up") }
     "serve-otel" { Invoke-Checked "uv" @("run", "pit", "serving", "up", "--otel") }
+    "worker" { Invoke-Checked "uv" @("run", "pit", "serving", "worker") }
+    "worker-up" { Invoke-Checked "docker" @("compose", "up", "-d", "pit-online-worker") }
+    "worker-down" { Invoke-Checked "docker" @("compose", "stop", "pit-online-worker") }
     "tools" {
         Invoke-Checked "uv" @("pip", "install", "locust")
         Invoke-Checked "uv" @(
@@ -275,8 +281,12 @@ switch ($Target) {
             @("changelog-check", "require milestone logs for staged implementation changes"),
             @("lock", "refresh uv.lock"),
             @("materialize", "materialize Gold post-event state into the online store up to -Watermark"),
+            @("parity-reconcile", "reconcile online aggregates against the offline DuckDB reference (async, ADR-009)"),
             @("serve", "start the FastAPI scoring service against the local Redis online store"),
             @("serve-otel", "start FastAPI scoring with OTel traces/metrics (reads PIT_OTEL_ENDPOINT from .env)"),
+            @("worker", "run the pit-online-worker (consume score events, maintain the online store, ADR-010)"),
+            @("worker-up", "start the pit-online-worker Docker container"),
+            @("worker-down", "stop the pit-online-worker container"),
             @("tools", "install hand-installed dev tools (locust + OpenTelemetry) into the current env"),
             @("locust", "run the Locust web UI + offline/online parity harness against a running service"),
             @("mlflow-ui", "run the MLflow server on the Windows HOST (Artifacts tab works); stops the container first"),

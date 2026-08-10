@@ -218,13 +218,23 @@ def build_model_vector(
     return tuple(float(combined[name]) for name in ordered_feature_names)
 
 
-def score_transaction(*, request: ScoreRequest, context: ScoringContext) -> ScoreResponse:
+def score_transaction(
+    *,
+    request: ScoreRequest,
+    context: ScoringContext,
+    prefetched: FeatureVectorResponse | None = None,
+) -> ScoreResponse:
     """Run guide s9.3 steps 1-7 and return the full G7 response.
 
     Does **not** perform step 8. The post-event update is the caller's, because a batch-serving MVP
     takes it off the request path entirely while replay mode must run it after the prediction
     exists (guide s9.3 step 8). Keeping it out of this function is what stops "update then score"
     from ever being one refactor away.
+
+    ``prefetched`` -- ADR-010: when the caller already has the fresh pre-decision feature vector
+    (from the `pit-online-worker` result), pass it here to skip the provider lookup. This is how
+    `/score` scores on the newest state without ever reading a stale or current-inclusive version.
+    When ``None``, the provider is consulted as before.
     """
 
     request_started = time.perf_counter()
@@ -238,9 +248,15 @@ def score_transaction(*, request: ScoreRequest, context: ScoringContext) -> Scor
     entity_id = derive_entity_id(name_dest=request.name_dest)
     request_features = derive_request_features(request=request)
 
-    # Step 3: retrieve history features from the versioned online store.
+    # Step 3: retrieve history features from the versioned online store. Under ADR-010 the caller
+    # passes the fresh pre-decision vector (from the worker result), so the provider is skipped.
     retrieval_started = time.perf_counter()
-    features = context.provider.get_online_features(entity_id=entity_id, request_step=request.step)
+    if prefetched is not None:
+        features = prefetched
+    else:
+        features = context.provider.get_online_features(
+            entity_id=entity_id, request_step=request.step
+        )
     retrieval_ms = (time.perf_counter() - retrieval_started) * 1000.0
 
     if features.status == FeatureStatus.MISSING and context.policy.on_missing_entity == "reject":

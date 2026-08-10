@@ -25,8 +25,10 @@ Instruments exposed for Grafana dashboards:
 * ``pit_online_writes_total`` (counter)
 * ``pit_score_latency_ms`` (histogram)
 * ``pit_online_read_latency_ms`` / ``pit_online_write_latency_ms`` (histograms)
-* ``pit_parity_mismatches_total`` (counter; incremented by the Locust parity harness when it runs
-  with ``OTEL_EXPORTER_OTLP_ENDPOINT`` set)
+* ``pit_parity_checked_total`` / ``pit_parity_mismatches_total`` (counters; the write-path parity
+  observation per ADR-009 -- ``checked`` counts parity-compared writes, ``mismatches`` the number
+  of the nine history fields that disagreed; the Locust parity harness also increments
+  ``pit_parity_mismatches_total`` when it runs with ``OTEL_EXPORTER_OTLP_ENDPOINT`` set)
 
 Spans (Tempo): one ``score`` span per request plus a child ``online_write`` span, so a trace shows
 the online store being read (inside scoring) before it is written -- the read-before-write invariant
@@ -88,6 +90,22 @@ class Telemetry:
         if not self.enabled:
             return
         self._instruments["parity_mismatches_total"].add(count)
+
+    def record_parity_check(self, *, checked: bool, mismatches: int) -> None:
+        """Record one write-path parity observation (ADR-009).
+
+        ``checked`` counts whether the write was parity-compared at all (only accepted writes are,
+        older/duplicate/not-warm-started writes are not); ``mismatches`` is the number of the nine
+        history fields that disagreed. A Grafana panel can alert on
+        ``rate(pit_parity_mismatches_total[5m])`` rising while ``pit_parity_checked_total`` grows.
+        """
+
+        if not self.enabled:
+            return
+        if checked:
+            self._instruments["parity_checked_total"].add(1)
+        if mismatches:
+            self._instruments["parity_mismatches_total"].add(mismatches)
 
     def instrument_fastapi(self, app: Any) -> None:
         """Attach the FastAPI ASGI instrumentation, if OTel is active and installed."""
@@ -169,6 +187,10 @@ def configure_telemetry(
         "online_writes_total": meter.create_counter(
             "pit_online_writes_total", description="Online write-path applies"
         ),
+        "parity_checked_total": meter.create_counter(
+            "pit_parity_checked_total",
+            description="Write-path parity comparisons performed (ADR-009)",
+        ),
         "parity_mismatches_total": meter.create_counter(
             "pit_parity_mismatches_total", description="Offline/online parity field mismatches"
         ),
@@ -186,10 +208,16 @@ def configure_telemetry(
 
 
 def _instrument_logging() -> None:
-    """Inject the active trace/span id into log records, if the instrumentation is installed."""
+    """Inject the active trace/span id into log records, if the instrumentation is installed.
+
+    ``set_logging_format=False`` (the default) only attaches ``otelTraceID``/``otelSpanID``
+    attributes to each record; it does **not** rewrite the message text. The structured-logging
+    pipeline (`platform.logging_config._add_otel_trace_context`) is what renders ``trace_id`` /
+    ``span_id`` as JSON fields, so the two do not fight over the message format.
+    """
 
     try:
         from opentelemetry.instrumentation.logging import LoggingInstrumentor
     except ImportError:
         return
-    LoggingInstrumentor().instrument(set_logging_format=True)
+    LoggingInstrumentor().instrument(set_logging_format=False)

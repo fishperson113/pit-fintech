@@ -22,6 +22,21 @@ Windows (scoring API)
   containing its child `online_write` span, and `pit_parity_mismatches_total` alerts on parity
   drift.
 
+**This stack is the serving-parity verification vehicle (ADR-009).** Online/offline parity is
+verified **asynchronously** by `pit parity reconcile` (never on the `/score` request path, which
+would block later requests). After traffic, reconcile compares each entity's online aggregate against
+the offline DuckDB engine over the served Event History, and exports `pit_parity_mismatches_total` /
+`pit_parity_checked_total` as OTel metrics to the collector (best-effort). Tempo shows the
+`score` → `online_write` ordering; the Grafana dashboard surfaces the scoring metrics. Because parity
+is a live-system property (request ordering, concurrency, state transitions), it is **observed, not
+unit-tested**.
+
+> Parity counters reach Grafana through the OTel collector. The collector currently routes OTel
+> metrics to `debug` (Prometheus self-host does not accept remote-write by default); to plot them in
+> a Prometheus-backed Grafana panel you would wire the collector's Prometheus remote-write exporter
+> to a host that accepts it. The reconcile report (`pit parity reconcile`) is the authoritative
+> pass/fail.
+
 > Do **not** try to push OTel metrics into a self-hosted Prometheus: Prometheus does not accept
 > remote-write by default. The Collector routes the API's OTLP metrics to `debug` (logged), and
 > Prometheus keeps scraping `/metrics` directly.

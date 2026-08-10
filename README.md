@@ -156,6 +156,9 @@ promotes both tables, and reports the Delta versions and predicate.
 | `bootstrap` | Sync the exact `uv.lock` environment and install pre-commit hooks |
 | `setup` | Sync the full locked environment — every dependency group (`dev`, `training`, `tracking`, `feast`, `serving`) — and install pre-commit hooks |
 | `tools` | Install hand-installed dev tools (locust + the ADR-008 OpenTelemetry packages) into the current env |
+| `parity-reconcile` | Reconcile online aggregates against the offline DuckDB reference over the Event History (async, ADR-009) |
+| `worker` | Run the `pit-online-worker` — consume score events, maintain the online store (ADR-010) |
+| `worker-up` / `worker-down` | Start / stop the `pit-online-worker` Docker container |
 | `serve-otel` | Start the scoring API with OTel traces/metrics, reading `PIT_OTEL_ENDPOINT` from `.env` |
 | `locust` | Run the Locust web UI + offline/online parity harness against a running service (`LOCUST_HOST`) |
 | `doctor` | Read-only host, dependency, Delta, resource, port, Git, and credential checks |
@@ -252,6 +255,22 @@ OTel Collector that forwards them to Tempo; Grafana then shows the read-before-w
 Non-secret sample configs for this hybrid setup (Collector + Tempo + scrape job + dashboard) live
 in [`deploy/vps/`](deploy/vps/README.md) — the VPS is the owner's deployment boundary and is
 configured by hand from those files.
+
+## Structured logging and trace correlation
+
+The serving process (`pit serving up`) emits structured JSON logs via `structlog`
+(`src/pit_fintech/platform/logging_config.py`). Every log line emitted while a `/score` request is
+on the stack carries:
+
+* OTel `trace_id` / `span_id` (when started with `--otel` and a span is active), so a Grafana log
+  line jumps to its Tempo trace and a trace jumps back to its logs;
+* request correlation fields — `request_id`, `transaction_id`, `entity_id`, `step`,
+  `knowledge_step`, `model_version`, `feature_service_version`.
+
+Offline commands keep the default console output; any command can opt into the same pipeline by
+calling `configure_logging()` from `pit_fintech.platform.logging_config` (it honors `PIT_LOG_LEVEL`
+/ `PIT_LOG_JSON`), then bind the same `entity_id`/`step` fields to correlate offline
+feature/training logs with online serving logs for the same entity.
 
 ## Dataset policy
 

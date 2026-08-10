@@ -1,5 +1,237 @@
 # Project changelog
 
+## 2026-08-10 — M057: warm-start the online write path from Gold (seed winlog)
+
+- **Implemented; agent static analysis only.** Closes the `not_warm_started` gap: materialization
+  now seeds each entity's `winlog` (the write-path event log) so live writes after materialize are
+  applied instead of refused, and Event History / parity reconcile actually populate.
+- Owner review corrected an earlier draft that read **Silver** to seed the winlog — that breaks
+  medallion layering. Fix: **Gold serves the need**. `gold.post_event_state_updates` is already one
+  row per source event but lacked the per-event `amount`; option A adds it.
+- `build_offline.py`: `POST_EVENT_STATE_SCHEMA` gains `amount` (double, raw per-event, not one of the
+  nine contract fields); `paysim_post_event_state_sql` SELECTs + GROUP BYs `c.amount`.
+- `materializer.py`: warm-start reads **Gold** (`gold_post_event` joined to latest-per-entity,
+  restricted to each entity's 168h window `c.step >= l.step - 167 AND c.step <= l.step`), not Silver.
+  Batch write seeds `winlog` for WRITTEN/NOOP_IDENTICAL aggregates; `_build_winlog_by_entity` uses
+  `exact_money` for exact decimal-string amounts.
+- No change to the write path or parity reconcile; this makes them reachable.
+- Agent: `py_compile` clean, lines <= 100, no stale `_silver_source`; integration tests data-driven
+  (schema constant vs committed table, so the added column is expected).
+- **Important:** Gold must be **rebuilt/promoted** with the new schema before materialize+warm-start
+  (existing committed Gold lacks `amount`).
+- **Refinement:** `promote-gold` over the old committed Gold failed with `SchemaMismatchError: 18 vs
+  17` (staged has `amount`, committed doesn't). `_write_gold_table` now passes
+  `schema_mode="overwrite"` so the committed Gold schema can evolve on a full-range promote.
+- **Refinement:** `pit parity reconcile` reported a false failure after warm-start + live write
+  (4 fields disagreed for C1470998563@744). The offline DuckDB reference was built from the Event
+  History (only live writes, so under-counted warm-started history) instead of the entity's winlog.
+  Fixed: reconcile now computes the offline reference over the entity's **winlog** (the same event
+  set the online aggregate was built from) at the aggregate's stored step.
+- **Owner-verified (2026-08-10):** promoted Gold v7, `materialize` seeded warm-start winlogs for
+  2,722,362 entities (`0 written / 2,722,362 noop / 0 rejected`); `demo-score` at step 744 returned
+  `feature_provider: pit-online-worker` / `feature_step 743`; `parity-reconcile` **passed yes, 0
+  mismatch** (online aggregate == offline DuckDB over the same winlog).
+- **Refinement:** `apply_score_event` now computes `staleness_steps = step - pre_step` (0 for a
+  current fresh write, `None` only when there is no stored pre-decision step) instead of always
+  `None`.
+- Known gaps: Gold rebuild required once; Event History still not wired into the offline build;
+  `SCAN`-based reset is broken on the owner's custom Redis (use `DEL` of specific keys).
+- Owner gates: `lint`, `test-unit`, then `gold`/`promote-gold` + `materialize` + `worker-up` +
+  `serve` + `demo-score` + `parity-reconcile`.
+- Detail: [M057 log](milestones/M057-gold-warmstart-winlog.md).
+
+## 2026-08-10 — M056: event-based write path via Redis Streams + `pit-online-worker` (ADR-010)
+
+- **Implemented; agent static analysis only.** Owner direction: the write path must be pub/sub
+  (event-based), not a synchronous in-process mutation, and a request must never score on a stale or
+  current-inclusive version.
+- `docs/adr/010-event-based-write-path-redis-streams.md` (accepted): `/score` is a publisher; a
+  dedicated **`pit-online-worker`** consumes the Redis Stream in order (single consumer => per-entity
+  order), applies each event under the optimistic lock, and publishes the **pre-decision** feature
+  vector the request scores on. `/score` waits for the result (bounded timeout => `503`). Parity stays
+  async (`pit parity reconcile`). Amends AGENTS.md §11 (owner-directed exception: Redis Streams as the
+  write-path transport with a single consumer).
+- `serving/events.py` (new): stream key, `publish_score_event` (XADD), `wait_for_score_result` (poll).
+- `serving/online_state.py`: `apply_event_and_verify`/`WritePathResult` removed; new **`apply_score_event`**
+  (worker-side) captures the pre-decision vector under WATCH/MULTI/EXEC, applies guards, recomputes the
+  post-event aggregate, writes log+aggregate+result in one txn, appends Event History.
+- `serving/worker.py` (new): `run_worker` — single ordered consumer (XREADGROUP), applies each event,
+  writes an error result on failure, XACKs.
+- `serving/app.py`: `/score` = publish -> wait -> score on the pre-decision result (`prefetched`),
+  spans `online_publish`/`online_wait`; `apply_event_and_verify` block and serving parity counters
+  removed.
+- `serving/scoring.py`: `score_transaction(..., prefetched=None)`.
+- `cli.py`: `pit serving worker`. `compose.yaml`: distinct service **`pit-online-worker`**.
+  Make/PS `worker`/`worker-up`/`worker-down`; README contract updated. AGENTS.md §11 exception recorded.
+- Agent: `py_compile` clean, lines <= 100, no stale refs. Sandbox has no redis/duckdb => stream/worker
+  verified by analysis; ruff/pytest/live pending owner. **Owner `lint` caught one F401** (unused
+  `get_settings` import in `reconcile_parity`); removed.
+- **Refinement:** `parity-reconcile`'s "no event history" detail printed character-by-character with
+  `[/]` artifacts — `reconcile_parity` returned `details=(f"...")` (a string, iterated per char);
+  fixed to a one-element tuple, and the CLI now `rich.markup.escape`s the detail so Windows backslash
+  paths render correctly. `checked_entities=0` is the expected empty state (no Event History yet).
+- **Known gaps:** worker is a single ordered consumer (scale-out = per-entity sharding later);
+  Event History not yet wired into the offline build (DuckDB -> Gold Delta); `not_warm_started` (M053)
+  stands; parity metrics via OTel.
+- Owner gates: `.\make.ps1 lint`, `.\make.ps1 test-unit`, then `redis-up` + `worker-up` + `serve` +
+  `parity-reconcile`.
+- Detail: [M056 log](milestones/M056-event-based-write-path-worker.md).
+
+## 2026-08-10 — M055: async write path; parity via `pit parity reconcile` (non-blocking)
+
+- **Implemented; agent static analysis only.** Owner review (correct): running the offline DuckDB
+  engine synchronously inside `apply_event_and_verify` puts an expensive SQL computation on the
+  `/score` request path, **blocking every later request** — unacceptable for serving production.
+- `docs/adr/009-parity-at-the-online-write-path.md` amended: the write path is fast and
+  non-blocking; parity is verified **asynchronously** by `pit parity reconcile`, never inside
+  `/score`.
+- `serving/online_state.py`: `WritePathResult` drops `parity_checked`/`parity_mismatches`;
+  `apply_event_and_verify` no longer runs DuckDB — it appends to `winlog`, evicts, recomputes the
+  post-event aggregate in Python, writes log + aggregate under `WATCH`/`MULTI`/`EXEC`, then appends
+  the Event History (best-effort). New `ParityReconcileResult` + `reconcile_parity(...)` — the async
+  check that reads the Event History, runs `_duckdb_reference_over` (the offline DuckDB engine) at
+  each entity's stored step, and counts mismatches. `_duckdb_reference_over`/`offline_post_event_reference`
+  retained for reconcile / Locust.
+- `serving/app.py`: `/score` write path no longer records parity (`metrics.record_parity` and the
+  parity warn blocks removed); `_MetricsState` drops `pit_parity_*`; `/metrics` exposes only scoring
+  counters. `online_write` info log stays.
+- `cli.py`: new `pit parity reconcile` — prints the report + best-effort exports `pit_parity_*` OTel
+  metrics when `PIT_OTEL_ENDPOINT` is set; exits non-zero on failure.
+- `Makefile`/`make.ps1`: `parity-reconcile` target; README command contract updated.
+- `deploy/vps/`: README + dashboard panel updated to "Parity (async reconcile, ADR-009)".
+- Agent: `py_compile` clean, lines <= 100, dashboard JSON parses, no stale parity-field refs.
+- **Known gaps:** Event History not yet wired into the offline build (DuckDB → Gold Delta);
+  `not_warm_started` (M053) still stands; parity counters reach Grafana via OTel (Prometheus-backed
+  panel needs the collector remote-write exporter).
+- Owner gates: `.\make.ps1 lint`, `.\make.ps1 test-unit`, then `redis-up` + `serve` +
+  `parity-reconcile`.
+- Detail: [M055 log](milestones/M055-async-write-path-parity-reconcile.md).
+
+## 2026-08-10 — M054: two-path fan-out — parity via the DuckDB offline engine + Event History
+
+- **Implemented; agent static analysis only.** Owner review corrected M053: the served event must
+  fan out to BOTH paths (online winlog → Redis aggregate AND offline Event History → DuckDB → Gold
+  Delta), and parity is the check that the two independent engines agree — not "compute in Redis and
+  call it done". M053's parity reference (a pure-Python oracle inside serving) is replaced by the
+  actual offline **DuckDB SQL engine**.
+- `docs/adr/009-parity-at-the-online-write-path.md` updated: new "Two-path fan-out" section; parity
+  reference = `paysim_post_event_state_sql` (the same SQL that builds `gold.post_event_state_updates`),
+  not an in-serving oracle; Event History is the offline-visible record a later materialize consumes
+  to land live events into Gold Delta.
+- `serving/online_state.py`: `_oracle_reference_over`/`_events_to_oracle_pool` removed; new
+  `_duckdb_reference_over` runs `paysim_post_event_state_sql` over the event set and maps `post_*` →
+  contract names. New `append_event_history` appends each written event to
+  `<artifact_root>/event_history/served_events.jsonl`. `apply_event_and_verify` gains
+  `transaction_type`, uses the DuckDB reference for parity, and appends to Event History after the
+  Redis commit (best-effort). `offline_post_event_reference` (Locust harness) now uses DuckDB too.
+- `serving/app.py`: `/score` passes `transaction_type`.
+- `tests/unit/test_online_write_path.py`: two new tests — DuckDB reference matches online Python
+  compute; both engines apply the knowledge-time predicate identically.
+- Agent: `py_compile` clean, all lines <= 100, no stale oracle-reference symbols. Sandbox has no
+  `duckdb` (no network), so the SQL semantics were verified by analysis (identical window bounds and
+  knowledge predicate as `compute_window_features` at cutoff `step+1`); ruff/pytest pending owner.
+- **Owner run:** `test-unit` **73 passed** (includes the two new DuckDB-vs-online tests — the offline
+  DuckDB engine agrees with the online Python computation and the knowledge-time predicate). `lint`
+  caught one B905 (`zip()` without `strict=` at `_duckdb_reference_over`); fixed with
+  `zip(..., strict=True)`.
+- **Refinement:** a follow-up `test-unit` run failed both DuckDB tests with
+  `_duckdb.InvalidInputException` — DuckDB replacement scans do not accept a raw `list[dict]` via
+  `connection.register`. Fixed `_duckdb_reference_over` to register a `pyarrow.Table`
+  (`pa.Table.from_pylist`; pyarrow is core, so no new dependency/fingerprint move).
+- **Known gap:** Event History is written but not yet consumed by the offline build; a follow-up
+  wires Event History → DuckDB → Gold Delta so live events land in `gold.post_event_state_updates`.
+  The `not_warm_started` guard (M053) still stands.
+- Owner gates: `.\make.ps1 lint`, `.\make.ps1 test-unit`, then `redis-up` + `materialize` +
+  `serve-otel` + load; check the Grafana parity panel and `artifacts/event_history/served_events.jsonl`.
+- Detail: [M054 log](milestones/M054-two-path-parity-duckdb-reference.md).
+
+## 2026-08-10 — M053: implement ADR-009 — read aggregate, write-path parity, telemetry
+
+- **Implemented; agent static analysis only.** Turns ADR-009 into code.
+- `serving/online_state.py`: replaced read-time recompute (`read_window_state`/`read_window_features`)
+  and append-only `apply_event` with **`apply_event_and_verify`** — under `WATCH`/`MULTI`/`EXEC`
+  (optimistic lock, retry on `WatchError`) it reads the entity's `winlog` + aggregate, applies the
+  deterministic guards (`not_warm_started`, `rejected_older`, `noop_identical`), appends/evicts,
+  recomputes the **post-event** aggregate at `step` (`GOLD_SHIFT_RELATION` shift, cutoff `step+1`),
+  computes the independent oracle reference (`paysim_reference.compute_paysim_feature_row`), and
+  counts mismatches (`count_parity_mismatches`: integer-exact, float `1e-6`), then writes log +
+  aggregate in one transaction. New `WritePathResult`; public `offline_post_event_reference`.
+- `serving/feature_provider.py`: removed `WindowStateFeatureProvider`; `build_feature_provider`
+  accepts only `kind="redis"`; read path is the materialized aggregate (`RedisFeatureProvider`).
+- `serving/app.py`: `build_scoring_context` → `kind="redis"`; `/score` write path calls
+  `apply_event_and_verify`, logs parity mismatches/refusals (structured, with request context),
+  never fails an already-computed score.
+- `serving/telemetry.py`: new `record_parity_check` + `pit_parity_checked_total`;
+  `pit_parity_mismatches_total` increments with field mismatches.
+- `scripts/locust_parity.py`: `check_parity` now compares, per entity, the stored aggregate vs
+  `offline_post_event_reference` at the stored step.
+- `tests/unit/test_online_write_path.py`: pure logic (shift relation, late-arrival predicate,
+  eviction, mismatch rules, contract order).
+- `deploy/vps/grafana-dashboard.json`: new "Write-path parity (ADR-009)" panel
+  (`rate(pit_parity_checked_total[5m])` / `rate(pit_parity_mismatches_total[5m])`).
+- Agent: `py_compile` clean; dashboard JSON parses (5 panels); no stale
+  `read_window_state`/`window_state` refs. ruff/pytest pending owner.
+- **Known gap:** materializer writes the aggregate but not the `winlog`, so live writes to a
+  materialized-but-not-seeded entity are refused (`not_warm_started`) until a warm-start seeds its
+  recent events.
+- Owner gates: `.\make.ps1 lint`, `.\make.ps1 test-unit`, then `redis-up` + `materialize` +
+  `serve-otel` + fire load, and check the Grafana parity panel + Tempo `score`→`online_write`.
+- Detail: [M053 log](milestones/M053-implement-parity-at-write-path.md).
+
+## 2026-08-10 — M052: ADR-009 — parity at the online write path, observed through telemetry
+
+- **Implemented (ADR accepted); agent static analysis only; no serving code changed yet.** Owner
+  review of ADR-008's implementation concluded it over-corrected ADR-007: recomputing window features
+  from a `winlog` event log at request time inverts the online store's purpose (fast precomputed
+  reads), and materialization is a read-only copy that can never be a meaningful parity gate.
+- **Decision locked in `docs/adr/009-parity-at-the-online-write-path.md` (accepted):** materialize =
+  bulk offline→online copy (not a parity gate); serving reads the materialized aggregate
+  (`RedisFeatureProvider`); serving owns the write path; **parity is verified at the write path**
+  (after the post-score update, online state including event `t` must equal the offline reference for
+  step `t`) — the only place online state is produced by serving logic and can genuinely diverge.
+- **Serving parity is observed, not unit-tested**: it is a live-system property (request ordering,
+  concurrency under the optimistic lock, state transitions), verified through Prometheus metrics
+  (`pit_parity_mismatches_total`/`pit_parity_checked_total`), Tempo traces (`score`→`online_write`),
+  and Grafana dashboards — the concrete reason the Grafana+Tempo stack exists at this stage.
+- Amends ADR-008 (keeps serving-owned write path + Locust parity; replaces the winlog recompute read
+  path). Three anti-patterns recorded so the project does not walk back: copy-parity as a gate,
+  recompute-to-manufacture-independence, unit-test acceptance for serving parity.
+- **Refinement:** ADR-009 gains a "Runtime parity check scenarios" section — the parity compare must
+  hold under scenarios that can only occur in a running system: concurrent writes to one entity
+  (optimistic lock, no lost update), out-of-order events under concurrency, late-arrival visibility
+  over advancing cutoffs, and window eviction across consecutive writes. The optimistic lock
+  (`WATCH`/`MULTI`/`EXEC` + read-retry) is stated as mandatory. Deterministic/code-level cases
+  (duplicate idempotency, same-step counting, cold-start defaults, window-boundary arithmetic,
+  `REJECTED_OLDER`) are explicitly excluded from the ADR — they belong to unit tests, not to the
+  runtime parity observation.
+- No code/tests/deps/frozen-contract change. Implementation is the next milestone (M053+): read
+  provider → `RedisFeatureProvider`; `serving/online_state.py` → aggregate state transition;
+  post-write parity compare; Grafana parity panel.
+- Detail: [M052 log](milestones/M052-parity-at-online-write-path-adr009.md).
+
+## 2026-08-10 — M051: structured logging with OTel trace correlation
+
+- **Implemented; agent static analysis only.** New `src/pit_fintech/platform/logging_config.py`:
+  structlog-based JSON logging with an OTel trace-context processor (`trace_id`/`span_id` as real
+  fields) and per-request correlation fields bound via `structlog.contextvars`.
+- `serving/app.py`: `/score` binds `request_id/transaction_id/entity_id/step/knowledge_step/
+  feature_service_version/model_version` and clears them in a `finally`; the whole request body now
+  runs inside the `score` span (error + write-path logs carry the trace), `online_write` stays a
+  child span. `cli.py`: `pit serving up` calls `configure_logging(json=True)` so the service ships
+  JSON. `serving/telemetry.py`: `LoggingInstrumentor` switched to `set_logging_format=False` (ids as
+  attributes, not message text).
+- structlog is a hard dependency, so no `pyproject.toml`/ADR-004 change. New unit test
+  `tests/unit/test_logging_config.py` (JSON shape, context merge, context cleared).
+- Agent verified `python3 -m py_compile` on all five changed files; sandbox could not fetch the uv
+  toolchain, so ruff/pytest pending.
+- Owner gates: `.\make.ps1 lint`, `.\make.ps1 test-unit`, then `.\make.ps1 serve-otel` and hit
+  `/score` to see `trace_id`/`span_id` + request fields in the JSON lines.
+- **Refinement (same date):** `configure_logging` gains a backward-compatible `stream` parameter
+  (defaults to `sys.stdout`); `tests/unit/test_logging_config.py` rewritten to write to an explicit
+  `io.StringIO` instead of relying on `capsys`'s `sys.stdout` capture timing, which made the first
+  version flaky under `pytest`. Owner re-ran: `lint` passes and `test-unit` 92 passed (the 3
+  logging tests now green). Detail: [M051 log](milestones/M051-structured-logging-with-otel-correlation.md).
+
 ## 2026-08-10 — M050: VPS observability sample configs (OTel Collector + Tempo + dashboard)
 
 - **Implemented; agent static analysis only. VPS is the owner's manual setup boundary.** Adds the

@@ -268,6 +268,10 @@ POST_EVENT_STATE_SCHEMA: Final[tuple[GoldColumn, ...]] = (
     GoldColumn("post_count_168h", "int64", False),
     GoldColumn("post_amount_168h", "double", False),
     GoldColumn("post_has_history_168h", "int64", False),
+    #: Raw per-event amount (the event's own amount, not a window sum). Present so the online
+    #: write-path warm-start can seed the per-entity event log (winlog) from Gold alone, without
+    #: reaching down to Silver (medallion layering; ADR-010). Not part of the nine contract fields.
+    GoldColumn("amount", "double", False),
     GoldColumn("source_row_number", "int64", False),
     GoldColumn("step", "int64", False),
     GoldColumn("knowledge_step", "int64", False),
@@ -632,6 +636,7 @@ def paysim_post_event_state_sql(relation: str) -> str:
             c.step,
             c.knowledge_step,
             c.transaction_type,
+            c.amount,
             {projections}
         FROM {relation} AS c
         LEFT JOIN {relation} AS s
@@ -643,7 +648,8 @@ def paysim_post_event_state_sql(relation: str) -> str:
             c.source_row_number,
             c.step,
             c.knowledge_step,
-            c.transaction_type
+            c.transaction_type,
+            c.amount
         ORDER BY c.step, c.source_row_number
     """
 
@@ -891,6 +897,13 @@ def _write_gold_table(
             mode="overwrite",
             partition_by=[GOLD_PARTITION_COLUMN],
             predicate=_partition_predicate(partitions),
+            # Allow the committed Gold schema to evolve (e.g. the per-event `amount` added for the
+            # winlog warm-start, M057). The staged table is always cast to the canonical `schema`
+            # constant above, so the written schema is canonical; `schema_mode="overwrite"`
+            # replaces the old schema instead of failing on a field-count mismatch (18 vs 17). A
+            # schema change requires a full-range promote so every partition is rewritten with the
+            # new schema; after that, incremental promotes write the same schema (no-op).
+            schema_mode="overwrite",
         )
     else:
         write_deltalake(path, table, mode="error", partition_by=[GOLD_PARTITION_COLUMN])

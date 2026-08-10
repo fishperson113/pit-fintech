@@ -9,6 +9,7 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from pit_fintech.config import get_settings
@@ -56,12 +57,14 @@ model_app = typer.Typer(no_args_is_help=True, help="Exploratory and gated model 
 features_app = typer.Typer(no_args_is_help=True, help="Versioned feature contract commands")
 materialize_app = typer.Typer(no_args_is_help=True, help="Online store materialization commands")
 serving_app = typer.Typer(no_args_is_help=True, help="Scoring API commands")
+parity_app = typer.Typer(no_args_is_help=True, help="Offline/online parity reconcile commands")
 app.add_typer(data_app, name="data")
 app.add_typer(notebooks_app, name="notebooks")
 app.add_typer(model_app, name="model")
 app.add_typer(features_app, name="features")
 app.add_typer(materialize_app, name="materialize")
 app.add_typer(serving_app, name="serving")
+app.add_typer(parity_app, name="parity")
 console = Console()
 
 
@@ -884,6 +887,73 @@ def materialize_show(
     console.print(table)
 
 
+@parity_app.command("reconcile")
+def parity_reconcile(
+    uri: Annotated[
+        str,
+        typer.Option("--uri", help="Online store connection URI"),
+    ] = "redis://127.0.0.1:6379/0",
+    event_history: Annotated[
+        Path | None,
+        typer.Option("--event-history", help="Path to the served Event History JSONL"),
+    ] = None,
+) -> None:
+    """Reconcile online aggregates against the offline DuckDB reference over the Event History.
+
+    Asynchronous offline/online parity (ADR-009 as amended): the serving write path never runs the
+    offline engine; run this command after traffic to compare each entity's online aggregate against
+    the DuckDB post-event state over the served events. Emits a report and, when
+    ``PIT_OTEL_ENDPOINT`` is set and OTel is installed, exports ``pit_parity_checked_total`` /
+    ``pit_parity_mismatches_total`` to the collector.
+    """
+
+    from pit_fintech.features.paysim_specs import PAYSIM_ENTITY, PAYSIM_FEATURE_SERVICE_VERSION
+    from pit_fintech.serving.online_state import reconcile_parity
+
+    _, _, artifact_root = _gold_roots()
+    store_config = OnlineStoreConfig(
+        kind=OnlineStoreKind.REDIS,
+        uri=uri,
+        feature_service_version=PAYSIM_FEATURE_SERVICE_VERSION,
+        entity=PAYSIM_ENTITY,
+    )
+    result = reconcile_parity(
+        store=store_config,
+        artifact_root=artifact_root,
+        event_history_path=event_history,
+    )
+
+    table = Table(title="Parity reconcile (online vs offline DuckDB)")
+    table.add_column("Field")
+    table.add_column("Value")
+    table.add_row("checked_entities", str(result.checked_entities))
+    table.add_row("field_mismatches", str(result.field_mismatches))
+    table.add_row("missing_online", ", ".join(result.missing_online) or "-")
+    table.add_row("passed", "yes" if result.passed else "no")
+    console.print(table)
+    for detail in result.details:
+        # Escape Rich markup so a Windows path with backslashes is not mis-rendered.
+        console.print(f"[yellow]{escape(detail)}[/]")
+
+    # Best-effort OTel export (same pattern as scripts/locust_parity.py).
+    import os
+
+    from pit_fintech.serving.telemetry import configure_telemetry
+
+    endpoint = os.environ.get("PIT_OTEL_ENDPOINT") or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+    telemetry = configure_telemetry(
+        service_name="pit-fintech-parity",
+        endpoint=endpoint,
+        enabled=bool(endpoint),
+    )
+    telemetry.record_parity_check(
+        checked=result.checked_entities > 0, mismatches=result.field_mismatches
+    )
+
+    if not result.passed:
+        raise typer.Exit(code=1)
+
+
 @serving_app.command("up")
 def serving_up(
     host: Annotated[
@@ -927,6 +997,7 @@ def serving_up(
 
     from pit_fintech.features.paysim_specs import PAYSIM_FEATURE_SERVICE_VERSION
     from pit_fintech.models.paysim_lightgbm import default_tracking_uri
+    from pit_fintech.platform.logging_config import configure_logging
 
     _, _, artifact_root = _gold_roots()
     settings_kwargs: dict[str, object] = {
@@ -951,7 +1022,41 @@ def serving_up(
     if mlflow_run_id is not None and "mlflow_run_id" in settings_fields:
         settings_kwargs["mlflow_run_id"] = mlflow_run_id
     settings = serving_runtime.ServingSettings(**settings_kwargs)
+    configure_logging(level=get_settings().log_level, json=settings.log_json)
     serving_runtime.run(settings=settings)
+
+
+@serving_app.command("worker")
+def serving_worker(
+    host: Annotated[str, typer.Option("--host", help="Redis host")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", help="Redis port")] = 6379,
+    db: Annotated[int, typer.Option("--db", help="Redis database")] = 0,
+) -> None:
+    """Run the pit-online-worker: consume score events and maintain the online store (ADR-010).
+
+    This is the write-path consumer. It reads the Redis Stream in order, applies each event under
+    the optimistic lock, and publishes the pre-decision result the waiting request polls. Run it as
+    its own container (`pit-online-worker` in compose.yaml) or here in a terminal; `/score` needs it
+    to be running.
+    """
+
+    from pit_fintech.features.paysim_specs import PAYSIM_ENTITY, PAYSIM_FEATURE_SERVICE_VERSION
+    from pit_fintech.materialization.materializer import OnlineStoreConfig
+    from pit_fintech.materialization.records import OnlineStoreKind
+    from pit_fintech.platform.logging_config import configure_logging
+    from pit_fintech.serving.worker import run_worker
+
+    configure_logging(level=get_settings().log_level, json=True)
+    store = OnlineStoreConfig(
+        kind=OnlineStoreKind.REDIS,
+        uri=f"redis://{host}:{port}/{db}",
+        feature_service_version=PAYSIM_FEATURE_SERVICE_VERSION,
+        entity=PAYSIM_ENTITY,
+        host=host,
+        port=port,
+        db=db,
+    )
+    run_worker(store=store, feature_service_version=PAYSIM_FEATURE_SERVICE_VERSION)
 
 
 if __name__ == "__main__":

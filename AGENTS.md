@@ -367,6 +367,9 @@ model-spike | train | lab-training  # Sprint 1 model commands, not promotion pat
 ## 11. Scope guards
 
 - Không dựng Kafka/Kubernetes/Airflow/Spark, RabbitMQ, Redis Streams hoặc Debezium trong MVP.
+  **Ngoại lệ do owner quyết định (ADR-010, 2026-08-10):** Redis Streams được dùng làm **transport
+  của write path serving** với đúng một consumer (`pit-online-worker`) để bảo đảm per-entity
+  ordering + optimistic lock. Không giới thiệu công nghệ bị loại nào khác.
 - Chỉ dùng một logical replay producer; nhiều entity không đồng nghĩa cần nhiều producer.
 - Không dùng Ray Train/Ray Tune/Ray Serve nếu chưa có benchmark chứng minh distributed
   training, large-scale HPO hoặc serving replicas là bottleneck thực tế.

@@ -149,15 +149,16 @@ def test_promote_then_rollback_serves_the_right_champion(e2e_environment: E2EEnv
 def test_score_reads_before_it_updates(e2e_environment: E2EEnvironment) -> None:
     """The core online invariant (ADR-003, ADR-008, AGENTS.md s11).
 
-    ADR-008 removed the replay driver and moved the write path into the serving process: ``/score``
-    reads the per-entity event log inside ``score_transaction`` (the read), then calls
-    ``online_state.apply_event`` strictly after the prediction exists (the write) --
-    ``serving/app.py``. Asserts: the write for a request is never committed before that request's
-    feature read; the ordering is visible as the ``score`` span containing its child
-    ``online_write`` span in the OTel exporter, and `scripts/locust_parity.py` is the manual gate
-    that compares the resulting online state against the independent oracle. A service that scores
+    ADR-010 moved the write path into the ``pit-online-worker`` (event-based): ``/score`` publishes
+    the event and waits for the worker, which captures the **pre-decision** feature vector (after
+    every prior event, before this one) under the optimistic lock and applies the event afterwards.
+    Asserts: the served vector never includes the current event and never misses a prior one -- the
+    ordering is visible as the ``score`` span containing its ``online_publish``/``online_wait``
+    child spans in the OTel exporter, and `scripts/locust_parity.py` is the manual gate that
+    compares the write-path aggregate against the independent oracle. A service that scores
     correctly while updating first is not a pass -- it is E2's current-inclusive leak arriving
-    through the online path.
+    through the online
+    path.
     """
 
     raise NotImplementedError("T9 round-0 skeleton")

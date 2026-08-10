@@ -24,8 +24,13 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Final, Literal
 
+from pit_fintech.features.paysim_specs import PAYSIM_FEATURE_DEFINITION_VERSION
+from pit_fintech.platform.logging_config import bind_request_context, clear_request_context
+from pit_fintech.serving.events import publish_score_event, wait_for_score_result
+from pit_fintech.serving.feature_provider import FeatureVectorResponse
 from pit_fintech.serving.schemas import ErrorResponse, HealthResponse, ScoreRequest
 from pit_fintech.serving.scoring import (
     FailurePolicy,
@@ -155,12 +160,12 @@ def build_scoring_context(*, settings: ServingSettings) -> ScoringContext:
         feature_service_version=settings.feature_service_version,
         entity=PAYSIM_ENTITY,
     )
-    # ADR-008: scoring reads from the serving-owned event-log store (WindowStateFeatureProvider),
-    # the same independent online state the /score write path maintains -- so online read, online
-    # write and the offline oracle all refer to one source. The store backend is still Redis
-    # (validated above); only the provider that reads it changed.
+    # ADR-009: scoring reads the materialized aggregate (RedisFeatureProvider) -- the online store
+    # is a precomputed aggregate for fast reads. The serving write path (serving/online_state.py)
+    # advances that aggregate and parity-checks it at write time; the read path does not recompute
+    # (read-time recomputation is an anti-pattern, ADR-009).
     provider = build_feature_provider(
-        kind="window_state",
+        kind="redis",
         store=store,
         expected_feature_service_version=settings.feature_service_version,
     )
@@ -265,6 +270,11 @@ class _MetricsState:
     Not Prometheus (design point 7 allows plain text): one FastAPI process, one counter set, reset
     on restart. Good enough for a demo; a real deployment would export this via
     ``prometheus_client`` instead of hand-rolling text.
+
+    Parity is NOT in these counters: the write path is non-blocking and never runs the offline
+    engine (ADR-009 as amended), so serving does not observe parity. Offline/online parity is
+    verified asynchronously by `pit parity reconcile`, which exports `pit_parity_*` OTel metrics
+    itself.
     """
 
     request_count: int = 0
@@ -307,15 +317,16 @@ def create_app(*, settings: ServingSettings) -> FastAPI:
     from pit_fintech.features.paysim_specs import PAYSIM_ENTITY
     from pit_fintech.materialization.materializer import OnlineStoreConfig
     from pit_fintech.materialization.records import OnlineStoreKind
-    from pit_fintech.serving import online_state
     from pit_fintech.serving.schemas import derive_entity_id
     from pit_fintech.serving.telemetry import configure_telemetry
 
     context = build_scoring_context(settings=settings)
     metrics = _MetricsState()
 
-    # ADR-008: the serving process owns the online write path. build_scoring_context has already
-    # rejected any provider_kind other than 'redis', so this store shares that endpoint/namespace.
+    # ADR-010: the serving process is a publisher, never a store mutator. This store is only used
+    # to publish score events and poll worker results; the pit-online-worker owns the online-store
+    # mutation. build_scoring_context has already rejected any provider_kind other than 'redis', so
+    # this store shares that endpoint/namespace.
     online_store = OnlineStoreConfig(
         kind=OnlineStoreKind.REDIS,
         uri=settings.online_store_uri,
@@ -347,90 +358,194 @@ def create_app(*, settings: ServingSettings) -> FastAPI:
         )
         return JSONResponse(status_code=status_code, content=error.model_dump(mode="json"))
 
+    def _result_to_features(result: dict, *, entity_id: str) -> FeatureVectorResponse:
+        """Build a FeatureVectorResponse from the worker's pre-decision result (ADR-010)."""
+
+        from pit_fintech.materialization.records import FeatureStatus
+
+        feature_status = (
+            FeatureStatus.FRESH
+            if result.get("feature_status") == "fresh"
+            else FeatureStatus.MISSING
+        )
+        feature_timestamp = result.get("feature_timestamp")
+        return FeatureVectorResponse(
+            entity_id=entity_id,
+            entity=settings.feature_service_version,
+            values=result.get("feature_values", {}),
+            status=feature_status,
+            is_cold_start=feature_status is FeatureStatus.MISSING,
+            feature_service_version=settings.feature_service_version,
+            feature_definition_version=result.get(
+                "feature_definition_version", PAYSIM_FEATURE_DEFINITION_VERSION
+            ),
+            feature_contract_checksum=result.get("feature_contract_checksum", ""),
+            feature_step=result.get("feature_step"),
+            feature_timestamp=datetime.fromisoformat(feature_timestamp)
+            if feature_timestamp
+            else None,
+            materialization_watermark_step=result.get("materialization_watermark_step"),
+            materialization_watermark=None,
+            staleness_steps=result.get("staleness_steps"),
+            provider_name="pit-online-worker",
+            retrieval_latency_ms=0.0,
+        )
+
+    def _score_request(*, request_id: str, payload: ScoreRequest) -> JSONResponse:
+        """Score one request: publish -> wait for worker -> score on the fresh pre-decision vector.
+
+        ADR-010: `/score` is a publisher, never a store mutator. It publishes the event to the
+        Redis Stream and waits for the `pit-online-worker` to apply it (under the optimistic lock)
+        and return the **pre-decision** feature vector. The request then scores on that vector --
+        never a stale version, never a current-inclusive one. The whole body runs inside the
+        ``score`` span so every log line carries the active ``trace_id``/``span_id``.
+        """
+        with telemetry.span(
+            "score",
+            transaction_id=payload.transaction_id,
+            entity_id=payload.name_dest,
+            step=payload.step,
+        ):
+            try:
+                entity_id = derive_entity_id(name_dest=payload.name_dest)
+                publish_started = time.perf_counter()
+                with telemetry.span(
+                    "online_publish", entity_id=payload.name_dest, step=payload.step
+                ):
+                    publish_score_event(
+                        store=online_store,
+                        feature_service_version=settings.feature_service_version,
+                        request_id=request_id,
+                        transaction_id=payload.transaction_id,
+                        entity_id=entity_id,
+                        step=payload.step,
+                        knowledge_step=payload.knowledge_step,
+                        transaction_type=payload.transaction_type,
+                        amount=payload.amount,
+                    )
+                publish_ms = (time.perf_counter() - publish_started) * 1000.0
+
+                with telemetry.span("online_wait", entity_id=payload.name_dest, step=payload.step):
+                    result = wait_for_score_result(
+                        store=online_store,
+                        feature_service_version=settings.feature_service_version,
+                        request_id=request_id,
+                    )
+                if result is None:
+                    metrics.record_error()
+                    logger.warning(
+                        "online write path timed out waiting for worker for transaction_id=%s "
+                        "entity=%s publish_ms=%.2f",
+                        payload.transaction_id,
+                        payload.name_dest,
+                        publish_ms,
+                    )
+                    return _error(
+                        status_code=503,
+                        code="online_store_timeout",
+                        message="worker did not apply the event within the timeout",
+                        request_id=request_id,
+                    )
+                if result.get("status") == "error":
+                    metrics.record_error()
+                    logger.warning(
+                        "worker reported an error for transaction_id=%s: %s",
+                        payload.transaction_id,
+                        result.get("error"),
+                    )
+                    return _error(
+                        status_code=503,
+                        code="online_store_timeout",
+                        message=result.get("error", "worker error"),
+                        request_id=request_id,
+                    )
+                if result.get("status") == "not_warm_started":
+                    logger.warning(
+                        "online write path refused (not warm-started) for transaction_id=%s "
+                        "entity=%s: %s",
+                        payload.transaction_id,
+                        payload.name_dest,
+                        result.get("detail"),
+                    )
+
+                prefetched = _result_to_features(result, entity_id=entity_id)
+                response = score_transaction(
+                    request=payload, context=context, prefetched=prefetched
+                )
+            except VersionMismatchError as exc:
+                metrics.record_error()
+                logger.warning(
+                    "version_mismatch for transaction_id=%s: %s", payload.transaction_id, exc
+                )
+                return _error(
+                    status_code=409,
+                    code="version_mismatch",
+                    message=str(exc),
+                    request_id=request_id,
+                )
+            except StaleFeaturesError as exc:
+                metrics.record_error()
+                logger.warning(
+                    "stale_features (fail_closed) for transaction_id=%s: %s",
+                    payload.transaction_id,
+                    exc,
+                )
+                return _error(
+                    status_code=409,
+                    code="stale_features",
+                    message=str(exc),
+                    request_id=request_id,
+                )
+            except MissingEntityRejectedError as exc:
+                metrics.record_error()
+                logger.warning(
+                    "missing_entity_rejected for transaction_id=%s: %s",
+                    payload.transaction_id,
+                    exc,
+                )
+                return _error(
+                    status_code=422,
+                    code="missing_entity_rejected",
+                    message=str(exc),
+                    request_id=request_id,
+                )
+            except Exception as exc:
+                metrics.record_error()
+                logger.exception(
+                    "online_store_timeout (or model failure) for transaction_id=%s",
+                    payload.transaction_id,
+                )
+                return _error(
+                    status_code=503,
+                    code="online_store_timeout",
+                    message=str(exc),
+                    request_id=request_id,
+                )
+            telemetry.record_score(
+                prediction=response.prediction,
+                feature_status=response.feature_status,
+                latency_ms=response.latency_ms.total,
+            )
+            telemetry.record_online_read(latency_ms=response.latency_ms.feature_retrieval)
+            metrics.record_success(response.latency_ms.total)
+            return JSONResponse(status_code=200, content=response.model_dump(mode="json"))
+
     @app.post(ROUTE_SCORE)
     def score(payload: ScoreRequest):
         request_id = str(uuid.uuid4())
-        try:
-            with telemetry.span(
-                "score",
-                transaction_id=payload.transaction_id,
-                entity_id=payload.name_dest,
-                step=payload.step,
-            ):
-                response = score_transaction(request=payload, context=context)
-        except VersionMismatchError as exc:
-            metrics.record_error()
-            logger.warning(
-                "version_mismatch for transaction_id=%s: %s", payload.transaction_id, exc
-            )
-            return _error(
-                status_code=409, code="version_mismatch", message=str(exc), request_id=request_id
-            )
-        except StaleFeaturesError as exc:
-            metrics.record_error()
-            logger.warning(
-                "stale_features (fail_closed) for transaction_id=%s: %s",
-                payload.transaction_id,
-                exc,
-            )
-            return _error(
-                status_code=409, code="stale_features", message=str(exc), request_id=request_id
-            )
-        except MissingEntityRejectedError as exc:
-            metrics.record_error()
-            logger.warning(
-                "missing_entity_rejected for transaction_id=%s: %s", payload.transaction_id, exc
-            )
-            return _error(
-                status_code=422,
-                code="missing_entity_rejected",
-                message=str(exc),
-                request_id=request_id,
-            )
-        except Exception as exc:
-            metrics.record_error()
-            logger.exception(
-                "online_store_timeout (or model failure) for transaction_id=%s",
-                payload.transaction_id,
-            )
-            return _error(
-                status_code=503,
-                code="online_store_timeout",
-                message=str(exc),
-                request_id=request_id,
-            )
-        # ADR-008 write path (step 8): after scoring, update the entity's online history log. This
-        # runs strictly after score_transaction has read + scored, preserving read-before-write
-        # (AGENTS.md s11). History counts every event to a destination regardless of type, so the
-        # append is unconditional. A write failure is logged but does not fail an already-computed
-        # score; the next read would then be stale, which the freshness fields already surface.
-        try:
-            write_started = time.perf_counter()
-            with telemetry.span("online_write", entity_id=payload.name_dest, step=payload.step):
-                log_length = online_state.apply_event(
-                    store=online_store,
-                    entity_id=derive_entity_id(name_dest=payload.name_dest),
-                    step=payload.step,
-                    amount=payload.amount,
-                    knowledge_step=payload.knowledge_step,
-                )
-            telemetry.record_online_write(
-                latency_ms=(time.perf_counter() - write_started) * 1000.0, log_length=log_length
-            )
-        except Exception as exc:
-            logger.warning(
-                "online write-path apply_event failed for transaction_id=%s: %s",
-                payload.transaction_id,
-                exc,
-            )
-        telemetry.record_score(
-            prediction=response.prediction,
-            feature_status=response.feature_status,
-            latency_ms=response.latency_ms.total,
+        bind_request_context(
+            request_id=request_id,
+            transaction_id=payload.transaction_id,
+            entity_id=derive_entity_id(name_dest=payload.name_dest),
+            step=payload.step,
+            knowledge_step=payload.knowledge_step,
+            feature_service_version=context.feature_service_version,
+            model_version=context.model_version,
         )
-        telemetry.record_online_read(latency_ms=response.latency_ms.feature_retrieval)
-        metrics.record_success(response.latency_ms.total)
-        return JSONResponse(status_code=200, content=response.model_dump(mode="json"))
+        try:
+            return _score_request(request_id=request_id, payload=payload)
+        finally:
+            clear_request_context()
 
     @app.get(ROUTE_HEALTH_LIVE)
     def health_live() -> HealthResponse:

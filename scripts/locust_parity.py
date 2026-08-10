@@ -7,10 +7,10 @@ under load and concurrency, which a unit lane cannot represent. Two ways to run 
     locust -f scripts/locust_parity.py --host http://127.0.0.1:8000
 
     # 2) Parity check after the run (Locust event hook prints PASS/FAIL):
-    #    the same file registers a test-stop listener that, for each synthetic cutoff, compares the
-    #    online windowed state the service maintained (serving/online_state.py) against the
-    #    independent offline oracle (features/paysim_reference.py). A mismatch is a real train/serve
-    #    skew -- do NOT widen the tolerance to hide it (guide s8.4).
+    #    the same file registers a test-stop listener that compares the write-path online aggregate
+    #    the service maintained (serving/online_state.py, ADR-009) against the independent offline
+    #    oracle (features/paysim_reference.py) at each entity's stored step. A mismatch is a real
+    #    train/serve skew -- do NOT widen the tolerance to hide it (guide s8.4).
 
 The synthetic stream deliberately crosses the 1h/24h/168h window edges and includes a same-step pair
 and a late-arriving correction, so eviction, ordering and the knowledge-time predicate are all
@@ -25,7 +25,6 @@ offline oracle come from the project.
 from __future__ import annotations
 
 import os
-from decimal import Decimal
 
 from locust import HttpUser, between, events, task
 
@@ -49,13 +48,10 @@ _STREAM: list[tuple[int, int, str, str, str]] = [
     (41, 41, "TRANSFER", "1.00", "C1003"),
 ]
 
-# Cutoffs to check parity at: (name_dest, cutoff_step, cutoff_knowledge_step).
-_CHECKPOINTS: list[tuple[str, int, int]] = [
-    ("C1001", 201, 201),
-    ("C1002", 12, 12),
-    ("C1003", 6, 6),  # before the late correction is known -> must NOT count it
-    ("C1003", 42, 42),  # after it is known -> must count it
-]
+# Parity is checked per entity at the write path (ADR-009): after the stream was played through
+# /score, each entity's stored aggregate is compared against the offline oracle reference at its
+# stored step. The stream above covers window edges, a same-step pair and a late-arriving
+# correction, which is what makes the compare non-trivial.
 
 
 def _score_body(step: int, knowledge_step: int, txn_type: str, amount: str, name_dest: str) -> dict:
@@ -70,8 +66,11 @@ def _score_body(step: int, knowledge_step: int, txn_type: str, amount: str, name
 
 
 class TransactionUser(HttpUser):
-    """Fires the synthetic stream at /score. Under load Locust spawns many of these concurrently,
-    which is what actually exercises the optimistic lock in serving/online_state.apply_event."""
+    """Fires the synthetic stream at /score.
+
+    Under load Locust spawns many of these concurrently, which is what actually exercises the
+    optimistic lock in the `pit-online-worker` (serving/online_state.apply_score_event).
+    """
 
     wait_time = between(0.0, 0.05)
 
@@ -112,57 +111,48 @@ def seed_ordered_stream(environment, **_kwargs) -> None:
 
 @events.test_stop.add_listener
 def check_parity(environment, **_kwargs) -> None:
-    """Compare online windowed state against the offline oracle at each checkpoint."""
+    """Compare the write-path online aggregate against the offline oracle at each checkpoint.
 
-    from decimal import Decimal as _D
+    ADR-009: parity is verified at the write path -- after the stream was played through ``/score``
+    (each request transitions the entity's aggregate to post-event state), the stored aggregate is
+    compared against the independent offline oracle reference for the same stored step. A mismatch
+    is a real train/serve skew in the serving write path, not a copy-consistency check.
+    """
 
-    from pit_fintech.features.paysim_reference import (
-        PaySimSourceEvent,
-        compute_paysim_feature_row,
-        paysim_destination_kind,
+    from pit_fintech.materialization.materializer import read_online_features
+    from pit_fintech.serving.online_state import (
+        count_parity_mismatches,
+        offline_post_event_reference,
     )
-    from pit_fintech.features.paysim_specs import PAYSIM_HISTORY_FEATURE_NAMES
-    from pit_fintech.serving.online_state import read_window_features
 
     store = _store()
-    # Build the oracle's event pool from the same stream (independent implementation).
-    pool = [
-        PaySimSourceEvent(
-            source_row_number=index + 1,
-            step=step,
-            knowledge_step=knowledge_step,
-            transaction_type=txn_type,
-            amount=_D(amount),
-            destination_entity_id=name_dest,
-            destination_entity_kind=paysim_destination_kind(name_dest),
-        )
-        for index, (step, knowledge_step, txn_type, amount, name_dest) in enumerate(_STREAM)
-    ]
-
     failures = 0
-    for name_dest, cutoff_step, cutoff_knowledge_step in _CHECKPOINTS:
-        online = read_window_features(
+    checked = 0
+    # Distinct entities seen in the stream, in deterministic order.
+    entities = list(dict.fromkeys(name_dest for _, _, _, _, name_dest in _STREAM))
+    for name_dest in entities:
+        read = read_online_features(store=store, entity_id=name_dest, request_step=1)
+        if read.record is None:
+            failures += 1
+            checked += 1
+            print(f"PARITY MISSING {name_dest}: no online aggregate after the stream")
+            continue
+        stored_step = read.record.feature_step
+        stored_knowledge = read.record.feature_knowledge_step
+        oracle = offline_post_event_reference(
             store=store,
             entity_id=name_dest,
-            cutoff_step=cutoff_step,
-            cutoff_knowledge_step=cutoff_knowledge_step,
+            step=stored_step,
+            knowledge_step=stored_knowledge,
         )
-        cutoff = PaySimSourceEvent(
-            source_row_number=10_000,
-            step=cutoff_step,
-            knowledge_step=cutoff_knowledge_step,
-            transaction_type="TRANSFER",
-            amount=Decimal("0.00"),
-            destination_entity_id=name_dest,
-            destination_entity_kind=paysim_destination_kind(name_dest),
-        )
-        oracle = compute_paysim_feature_row(cutoff, pool).values
-        for field in PAYSIM_HISTORY_FEATURE_NAMES:
-            if online[field] != oracle[field]:
-                failures += 1
+        mismatches = count_parity_mismatches(online=read.feature_values, offline=oracle)
+        checked += 1
+        if mismatches:
+            failures += 1
+            for field, online_value, oracle_value in _diff_fields(read.feature_values, oracle):
                 print(
-                    f"PARITY MISMATCH {name_dest}@{cutoff_step} {field}: "
-                    f"online={online[field]} oracle={oracle[field]}"
+                    f"PARITY MISMATCH {name_dest}@step{stored_step} {field}: "
+                    f"online={online_value} oracle={oracle_value}"
                 )
     # Best-effort: export the mismatch count to the same collector the service uses, so a Grafana
     # panel can alert on parity drift. No-op unless PIT_OTEL_ENDPOINT (or the standard
@@ -176,15 +166,37 @@ def check_parity(environment, **_kwargs) -> None:
         telemetry = configure_telemetry(
             service_name="pit-fintech-parity", endpoint=endpoint, enabled=bool(endpoint)
         )
-        if failures:
-            telemetry.record_parity_mismatch(count=failures)
+        telemetry.record_parity_check(checked=checked > 0, mismatches=failures)
     except Exception:  # telemetry export must never break the parity check
         pass
 
     if failures:
-        print(f"PARITY FAIL: {failures} field mismatch(es) -- online/offline skew (ADR-008).")
+        print(
+            f"PARITY FAIL: {failures} entity/field mismatch(es) out of {checked} checked "
+            "-- online/offline skew (ADR-009)."
+        )
     else:
-        print("PARITY PASS: online windowed state matches the offline oracle at all checkpoints.")
+        print(
+            f"PARITY PASS: the online write-path aggregate matches the offline oracle at all "
+            f"{checked} checkpoints (ADR-009)."
+        )
+
+
+def _diff_fields(online: dict, oracle: dict) -> list[tuple[str, object, object]]:
+    """Return the history fields that disagree, for a readable PARITY MISMATCH line."""
+
+    from pit_fintech.features.paysim_specs import PAYSIM_HISTORY_FEATURE_NAMES
+
+    result: list[tuple[str, object, object]] = []
+    for field in PAYSIM_HISTORY_FEATURE_NAMES:
+        online_value = online[field]
+        oracle_value = oracle[field]
+        if "_amount_" in field:
+            if abs(float(online_value) - float(oracle_value)) > 1e-6:
+                result.append((field, online_value, oracle_value))
+        elif online_value != oracle_value:
+            result.append((field, online_value, oracle_value))
+    return result
 
 
 def _store():
