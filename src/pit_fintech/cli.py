@@ -887,9 +887,17 @@ def materialize_show(
 @serving_app.command("up")
 def serving_up(
     host: Annotated[
-        str, typer.Option("--host", help="Bind host for the scoring API")
-    ] = "127.0.0.1",
-    port: Annotated[int, typer.Option("--port", help="Bind port for the scoring API")] = 8000,
+        str,
+        typer.Option(
+            "--host",
+            help="Bind host for the scoring API (0.0.0.0 exposes /metrics so a remote "
+            "Prometheus can scrape it over Tailscale); default from PIT_API_HOST",
+        ),
+    ] = get_settings().api_host,
+    port: Annotated[
+        int,
+        typer.Option("--port", help="Bind port for the scoring API; default from PIT_API_PORT"),
+    ] = get_settings().api_port,
     mlflow_run_id: Annotated[
         str | None,
         typer.Option("--mlflow-run-id", help="Optional MLflow run identity to pin at startup"),

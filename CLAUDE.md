@@ -84,6 +84,8 @@ src/pit_fintech/
   models/                paysim_lightgbm.py (E1-E4 spike), paysim_training.py (locked E1/E4)
   platform/              doctor.py, lineage.py (component fingerprints), notebooks.py
 feature_repo/            frozen v1 specs; real Feast defs begin after Sprint 1 gates
+deploy/vps/              non-secret sample configs: OTel Collector + Tempo + Prometheus job +
+                         Grafana dashboard (owner's VPS is the ops boundary; see deploy/vps/README.md)
 data/fixtures/           committed synthetic source + hand-calculated expected vectors
 tests/temporal/          exhaustive PIT correctness (ground truth = synthetic oracle)
 tests/unit/  tests/integration/

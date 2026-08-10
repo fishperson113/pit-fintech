@@ -1,0 +1,29 @@
+# Minimal Tempo config for the VPS stack.
+#
+# Exposes the query frontend on 3200 (Grafana Tempo data source) and the OTLP/gRPC ingest on 4317
+# (the otel-collector forwards traces here over the compose network at `tempo:4317`). Traces are
+# stored locally in the container; for a longer-lived setup, mount a volume at /tmp/tempo.
+#
+# Deliberately minimal: the ingester/compactor tunables were removed because Go's YAML parser
+# does not accept underscores in numeric literals (`1_000_000` parses as a string and fails to
+# unmarshal into an int, crashing Tempo with exit 1). Use plain integers or the image defaults.
+#
+# No secrets in this file.
+
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /tmp/tempo/blocks
+    wal:
+      path: /tmp/tempo/wal

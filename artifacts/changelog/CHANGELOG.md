@@ -1,5 +1,51 @@
 # Project changelog
 
+## 2026-08-10 — M050: VPS observability sample configs (OTel Collector + Tempo + dashboard)
+
+- **Implemented; agent static analysis only. VPS is the owner's manual setup boundary.** Adds the
+  trace side to M049's Prometheus pull path. New `deploy/vps/` (non-secret sample configs per
+  AGENTS.md s7): `otelcol-config.yaml` (Collector pipelines: traces → Tempo, metrics → debug),
+  `tempo-config.yaml` (minimal Tempo config), `docker-compose.otel.yml` (otel-collector + tempo,
+  standalone or mergeable; an initial draft conflict on host port 4317 was fixed — published only
+  on the collector), `prometheus-scrape-job.yml` (pit_fintech_scoring job), `grafana-dashboard.json`
+  (QPS / error ratio / avg latency / total requests), and a `README.md` with VPS + Windows setup
+  steps.
+- **Design: hybrid.** Prometheus keeps scraping `/metrics` directly (self-hosted Prometheus does
+  not accept remote-write by default); the API pushes OTLP/HTTP traces (`PIT_OTEL_ENDPOINT`) →
+  Collector → Tempo → Grafana, making the read-before-write ordering visible (`score` span with
+  child `online_write`) and enabling `pit_parity_mismatches_total` alerting. Collector metrics
+  pipeline routes the API's OTLP metrics to `debug` so `--otel` never errors on metrics export.
+- `README.md` + `.env.example` updated to point at `deploy/vps/` and clarify the split. No change
+  to `src/`, `tests/`, dependencies or ADR-004 fingerprints; `/metrics` route unchanged.
+- **Refinement:** initial `tempo-config.yaml` used underscored YAML numbers (`1_000_000`), which
+  Go's YAML parser rejects (string → int unmarshal error) and crash-looped Tempo (exit 1). Removed
+  the `ingester`/`compactor` tunables; the file now keeps the minimal working config and documents
+  the restriction. Prometheus's crash-loop on the owner's stack was VPS-side: the compose binds
+  host `/etc/prometheus`, so Prometheus was reading `/etc/prometheus/prometheus.yml` rather than
+  the file next to the compose.
+- Owner steps (VPS-side): copy the compose/config files, add the scrape job, import the
+  dashboard, add Tempo data source; on Windows set `PIT_OTEL_ENDPOINT` and run
+  `.\make.ps1 serve-otel`.
+- Detail: [M050 log](milestones/M050-vps-observability-sample-configs.md).
+
+## 2026-08-10 — M049: wire `/metrics` for a remote Prometheus scrape
+
+- **Implemented; agent static analysis only.** The owner's Prometheus/Grafana stack (VPS
+  `100.116.36.6`, Tailscale) has no OTel Collector, so the OTLP push path does not apply; Prometheus
+  pulls `/metrics`, which the serving API already exposes in text format. Only the bind host/port
+  needed to be env-driven.
+- `src/pit_fintech/cli.py`: `pit serving up --host`/`--port` now default from
+  `get_settings().api_host`/`api_port` (`PIT_API_HOST`/`PIT_API_PORT` in `.env`); explicit flags
+  still override. Defaults unchanged (`127.0.0.1:8000`).
+- `.env.example`: documents `PIT_API_HOST=0.0.0.0` for remote `/metrics` scraping over Tailscale.
+- `README.md`: new "Connecting the scoring API to Prometheus / Grafana" section — scrape job for
+  `prometheus.yml`, the `/etc/prometheus` mount caveat, Grafana data source, and the OTel-Collector
+  vs Prometheus clarification.
+- No dependency change (`prometheus-client` already in `serving` group); `/metrics` route unchanged.
+- Owner gates: `.\make.ps1 lint`; set `PIT_API_HOST=0.0.0.0`; `.\make.ps1 serve`; add the
+  `pit_fintech_scoring` job to the VPS `prometheus.yml` and reload.
+- Detail: [M049 log](milestones/M049-prometheus-scrape-wiring.md).
+
 ## 2026-08-10 — M048: Locust/OTel make targets and deprecation cleanup
 
 - **Implemented; agent static analysis only.** Follow-up to M047: make targets for the Locust

@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-08-10 (M048). Status words are strict:
+Last updated: 2026-08-10 (M050). Status words are strict:
 
 - **planned**: present in the six-week guide, with no claim that code exists;
 - **implemented**: code/artifact exists but the relevant gate may not have run;
@@ -43,6 +43,8 @@ Last updated: 2026-08-10 (M048). Status words are strict:
 | Vietnamese PIT terminology catalog | verified | `docs/reports/catalog.md`; required-term scan, reader-aid structure and `git diff --check` pass |
 | M047 one-shot `setup` + OTel collector endpoint env | implemented (agent static analysis only) | `setup` target (`Makefile` + `make.ps1`) runs `uv sync --frozen --all-groups` then `uv run pre-commit install`, installing every dependency group at once; `Settings.otel_endpoint` reads `PIT_OTEL_ENDPOINT` from `.env` and feeds `pit serving up --otel-endpoint` as its default (`serving/telemetry.py` `OTEL_EXPORTER_OTLP_ENDPOINT` fallback unchanged). Owner gates pending: `.\make.ps1 setup`, `.\make.ps1 lint`, `uv run pit serving up --otel` |
 | M048 Locust/OTel make targets + deprecation cleanup | implemented (agent static analysis only) | `tools`/`locust`/`serve-otel` targets in `Makefile`+`make.ps1` (`LOCUST_HOST`/`-LocustHost`); `scripts/spike_feast_t1.py` (M030 throwaway) marked for `git rm`; stale `replay` references in `feature_repo/definitions.py`, `tests/e2e/test_sprint2_e2e.py` (test renamed `test_score_reads_before_it_updates`), `scripts/locust_parity.py` (prefers `PIT_OTEL_ENDPOINT`) and `serving/telemetry.py` updated for ADR-008. Owner gates pending: `.\make.ps1 tools`, `.\make.ps1 lint`, `git rm scripts/spike_feast_t1.py`, then `redis-up`+`serve-otel`+`locust` |
+| M049 wire `/metrics` for remote Prometheus scrape | implemented (agent static analysis only) | `pit serving up --host/--port` default from `get_settings()` (`PIT_API_HOST`/`PIT_API_PORT`); `.env.example` + README document `PIT_API_HOST=0.0.0.0` and the VPS `prometheus.yml` scrape job (owner's stack at `100.116.36.6` has no OTel Collector, so Prometheus pulls `/metrics`, not OTLP). Owner gates pending: `.\make.ps1 lint`; set `PIT_API_HOST=0.0.0.0`; `.\make.ps1 serve`; add `pit_fintech_scoring` job to VPS `prometheus.yml` and reload |
+| M050 VPS observability sample configs | implemented (agent static analysis only) | new `deploy/vps/`: `otelcol-config.yaml` (traces→Tempo, metrics→debug), `tempo-config.yaml` (refined: underscored YAML ints `1_000_000` crash-looped Tempo — Go YAML rejects them; removed the `ingester`/`compactor` tunables), `docker-compose.otel.yml` (otel-collector + tempo), `prometheus-scrape-job.yml`, `grafana-dashboard.json`, `README.md` (includes troubleshooting for the `/etc/prometheus` host-mount gotcha). Hybrid design (Prometheus pulls `/metrics`; API pushes OTLP traces via `PIT_OTEL_ENDPOINT` → Collector → Tempo → Grafana). README + `.env.example` updated; no `src/`/tests/deps change. VPS setup is owner-side from these files |
 
 ## Sprint 1
 

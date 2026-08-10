@@ -216,6 +216,43 @@ fail loudly. Scoring/replay must query before updating online state.
 All published ports bind to `127.0.0.1`; Jupyter retains token authentication. Runtime volumes
 survive `make down` / `.\make.ps1 down`.
 
+## Connecting the scoring API to Prometheus / Grafana
+
+The serving API exposes `/metrics` in Prometheus text format (`pit_scoring_requests_total`,
+`pit_scoring_errors_total`, `pit_scoring_latency_ms_avg`) whether or not OTel is enabled.
+Prometheus pulls, so the app must be reachable from the Prometheus host:
+
+1. In `.env`, set `PIT_API_HOST=0.0.0.0` (binds all interfaces; keep `127.0.0.1` for local-only)
+   and keep `PIT_API_PORT=8000`. `pit serving up` reads these through `PIT_API_HOST`/`PIT_API_PORT`.
+   Allow inbound on that port over Tailscale in the Windows firewall.
+2. Start the service: `.\make.ps1 serve` (or `uv run pit serving up --host 0.0.0.0`).
+3. On the VPS, add a scrape job to the `prometheus.yml` Prometheus actually mounts (see note
+   below) and reload Prometheus:
+
+   ```yaml
+   - job_name: 'pit_fintech_scoring'
+     scrape_interval: 15s
+     static_configs:
+       - targets: ['<windows-tailscale-ip>:8000']
+   ```
+
+   Find the Windows machine's Tailscale IP with `tailscale ip -4`. Reload with
+   `docker compose exec prometheus kill -HUP 1` (or restart the container).
+
+> Note: if your compose mounts `- /etc/prometheus:/etc/prometheus`, the live config is
+> `/etc/prometheus/prometheus.yml` on the host, not the file next to `docker-compose.yml`.
+
+4. In Grafana, add Prometheus as a data source (`http://prometheus:9090` from inside the compose
+   network, or `http://<vps-ip>:9090` from outside), then build a dashboard on the
+   `pit_scoring_*` metrics.
+
+For trace/span-level observability, the optional `PIT_OTEL_ENDPOINT` pushes OTLP traces to an
+OTel Collector that forwards them to Tempo; Grafana then shows the read-before-write ordering as a
+`score` span containing its child `online_write` span. Prometheus itself only scrapes `/metrics`.
+Non-secret sample configs for this hybrid setup (Collector + Tempo + scrape job + dashboard) live
+in [`deploy/vps/`](deploy/vps/README.md) — the VPS is the owner's deployment boundary and is
+configured by hand from those files.
+
 ## Dataset policy
 
 The committed synthetic fixture remains the temporal-correctness ground truth. PaySim is the

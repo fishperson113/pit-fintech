@@ -1,0 +1,13 @@
+# Prometheus scrape job for the scoring API.
+#
+# Copy this job into your Prometheus config's `scrape_configs:` list (the file the running
+# Prometheus actually mounts — see README note about /etc/prometheus) and reload:
+#   docker compose exec prometheus kill -HUP 1
+#
+# Replace <windows-tailscale-ip> with the Windows machine's Tailscale IPv4 (`tailscale ip -4`).
+
+scrape_configs:
+  - job_name: 'pit_fintech_scoring'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['100.100.18.71:8000']
