@@ -52,6 +52,7 @@ from pit_fintech.serving.scoring import FailurePolicy
 
 app = typer.Typer(no_args_is_help=True, help="PIT Fintech local control plane")
 data_app = typer.Typer(no_args_is_help=True, help="Dataset and fixture commands")
+ingest_app = typer.Typer(no_args_is_help=True, help="Offline ingestion commands")
 notebooks_app = typer.Typer(no_args_is_help=True, help="Notebook quality commands")
 model_app = typer.Typer(no_args_is_help=True, help="Exploratory and gated model commands")
 features_app = typer.Typer(no_args_is_help=True, help="Versioned feature contract commands")
@@ -59,6 +60,7 @@ materialize_app = typer.Typer(no_args_is_help=True, help="Online store materiali
 serving_app = typer.Typer(no_args_is_help=True, help="Scoring API commands")
 parity_app = typer.Typer(no_args_is_help=True, help="Offline/online parity reconcile commands")
 app.add_typer(data_app, name="data")
+app.add_typer(ingest_app, name="ingest")
 app.add_typer(notebooks_app, name="notebooks")
 app.add_typer(model_app, name="model")
 app.add_typer(features_app, name="features")
@@ -66,6 +68,60 @@ app.add_typer(materialize_app, name="materialize")
 app.add_typer(serving_app, name="serving")
 app.add_typer(parity_app, name="parity")
 console = Console()
+
+
+@ingest_app.command("event-history")
+def ingest_event_history_command(
+    history_path: Annotated[
+        Path | None,
+        typer.Option(
+            help="Event History JSONL; defaults to artifacts/event_history/served_events.jsonl"
+        ),
+    ] = None,
+    bronze_path: Annotated[
+        Path | None,
+        typer.Option(help="Bronze landing Delta path; defaults to data/lakehouse/served_events"),
+    ] = None,
+    checkpoint_path: Annotated[
+        Path | None,
+        typer.Option(help="Checkpoint JSON path; defaults to artifacts/ingest/event_history.json"),
+    ] = None,
+) -> None:
+    """Ingest unseen serving events into the append-only Bronze landing Delta table."""
+
+    from pit_fintech.ingest.event_history import ingest_event_history
+
+    project_root = resolve_project_root(Path.cwd())
+    settings = get_settings()
+
+    def resolve_configured(path: Path) -> Path:
+        return path if path.is_absolute() else project_root / path
+
+    artifact_root = resolve_configured(settings.artifact_root)
+    data_root = resolve_configured(settings.data_root)
+    report = ingest_event_history(
+        history_path=(
+            resolve_configured(history_path)
+            if history_path is not None
+            else artifact_root / "event_history" / "served_events.jsonl"
+        ),
+        bronze_path=(
+            resolve_configured(bronze_path)
+            if bronze_path is not None
+            else data_root / "lakehouse" / "served_events"
+        ),
+        checkpoint_path=(
+            resolve_configured(checkpoint_path)
+            if checkpoint_path is not None
+            else artifact_root / "ingest" / "event_history.json"
+        ),
+    )
+    console.print(f"history: {report.history_path}")
+    console.print(f"bronze: {report.bronze_path}")
+    console.print(f"rows_read: {report.rows_read}")
+    console.print(f"rows_appended: {report.rows_appended}")
+    console.print(f"duplicate_rows: {report.duplicate_rows}")
+    console.print(f"checkpoint_line: {report.end_line}")
 
 
 @app.command()

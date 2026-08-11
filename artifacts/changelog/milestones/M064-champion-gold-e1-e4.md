@@ -32,6 +32,8 @@
   - `pit model promote-champion --run-id ...`
 - Added `make gold-evaluate` with overrideable Gold path/Delta version variables:
   `GOLD_ROOT`, `GOLD_PRE_VERSION`, `GOLD_POST_VERSION`, `GOLD_LABELS_VERSION`.
+- Added the equivalent Windows `make.ps1 gold-evaluate` target with `-GoldRoot`,
+  `-GoldPreVersion`, `-GoldPostVersion`, and `-GoldLabelsVersion` parameters.
 - Gold E1–E4 results are logged to MLflow with model artifacts, feature contract and threshold
   artifacts. E4 is the only CLI-eligible champion candidate.
 - Candidate CLI output now includes precision alongside recall.

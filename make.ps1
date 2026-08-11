@@ -25,7 +25,11 @@ param(
     [int]$End = 1,
     [string]$RunId = "",
     [int]$Watermark = 743,
-    [string]$LocustHost = "http://127.0.0.1:8000"
+    [string]$LocustHost = "http://127.0.0.1:8000",
+    [string]$GoldRoot = "data/lakehouse/paysim1/16910f90577b0d98",
+    [int]$GoldPreVersion = 8,
+    [int]$GoldPostVersion = 7,
+    [int]$GoldLabelsVersion = 7
 )
 
 $ErrorActionPreference = "Stop"
@@ -137,6 +141,23 @@ switch ($Target) {
             "run", "--frozen", "--all-groups", "python", "scripts/run_t4_training.py",
             "--experiment", $T4Experiment, "--feature-set", $T4FeatureSet
         )
+    }
+    "gold-evaluate" {
+        Invoke-Checked "uv" @(
+            "run", "--frozen", "--all-groups", "pit", "model", "gold-evaluate",
+            "--pre-path", "$GoldRoot/gold/pre_decision_features",
+            "--pre-version", "$GoldPreVersion",
+            "--post-path", "$GoldRoot/gold/post_event_state_updates",
+            "--post-version", "$GoldPostVersion",
+            "--labels-path", "$GoldRoot/silver/paysim_labels",
+            "--labels-version", "$GoldLabelsVersion"
+        )
+    }
+    "ingest-event-history" {
+        Invoke-Checked "uv" @("run", "--frozen", "--all-groups", "pit", "ingest", "event-history")
+    }
+    "ingest" {
+        Invoke-Checked "uv" @("run", "--frozen", "--all-groups", "pit", "ingest", "event-history")
     }
     "test-notebooks" {
         Invoke-Checked "uv" @("run", "pit", "data", "sample")
@@ -276,6 +297,9 @@ switch ($Target) {
             @("test-t3-smoke", "run T3 backfill seam smoke lane on an isolated fixture"),
             @("test-t4-dataset", "run T4 Gold-to-training dataset fixture lane"),
             @("train-gold-candidate", "train one E1/E4 candidate from committed Gold into local MLflow"),
+            @("gold-evaluate", "run Gold-backed E1-E4 with precision/recall and log MLflow runs"),
+            @("ingest-event-history", "append unseen serving Event History rows into Bronze landing Delta"),
+            @("ingest", "short alias for offline Event History ingestion"),
             @("test-notebooks", "execute Sprint 1 notebooks in memory"),
             @("model-spike", "run the PaySim LightGBM E1-E4 candidate matrix"),
             @("train", "train locked E1/E4 models from exact Silver versions"),

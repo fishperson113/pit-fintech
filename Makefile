@@ -101,6 +101,11 @@ gold-evaluate: ## Run Gold-backed E1-E4 with precision/recall and log runs to lo
 		--post-path $(GOLD_ROOT)/gold/post_event_state_updates --post-version $(GOLD_POST_VERSION) \
 		--labels-path $(GOLD_ROOT)/silver/paysim_labels --labels-version $(GOLD_LABELS_VERSION)
 
+ingest-event-history: ## Append unseen serving Event History rows into Bronze landing Delta
+	UV_PROJECT_ENVIRONMENT=.venv uv run --frozen --all-groups pit ingest event-history
+
+ingest: ingest-event-history ## Short alias for offline Event History ingestion
+
 test-notebooks: data-sample ## Execute all Sprint 1 notebooks in memory
 	uv run --group dev pit notebooks verify
 
@@ -227,4 +232,4 @@ logs: ## Follow core service logs
 down: ## Stop services without deleting data volumes
 	docker compose down
 
-.PHONY: help bootstrap setup doctor lab lab-training lab-container data-sample data-snapshot profile build-lakehouse lakehouse-history build-fixture features gold promote-gold test-temporal test-unit test-lakehouse test-integration-full test-t3-smoke test-t4-dataset train-gold-candidate gold-evaluate test-notebooks model-spike train test lint format check changelog-check lock materialize parity-reconcile serve serve-otel worker worker-up worker-down tools locust mlflow-ui demo demo-score demo-bad demo-metrics demo-medallion demo-contract demo-history demo-watermark demo-lineage demo-ablation redis-up redis-down up-core status logs down
+.PHONY: help bootstrap setup doctor lab lab-training lab-container data-sample data-snapshot profile build-lakehouse lakehouse-history build-fixture features gold promote-gold test-temporal test-unit test-lakehouse test-integration-full test-t3-smoke test-t4-dataset train-gold-candidate gold-evaluate ingest-event-history ingest test-notebooks model-spike train test lint format check changelog-check lock materialize parity-reconcile serve serve-otel worker worker-up worker-down tools locust mlflow-ui demo demo-score demo-bad demo-metrics demo-medallion demo-contract demo-history demo-watermark demo-lineage demo-ablation redis-up redis-down up-core status logs down

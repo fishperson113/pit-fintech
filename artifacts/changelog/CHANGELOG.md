@@ -1,5 +1,15 @@
 # Project changelog
 
+## 2026-08-11 — M065: Checkpointed Event History to Bronze ingestion
+
+- **Implemented and locally verified.** Added `pit ingest event-history`, `make ingest-event-history`,
+  and the equivalent Windows `make.ps1` target. The batch job reads new Event History JSONL lines,
+  appends unseen events to `data/lakehouse/served_events`, and atomically advances a checkpoint.
+- Stable event IDs make retries/idempotent reruns safe. This is a separate Bronze landing table because
+  serving events do not contain the raw PaySim Bronze schema or confirmed labels; Silver/Gold enrichment
+  remains a follow-up offline step. Ingestion tests **2 passed**; PowerShell parse and Ruff pass.
+- Detail: [M065 log](milestones/M065-event-history-bronze-ingest.md).
+
 ## 2026-08-11 — M064: Champion loading and Gold E1–E4 evaluation
 
 - **Implemented and verified on committed Gold.** Serving now resolves MLflow Registry alias
