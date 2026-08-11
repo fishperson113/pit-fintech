@@ -166,6 +166,15 @@ demo: ## Run the end-to-end demo: Redis -> Gold -> materialize -> serve -> score
 demo-score: ## Score one normal and one suspicious transaction against a running API
 	uv run python scripts/demo_score.py
 
+debug-strict-pit: ## Probe duplicate and out-of-order strict-PIT behavior against a running API
+	uv run python scripts/debug_strict_pit.py
+
+live-write-matrix: ## Exercise advancing writes, retries, gaps and late arrivals against a running API
+	uv run python scripts/live_write_path_matrix.py
+
+locust-write-path: ## Run the Locust advancing-write and retry sequence against a running API
+	uv run locust -f scripts/locust_write_path.py --host $(LOCUST_HOST)
+
 demo-bad: ## Prove invalid requests are rejected before scoring (metrics before/after)
 	uv run python scripts/demo_bad_request.py
 

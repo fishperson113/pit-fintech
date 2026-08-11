@@ -138,6 +138,33 @@ def compute_window_features(
     return ordered
 
 
+def recompute_pre_decision_features(
+    *,
+    events: list[LoggedEvent],
+    request_step: int,
+    request_knowledge_step: int,
+) -> dict[str, int | float]:
+    """Recompute history immediately before an arbitrary request cutoff.
+
+    An out-of-order request cannot use the latest post-event aggregate because that aggregate may
+    include events after the request. Using the request step as the exclusive cutoff preserves the
+    strict PIT predicate.
+    """
+
+    return compute_window_features(
+        events=events,
+        cutoff_step=request_step,
+        cutoff_knowledge_step=request_knowledge_step,
+    )
+
+
+def latest_prior_event_step(*, events: list[LoggedEvent], request_step: int) -> int | None:
+    """Return the latest event step included by a strict pre-decision cutoff."""
+
+    prior_steps = [event.step for event in events if event.step < request_step]
+    return max(prior_steps) if prior_steps else None
+
+
 def count_parity_mismatches(online: dict[str, int | float], offline: dict[str, int | float]) -> int:
     """Count the nine history fields that disagree, with the locked comparison rules.
 
@@ -268,7 +295,7 @@ def apply_score_event(
             # Freshness is the step distance from the request step to the pre-decision feature step
             # (the same definition as read_online_features): 0 when the stored aggregate is current,
             # > 0 when the served vector is behind the request step.
-            "staleness_steps": (step - pre_step) if pre_step is not None else None,
+            "staleness_steps": max(0, step - pre_step) if pre_step is not None else None,
             "log_length": log_length,
             "write_latency_ms": round((time.perf_counter() - started) * 1000.0, 6),
             "detail": detail,
@@ -317,6 +344,17 @@ def apply_score_event(
             )
         if stored is not None and step < stored.feature_step:
             client.unwatch()
+            # Do not return the newer stored aggregate: it contains future history for this
+            # request. Recompute the strict pre-decision vector from the serving winlog at the
+            # request cutoff and align metadata with that cutoff.
+            pre_values = recompute_pre_decision_features(
+                events=events,
+                request_step=step,
+                request_knowledge_step=resolved_knowledge,
+            )
+            pre_step = latest_prior_event_step(events=events, request_step=step)
+            pre_status = "fresh" if pre_step is not None else "missing"
+            pre_timestamp = paysim_step_to_timestamp(pre_step) if pre_step is not None else None
             return publish_result(
                 status="rejected_older",
                 pre_values=pre_values,
@@ -338,6 +376,18 @@ def apply_score_event(
         )
         if is_duplicate:
             client.unwatch()
+            # A duplicate request must be scored on the same pre-decision vector as the original
+            # event. The stored aggregate is post-event state at ``step`` and would be
+            # current-inclusive if returned here. Recompute strictly before this event, excluding
+            # all same-step and future events from the winlog.
+            pre_values = recompute_pre_decision_features(
+                events=events,
+                request_step=step,
+                request_knowledge_step=resolved_knowledge,
+            )
+            pre_step = latest_prior_event_step(events=events, request_step=step)
+            pre_status = "fresh" if pre_step is not None else "missing"
+            pre_timestamp = paysim_step_to_timestamp(pre_step) if pre_step is not None else None
             return publish_result(
                 status="noop_identical",
                 pre_values=pre_values,
@@ -395,7 +445,7 @@ def apply_score_event(
                 "feature_contract_checksum": contract_checksum,
                 "materialization_watermark_step": watermark_step,
                 "materialization_watermark": paysim_step_to_timestamp(watermark_step).isoformat(),
-                "staleness_steps": (step - pre_step) if pre_step is not None else None,
+                "staleness_steps": max(0, step - pre_step) if pre_step is not None else None,
                 "log_length": len(events),
                 "write_latency_ms": round((time.perf_counter() - started) * 1000.0, 6),
                 "detail": (

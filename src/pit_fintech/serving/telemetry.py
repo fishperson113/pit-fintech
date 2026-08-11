@@ -1,10 +1,11 @@
 """ADR-008 -- OpenTelemetry traces, metrics and trace-correlated logs for the serving process.
 
-The user hosts the OTel Collector / Prometheus / Grafana / Tempo stack on a separate machine; this
-module only configures the **exporter side** inside the service. Traces and metrics are shipped over
-OTLP/HTTP to a configurable endpoint (``ServingSettings.otel_endpoint`` or the standard
-``OTEL_EXPORTER_OTLP_ENDPOINT`` env var), and logs are emitted with the active trace/span id so a
-Grafana log line links to its Tempo trace.
+The user hosts the OTel Collector / Prometheus / Grafana / Tempo/Loki stack on a separate machine;
+this module configures the **exporter side** inside the service. Traces, metrics and logs are
+shipped
+over OTLP/HTTP to a configurable endpoint (``ServingSettings.otel_endpoint`` or the standard
+``OTEL_EXPORTER_OTLP_ENDPOINT`` env var). Logs are emitted as JSON with the active trace/span id,
+so a Loki log line links to its Tempo trace.
 
 **The OpenTelemetry packages are intentionally not project dependencies.** Adding them to
 ``pyproject.toml`` would move the ADR-004 component fingerprints (``pyproject.toml`` is inside both
@@ -38,10 +39,13 @@ made visible, not just asserted.
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
+
+_LOG_PROVIDER_CONFIGURED = False
 
 
 @dataclass
@@ -57,13 +61,13 @@ class Telemetry:
     _instruments: dict[str, Any] = field(default_factory=dict)
 
     @contextlib.contextmanager
-    def span(self, name: str, **attributes: Any) -> Iterator[None]:
+    def span(self, name: str, *, context: Any = None, **attributes: Any) -> Iterator[None]:
         """Open a span (no-op when disabled). Attributes are attached for Tempo/Grafana."""
 
         if not self.enabled or self._tracer is None:
             yield
             return
-        with self._tracer.start_as_current_span(name) as span:
+        with self._tracer.start_as_current_span(name, context=context) as span:
             for key, value in attributes.items():
                 span.set_attribute(key, value)
             yield
@@ -137,9 +141,12 @@ def configure_telemetry(
     resolved_endpoint = endpoint or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
 
     try:
-        from opentelemetry import metrics, trace
+        from opentelemetry import _logs, metrics, trace
+        from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
         from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
         from opentelemetry.sdk.metrics import MeterProvider
         from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
         from opentelemetry.sdk.resources import Resource
@@ -176,6 +183,15 @@ def configure_telemetry(
     )
     metrics.set_meter_provider(meter_provider)
 
+    _configure_log_exporter(
+        logs_module=_logs,
+        resource=resource,
+        endpoint=resolved_endpoint,
+        logger_provider_class=LoggerProvider,
+        log_exporter_class=OTLPLogExporter,
+        log_processor_class=BatchLogRecordProcessor,
+        logging_handler_class=LoggingHandler,
+    )
     _instrument_logging()
 
     tracer = trace.get_tracer("pit_fintech.serving")
@@ -207,6 +223,42 @@ def configure_telemetry(
     return Telemetry(enabled=True, _tracer=tracer, _instruments=instruments)
 
 
+def _configure_log_exporter(
+    *,
+    logs_module: Any,
+    resource: Any,
+    endpoint: str | None,
+    logger_provider_class: Any,
+    log_exporter_class: Any,
+    log_processor_class: Any,
+    logging_handler_class: Any,
+) -> None:
+    """Attach one OTLP log handler to the root logger (idempotent per process).
+
+    The module flag handles ordinary repeated configuration. The handler marker is also checked so
+    a module reload or an application factory lifecycle cannot attach a second exporter to the same
+    root logger.
+    """
+
+    global _LOG_PROVIDER_CONFIGURED
+    root_logger = logging.getLogger()
+    if _LOG_PROVIDER_CONFIGURED or any(
+        getattr(handler, "_pit_otel_log_handler", False) for handler in root_logger.handlers
+    ):
+        _LOG_PROVIDER_CONFIGURED = True
+        return
+    log_exporter = (
+        log_exporter_class(endpoint=f"{endpoint}/v1/logs") if endpoint else log_exporter_class()
+    )
+    logger_provider = logger_provider_class(resource=resource)
+    logger_provider.add_log_record_processor(log_processor_class(log_exporter))
+    logs_module.set_logger_provider(logger_provider)
+    handler = logging_handler_class(logger_provider=logger_provider)
+    handler._pit_otel_log_handler = True
+    root_logger.addHandler(handler)
+    _LOG_PROVIDER_CONFIGURED = True
+
+
 def _instrument_logging() -> None:
     """Inject the active trace/span id into log records, if the instrumentation is installed.
 
@@ -220,4 +272,7 @@ def _instrument_logging() -> None:
         from opentelemetry.instrumentation.logging import LoggingInstrumentor
     except ImportError:
         return
-    LoggingInstrumentor().instrument(set_logging_format=False)
+    LoggingInstrumentor().instrument(
+        set_logging_format=False,
+        enable_log_auto_instrumentation=False,
+    )

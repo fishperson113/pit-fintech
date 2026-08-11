@@ -6,20 +6,23 @@ non-secret sample config; the VPS itself is the owner's deployment/ops boundary)
 
 ## Architecture / role split
 
-The scoring API (`pit serving up`) is the only thing this stack observes:
+The scoring API (`pit serving up`) and `pit-online-worker` are the only processes this stack observes:
 
 ```
 Windows (scoring API)
   ├── /metrics  ──(Prometheus pull)──────────────▶ Prometheus  ──▶ Grafana
-  └── OTLP/HTTP ──(traces, PIT_OTEL_ENDPOINT)────▶ Collector    ──▶ Tempo  ──▶ Grafana
+  └── OTLP/HTTP ──(traces + logs, PIT_OTEL_ENDPOINT)▶ Collector ──▶ Tempo/Loki ──▶ Grafana
+                                                    ▲
+Windows (pit-online-worker) ── OTLP/HTTP ───────────┘
 ```
 
 * **Metrics**: Prometheus *pulls* `/metrics` on the API (`pit_scoring_requests_total`,
   `pit_scoring_errors_total`, `pit_scoring_latency_ms_avg`). This works with no OTel at all.
-* **Traces**: the API *pushes* OTLP/HTTP traces to the OTel Collector when started with
-  `--otel` and `PIT_OTEL_ENDPOINT`. The Collector forwards them to Tempo; Grafana reads them via
-  the Tempo data source. This makes the read-before-write invariant visible as a `score` span
-  containing its child `online_write` span, and `pit_parity_mismatches_total` alerts on parity
+* **Traces and logs**: the API pushes OTLP/HTTP traces and structured OTLP logs when started with
+  `--otel` and `PIT_OTEL_ENDPOINT`; the worker uses the same endpoint and creates `online_write`
+  spans plus request-context JSON logs. The Collector forwards traces to Tempo and logs to Loki;
+  Grafana correlates `trace_id`/`span_id` between them. The API `score` span and worker write span
+  make the read-before-write path visible, while `pit_parity_mismatches_total` alerts on parity
   drift.
 
 **This stack is the serving-parity verification vehicle (ADR-009).** Online/offline parity is

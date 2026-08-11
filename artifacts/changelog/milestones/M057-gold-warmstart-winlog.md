@@ -106,6 +106,12 @@ stored 744 aggregate).
 
 - Gold schema change means a **Gold rebuild/backfill** is required once (schema checksum changes);
   the frozen FeatureSpec v2 contract is unchanged.
+- **NEXT STEP (out-of-order strict-PIT):** `apply_score_event` returns the stored aggregate (e.g.
+  feature_step 745) for an out-of-order request (step 744), a **future read** that violates the
+  no-future-read invariant. On `rejected_older`, recompute the pre-decision vector from the winlog at
+  cutoff = request step instead of returning `stored.feature_values`; in-order requests keep the
+  fast-path aggregate. Also guard negative/`None` `staleness_steps` for out-of-order. Owner asked to
+  record this as a next step, not to implement now.
 - Event History is still not wired into the offline build (DuckDB -> Gold Delta) to land live events
   into `gold.post_event_state_updates`; `pit parity reconcile` remains the async parity path.
 - `reset_online_log`/`reset_online_store` use `SCAN`, which the owner's custom Redis build reports

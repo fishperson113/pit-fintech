@@ -228,6 +228,11 @@ switch ($Target) {
     }
     "demo" { Invoke-Checked "uv" @("run", "python", "scripts/run_demo_e2e.py") }
     "demo-score" { Invoke-Checked "uv" @("run", "python", "scripts/demo_score.py") }
+    "debug-strict-pit" { Invoke-Checked "uv" @("run", "python", "scripts/debug_strict_pit.py") }
+    "live-write-matrix" { Invoke-Checked "uv" @("run", "python", "scripts/live_write_path_matrix.py") }
+    "locust-write-path" {
+        Invoke-Checked "uv" @("run", "locust", "-f", "scripts/locust_write_path.py", "--host", $LocustHost)
+    }
     "demo-bad" { Invoke-Checked "uv" @("run", "python", "scripts/demo_bad_request.py") }
     "demo-metrics" { Invoke-Checked "uv" @("run", "python", "scripts/demo_metrics.py") }
     "demo-medallion" { Invoke-Checked "uv" @("run", "python", "scripts/demo_medallion.py") }
@@ -292,6 +297,9 @@ switch ($Target) {
             @("mlflow-ui", "run the MLflow server on the Windows HOST (Artifacts tab works); stops the container first"),
             @("demo", "run the end-to-end demo: Redis -> Gold -> materialize -> serve -> score"),
             @("demo-score", "score one normal and one suspicious transaction against a running API"),
+            @("debug-strict-pit", "probe duplicate and out-of-order strict-PIT behavior against a running API"),
+            @("live-write-matrix", "exercise advancing writes, retries, gaps and late arrivals against a running API"),
+            @("locust-write-path", "run the Locust advancing-write and retry sequence against a running API"),
             @("demo-bad", "prove invalid requests are rejected before scoring (metrics before/after)"),
             @("demo-metrics", "show the in-process /metrics counters"),
             @("demo-medallion", "show grain (version/rows/cols) of the five medallion tables from Delta"),

@@ -1,5 +1,81 @@
 # Project changelog
 
+## 2026-08-11 — M063: OTLP logs and cross-process trace correlation
+
+- **Implemented; locally verified.** FastAPI and worker now export structured logs through OTLP/HTTP
+  `/v1/logs`; worker binds request/entity/step context and creates `online_write` spans. Redis Stream
+  events carry W3C `traceparent`, linking worker spans to the originating API `score` trace. Duplicate
+  export root cause was found in `LoggingInstrumentor`'s default SDK handler and fixed by disabling
+  `enable_log_auto_instrumentation`; one explicit OTLP handler remains. Ruff/format/compile clean;
+  logging + write-path subset **13 passed**.
+- VPS live arrival/query verification remains owner-side after API/worker recreate.
+- Detail: [M063 log](milestones/M063-otlp-logs-trace-correlation.md).
+
+## 2026-08-11 — M062: Locust write-path advancement and retry sequence
+
+- **Verified against the live FastAPI + worker.** Added `scripts/locust_write_path.py` and
+  `locust-write-path` Make/PowerShell targets. One Locust user runs a deterministic ten-request
+  sequence over a fresh entity: advancement, exact retry, different-ID retry, gap, out-of-order,
+  late-arrival, conflicting same-step retry, and post-rejection resume.
+- Headless Locust 2.46.3 smoke: **10 requests, 0 failures**, average 51 ms, median 39 ms, max 168 ms;
+  `LOCUST WRITE PATH PASS`. CSV evidence under `artifacts/reports/locust-write-path_*.csv`.
+- No network-timeout simulation and no forced Redis WATCH collision, per scope.
+- Detail: [M062 log](milestones/M062-locust-write-path.md).
+
+## 2026-08-11 — M061: live online write-path retry and advancement matrix
+
+- **Verified against the running FastAPI + `pit-online-worker`.** Added `scripts/live_write_path_matrix.py`
+  and `live-write-matrix` Make/PowerShell targets.
+- Fresh-entity matrix covered monotonic steps 700/701/702/704/705, exact retry, retry with a
+  different transaction ID, step gaps, out-of-order step 703, late-arrival step 701 with
+  `knowledge_step=704`, and conflicting same-step amount. All ten HTTP requests returned 200 and all
+  assertions passed.
+- Exact retries produced identical scoring fields; older/late requests did not move state backward;
+  step 705 resumed from stored step 704. Evidence: `artifacts/reports/live-write-path-matrix.md`.
+- Known boundaries recorded: internal Redis optimistic-lock collision was not forced; API does not
+  expose write outcome directly; online late-arrival correction remains guarded as older write.
+- Detail: [M061 log](milestones/M061-live-write-path-matrix.md).
+
+## 2026-08-11 — M060: normalize strict-PIT feature-step metadata
+
+- **Verified.** `feature_step` now means the latest strictly prior event actually included in the
+  vector, not the request cutoff. Duplicate and out-of-order paths share
+  `latest_prior_event_step`; cold cutoffs correctly report `feature_step=null`, `missing`, and
+  `staleness_steps=null`.
+- Added unit coverage and updated the live probe to reject current/future metadata while accepting a
+  valid prior state or explicit cold state. Worker rebuilt/recreated.
+- Verification: write-path unit **10 passed**, full unit lane **100 passed**, Ruff/format clean, live
+  probe **PASS**. Current Redis winlog evidence: duplicate step 745 → `feature_step=744`,
+  `staleness_steps=1`; older step 744 → explicit cold result because no step `<744` remained.
+- Detail: [M060 log](milestones/M060-normalize-feature-step-metadata.md).
+
+## 2026-08-11 — M059: duplicate replay strict-PIT fix + live server evidence
+
+- **Verified.** Duplicate events no longer return the stored post-event aggregate. `apply_score_event`
+  recomputes the pre-decision vector from winlog at the request step cutoff and reports metadata from
+  the latest strictly prior event.
+- Added `scripts/debug_strict_pit.py` plus `debug-strict-pit` Make/PowerShell targets. The live probe
+  sends duplicate step 745 and out-of-order step 744 requests to `/score`, asserts no future feature
+  step, and writes request/response evidence to `artifacts/reports/out-of-order-debug.md`.
+- Verification: write-path unit **9 passed**, full unit lane **99 passed**, Ruff/format clean; worker
+  rebuilt/recreated; live probe **PASS**. Evidence: duplicate step 745 → `feature_step=744`,
+  `staleness_steps=1`; older step 744 → `feature_step=744`, `staleness_steps=0`.
+- Detail: [M059 log](milestones/M059-duplicate-replay-strict-pit.md).
+
+## 2026-08-11 — M058: fix out-of-order strict-PIT serving reads
+
+- **Verified in focused lanes.** `apply_score_event` no longer returns a newer stored aggregate for
+  `step < stored.feature_step`; it recomputes the pre-decision vector from the serving winlog with
+  the request step as the exclusive cutoff. `staleness_steps` is guarded against negative values.
+- Added `recompute_pre_decision_features` and a regression test covering steps 743/745 queried at
+  step 744; the future step is excluded while prior history remains visible.
+- Owner-run verification: unit write-path **8 passed**, full unit lane **98 passed**, Ruff check
+  clean, format check clean. A repository-wide `pytest -q` attempt was blocked during collection by
+  the pre-existing duplicate `test_paysim_fixture.py` module basename (`tests/unit` vs
+  `tests/integration` import mismatch).
+- No live Redis worker/demo/parity run was performed in this milestone.
+- Detail: [M058 log](milestones/M058-out-of-order-strict-pit.md).
+
 ## 2026-08-10 — M057: warm-start the online write path from Gold (seed winlog)
 
 - **Implemented; agent static analysis only.** Closes the `not_warm_started` gap: materialization

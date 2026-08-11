@@ -1044,9 +1044,16 @@ def serving_worker(
     from pit_fintech.materialization.materializer import OnlineStoreConfig
     from pit_fintech.materialization.records import OnlineStoreKind
     from pit_fintech.platform.logging_config import configure_logging
+    from pit_fintech.serving.telemetry import configure_telemetry
     from pit_fintech.serving.worker import run_worker
 
-    configure_logging(level=get_settings().log_level, json=True)
+    settings = get_settings()
+    configure_logging(level=settings.log_level, json=True)
+    telemetry = configure_telemetry(
+        service_name="pit-fintech-online-worker",
+        endpoint=settings.otel_endpoint,
+        enabled=bool(settings.otel_endpoint),
+    )
     store = OnlineStoreConfig(
         kind=OnlineStoreKind.REDIS,
         uri=f"redis://{host}:{port}/{db}",
@@ -1056,7 +1063,11 @@ def serving_worker(
         port=port,
         db=db,
     )
-    run_worker(store=store, feature_service_version=PAYSIM_FEATURE_SERVICE_VERSION)
+    run_worker(
+        store=store,
+        feature_service_version=PAYSIM_FEATURE_SERVICE_VERSION,
+        telemetry=telemetry,
+    )
 
 
 if __name__ == "__main__":

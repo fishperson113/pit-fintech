@@ -65,18 +65,28 @@ def publish_score_event(
     from pit_fintech.serving.online_state import _redis_client
 
     client = _redis_client(store)
+    fields = {
+        "request_id": request_id,
+        "transaction_id": transaction_id,
+        "entity_id": entity_id,
+        "step": str(step),
+        "knowledge_step": str(knowledge_step if knowledge_step is not None else step),
+        "transaction_type": transaction_type,
+        "amount": str(amount),
+        "feature_service_version": feature_service_version,
+    }
+    try:
+        from opentelemetry.propagate import inject
+
+        carrier: dict[str, str] = {}
+        inject(carrier)
+        if carrier.get("traceparent"):
+            fields["traceparent"] = carrier["traceparent"]
+    except Exception:  # OTel is optional; the worker still processes the event without propagation.
+        pass
     return client.xadd(
         score_event_stream_key(feature_service_version=feature_service_version),
-        {
-            "request_id": request_id,
-            "transaction_id": transaction_id,
-            "entity_id": entity_id,
-            "step": str(step),
-            "knowledge_step": str(knowledge_step if knowledge_step is not None else step),
-            "transaction_type": transaction_type,
-            "amount": str(amount),
-            "feature_service_version": feature_service_version,
-        },
+        fields,
     )
 
 

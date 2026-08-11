@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from contextlib import nullcontext
 from decimal import Decimal
 from typing import Any
 
@@ -44,6 +45,7 @@ def run_worker(
     feature_service_version: str,
     batch_size: int = 32,
     block_ms: int = 1000,
+    telemetry: Any | None = None,
 ) -> None:
     """Consume score events in order, apply each, publish the result. Runs forever."""
 
@@ -89,20 +91,58 @@ def run_worker(
             for message_id, raw_fields in entries:
                 fields = _decode_message(raw_fields)
                 request_id = fields["request_id"]
-                try:
-                    result = apply_score_event(
-                        store=store,
+                entity_id = fields["entity_id"]
+                step = int(fields["step"])
+                knowledge_step = int(fields["knowledge_step"])
+                from pit_fintech.platform.logging_config import (
+                    bind_request_context,
+                    clear_request_context,
+                )
+
+                bind_request_context(
+                    request_id=request_id,
+                    transaction_id=fields["transaction_id"],
+                    entity_id=entity_id,
+                    step=step,
+                    knowledge_step=knowledge_step,
+                    feature_service_version=feature_service_version,
+                    model_version="pit-online-worker",
+                )
+                parent_context = None
+                if fields.get("traceparent"):
+                    try:
+                        from opentelemetry.propagate import extract
+
+                        parent_context = extract({"traceparent": fields["traceparent"]})
+                    except Exception:  # OTel is optional; keep processing without trace linkage.
+                        parent_context = None
+                write_span = (
+                    telemetry.span(
+                        "online_write",
+                        context=parent_context,
                         request_id=request_id,
-                        entity_id=fields["entity_id"],
-                        step=int(fields["step"]),
-                        knowledge_step=int(fields["knowledge_step"]),
-                        transaction_type=fields["transaction_type"],
-                        amount=Decimal(fields["amount"]),
+                        entity_id=entity_id,
+                        step=step,
+                        knowledge_step=knowledge_step,
                     )
+                    if telemetry is not None
+                    else nullcontext()
+                )
+                try:
+                    with write_span:
+                        result = apply_score_event(
+                            store=store,
+                            request_id=request_id,
+                            entity_id=entity_id,
+                            step=step,
+                            knowledge_step=knowledge_step,
+                            transaction_type=fields["transaction_type"],
+                            amount=Decimal(fields["amount"]),
+                        )
                     logger.info(
                         "applied entity=%s step=%s status=%s outcome=%s",
-                        fields["entity_id"],
-                        fields["step"],
+                        entity_id,
+                        step,
                         result["status"],
                         result.get("outcome", "-"),
                     )
@@ -125,6 +165,7 @@ def run_worker(
                     except Exception:  # pragma: no cover - best-effort error surfacing
                         logger.exception("could not write error result for %s", request_id)
                 finally:
+                    clear_request_context()
                     try:
                         client.xack(stream, CONSUMER_GROUP, message_id)
                     except Exception:  # pragma: no cover - ack failure must not stop the loop

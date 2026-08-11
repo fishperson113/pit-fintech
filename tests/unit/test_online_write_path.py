@@ -17,6 +17,8 @@ from pit_fintech.serving.online_state import (
     _evict,
     compute_window_features,
     count_parity_mismatches,
+    latest_prior_event_step,
+    recompute_pre_decision_features,
 )
 
 
@@ -50,6 +52,43 @@ def test_late_arrival_visible_only_from_its_knowledge_cutoff() -> None:
     # The late event lands in the 1h window [5,6) once eligible.
     assert before["pit_prior_amount_1h"] == 0.0
     assert after["pit_prior_amount_1h"] == 999.0
+
+
+def test_out_of_order_request_recomputes_pre_decision_cutoff() -> None:
+    """An older request must not receive the newer stored aggregate (strict PIT)."""
+    events = [_event(743, "100.00"), _event(745, "200.00")]
+
+    values = recompute_pre_decision_features(
+        events=events,
+        request_step=744,
+        request_knowledge_step=744,
+    )
+
+    assert values["pit_prior_count_1h"] == 1
+    assert values["pit_prior_amount_1h"] == 100.0
+    assert values["pit_prior_count_24h"] == 1
+
+
+def test_duplicate_request_cutoff_excludes_duplicate_event_step() -> None:
+    """A duplicate at step 745 must see step 744 history, not post-event step 745 history."""
+    events = [_event(744, "100.00"), _event(745, "150.75")]
+
+    values = recompute_pre_decision_features(
+        events=events,
+        request_step=745,
+        request_knowledge_step=745,
+    )
+
+    assert values["pit_prior_count_1h"] == 1
+    assert values["pit_prior_amount_1h"] == 100.0
+    assert values["pit_prior_amount_24h"] == 100.0
+
+
+def test_feature_step_is_latest_strictly_prior_event() -> None:
+    events = [_event(743, "100.00"), _event(744, "151.75"), _event(745, "150.75")]
+
+    assert latest_prior_event_step(events=events, request_step=744) == 743
+    assert latest_prior_event_step(events=events, request_step=743) is None
 
 
 def test_window_eviction_drops_oldest_event() -> None:
