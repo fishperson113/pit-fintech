@@ -611,6 +611,7 @@ def model_spike(
     table.add_column("PR-AUC", justify="right")
     table.add_column("ROC-AUC", justify="right")
     table.add_column("Recall@FPR", justify="right")
+    table.add_column("Precision@FPR", justify="right")
     table.add_column("Observed FPR", justify="right")
     table.add_column("Threshold policy")
     for row in manifest_summary_rows(manifest):
@@ -621,6 +622,7 @@ def model_spike(
             f"{row['test_pr_auc']:.6f}",
             f"{row['test_roc_auc']:.6f}",
             f"{row['recall_at_fixed_fpr']:.6f}",
+            f"{row['precision_at_fixed_fpr']:.6f}",
             f"{row['observed_fpr']:.6f}",
             str(row["threshold_policy"]),
         )
@@ -760,6 +762,96 @@ def model_train(
         )
     console.print(f"MLflow parent run: [cyan]{manifest.mlflow_parent_run_id}[/]")
     console.print(f"manifest: {output_path}")
+
+
+@model_app.command("gold-evaluate")
+def model_gold_evaluate(
+    pre_path: Annotated[Path, typer.Option(help="Gold pre_decision_features Delta path")],
+    pre_version: Annotated[int, typer.Option(min=0, help="Exact pre-decision Delta version")],
+    post_path: Annotated[Path, typer.Option(help="Gold post_event_state_updates Delta path")],
+    post_version: Annotated[int, typer.Option(min=0, help="Exact post-event Delta version")],
+    labels_path: Annotated[Path, typer.Option(help="Silver labels Delta path")],
+    labels_version: Annotated[int, typer.Option(min=0, help="Exact labels Delta version")],
+    seed: Annotated[int, typer.Option(help="Deterministic random-split seed")] = 20_260_727,
+    fixed_fpr: Annotated[float, typer.Option(min=0.000001, max=0.999999)] = 0.01,
+) -> None:
+    """Run the Gold-backed E1-E4 matrix; E2 uses post-event features as the leaky control."""
+
+    from deltalake import DeltaTable
+
+    from pit_fintech.models.paysim_gold import build_gold_experiment_table, evaluate_gold_matrix
+    from pit_fintech.models.paysim_lightgbm import default_tracking_uri
+
+    project_root = resolve_project_root(Path.cwd())
+
+    def read_exact(path: Path, version: int):
+        resolved = path if path.is_absolute() else project_root / path
+        return DeltaTable(str(resolved), version=version).to_pyarrow_table()
+
+    table = build_gold_experiment_table(
+        pre_decision=read_exact(pre_path, pre_version),
+        post_event=read_exact(post_path, post_version),
+        labels=read_exact(labels_path, labels_version),
+    )
+    _, _, artifact_root = _gold_roots()
+    results = evaluate_gold_matrix(
+        table,
+        seed=seed,
+        fixed_fpr=fixed_fpr,
+        mlflow_tracking_uri=default_tracking_uri(artifact_root),
+    )
+    result_table = Table(title="Gold E1-E4 evaluation")
+    columns = ("ID", "Features", "Split", "Deployable", "PR-AUC", "ROC-AUC", "Recall", "Precision")
+    numeric_columns = {"PR-AUC", "ROC-AUC", "Recall", "Precision"}
+    for name in columns:
+        result_table.add_column(name, justify="right" if name in numeric_columns else "left")
+    for result in results:
+        result_table.add_row(
+            result.experiment_id,
+            result.feature_set,
+            result.split_policy,
+            str(result.deployable),
+            f"{result.test_pr_auc:.6f}",
+            f"{result.test_roc_auc:.6f}",
+            f"{result.test_recall:.6f}",
+            f"{result.test_precision:.6f}",
+        )
+    console.print(result_table)
+    console.print(f"Gold rows: {table.num_rows:,}")
+    for result in results:
+        console.print(f"{result.experiment_id} MLflow run: {result.mlflow_run_id}")
+
+
+@model_app.command("promote-champion")
+def model_promote_champion(
+    run_id: Annotated[str, typer.Option(help="MLflow E4 Gold run id to promote")],
+    registered_model_name: Annotated[
+        str, typer.Option(help="MLflow registered model name")
+    ] = "paysim-fraud-lightgbm",
+    tracking_uri: Annotated[str | None, typer.Option(help="Optional MLflow tracking URI")] = None,
+) -> None:
+    """Register an eligible Gold E4 run and move the MLflow champion alias."""
+
+    import mlflow
+
+    from pit_fintech.models.paysim_lightgbm import default_tracking_uri
+    from pit_fintech.serving.model_loader import promote_run_to_champion
+
+    _, _, artifact_root = _gold_roots()
+    resolved_tracking_uri = tracking_uri or default_tracking_uri(artifact_root)
+    mlflow.set_tracking_uri(resolved_tracking_uri)
+    run = mlflow.MlflowClient().get_run(run_id)
+    if run.data.tags.get("experiment_id") != "E4" or run.data.tags.get("deployable") != "true":
+        console.print("[red]Only a deployable Gold E4 run can become champion.[/]")
+        raise typer.Exit(code=2)
+    version = promote_run_to_champion(
+        tracking_uri=resolved_tracking_uri,
+        registered_model_name=registered_model_name,
+        mlflow_run_id=run_id,
+    )
+    console.print(f"registered_model: {registered_model_name}")
+    console.print(f"champion_version: {version}")
+    console.print(f"champion_uri: models:/{registered_model_name}@champion")
 
 
 @notebooks_app.command("verify")

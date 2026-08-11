@@ -167,6 +167,8 @@ def test_t4_train_candidate_logs_complete_mlflow_contract(tmp_path: Path) -> Non
     assert result.missing_artifacts == ()
     assert result.mlflow_run_id
     assert result.metrics.test_pr_auc >= 0.0
+    assert 0.0 <= result.metrics.test_recall_at_fixed_fpr <= 1.0
+    assert 0.0 <= result.metrics.test_precision_at_fixed_fpr <= 1.0
 
 
 def test_split_temporal_rejects_partial_gold_range(tmp_path: Path) -> None:

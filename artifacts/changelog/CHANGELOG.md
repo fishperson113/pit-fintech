@@ -1,5 +1,18 @@
 # Project changelog
 
+## 2026-08-11 — M064: Champion loading and Gold E1–E4 evaluation
+
+- **Implemented and verified on committed Gold.** Serving now resolves MLflow Registry alias
+  `paysim-fraud-lightgbm@champion` by default, validates ordered features/threshold, and fails closed
+  when no champion exists. Added `pit model promote-champion` for an eligible Gold E4 run.
+- Added Gold-backed E1–E4 evaluation without a Gold rebuild: E2 uses post-event/current-inclusive
+  features as the non-deployable control; E1/E3/E4 use the existing Gold pre-decision table.
+- Real Gold run joined **2,770,409** rows and logged four MLflow runs. Every result includes PR-AUC,
+  ROC-AUC, recall and precision. E4 was registered as version 1 and alias `champion`; real
+  `predict_proba` load verified.
+- Unit suite **104 passed**, focused model/Gold/T4 suite **15 passed**, Ruff/format/compile pass.
+- Detail: [M064 log](milestones/M064-champion-gold-e1-e4.md).
+
 ## 2026-08-11 — M063: OTLP logs and cross-process trace correlation
 
 - **Implemented; locally verified.** FastAPI and worker now export structured logs through OTLP/HTTP

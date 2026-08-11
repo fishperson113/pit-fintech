@@ -13,6 +13,10 @@ T4_EXPERIMENT ?= E4
 T4_FEATURE_SET ?= pit
 WATERMARK ?= 743
 LOCUST_HOST ?= http://127.0.0.1:8000
+GOLD_ROOT ?= data/lakehouse/paysim1/16910f90577b0d98
+GOLD_PRE_VERSION ?= 8
+GOLD_POST_VERSION ?= 7
+GOLD_LABELS_VERSION ?= 7
 
 help: ## Show implemented targets and their purpose
 	@awk 'BEGIN {FS = ":.*?## "}; /^[a-zA-Z0-9_.-]+:.*?## / {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -90,6 +94,12 @@ test-t4-dataset: test-t3-smoke ## Run the T4 Gold-to-training dataset fixture la
 
 train-gold-candidate: ## Train one E1/E4 candidate from committed Gold into local MLflow
 	UV_PROJECT_ENVIRONMENT=.venv uv run --frozen --all-groups python scripts/run_t4_training.py --experiment $(T4_EXPERIMENT) --feature-set $(T4_FEATURE_SET)
+
+gold-evaluate: ## Run Gold-backed E1-E4 with precision/recall and log runs to local MLflow
+	UV_PROJECT_ENVIRONMENT=.venv uv run --frozen --all-groups pit model gold-evaluate \
+		--pre-path $(GOLD_ROOT)/gold/pre_decision_features --pre-version $(GOLD_PRE_VERSION) \
+		--post-path $(GOLD_ROOT)/gold/post_event_state_updates --post-version $(GOLD_POST_VERSION) \
+		--labels-path $(GOLD_ROOT)/silver/paysim_labels --labels-version $(GOLD_LABELS_VERSION)
 
 test-notebooks: data-sample ## Execute all Sprint 1 notebooks in memory
 	uv run --group dev pit notebooks verify
@@ -217,4 +227,4 @@ logs: ## Follow core service logs
 down: ## Stop services without deleting data volumes
 	docker compose down
 
-.PHONY: help bootstrap setup doctor lab lab-training lab-container data-sample data-snapshot profile build-lakehouse lakehouse-history build-fixture features gold promote-gold test-temporal test-unit test-lakehouse test-integration-full test-t3-smoke test-t4-dataset train-gold-candidate test-notebooks model-spike train test lint format check changelog-check lock materialize parity-reconcile serve serve-otel worker worker-up worker-down tools locust mlflow-ui demo demo-score demo-bad demo-metrics demo-medallion demo-contract demo-history demo-watermark demo-lineage demo-ablation redis-up redis-down up-core status logs down
+.PHONY: help bootstrap setup doctor lab lab-training lab-container data-sample data-snapshot profile build-lakehouse lakehouse-history build-fixture features gold promote-gold test-temporal test-unit test-lakehouse test-integration-full test-t3-smoke test-t4-dataset train-gold-candidate gold-evaluate test-notebooks model-spike train test lint format check changelog-check lock materialize parity-reconcile serve serve-otel worker worker-up worker-down tools locust mlflow-ui demo demo-score demo-bad demo-metrics demo-medallion demo-contract demo-history demo-watermark demo-lineage demo-ablation redis-up redis-down up-core status logs down

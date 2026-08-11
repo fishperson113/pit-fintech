@@ -104,15 +104,10 @@ class ServingSettings:
 def build_scoring_context(*, settings: ServingSettings) -> ScoringContext:
     """Resolve the champion model, threshold and provider once, at startup.
 
-    Gate G11's second half -- "scoring tra dung active champion" -- would normally be decided by
-    reading the deployment manifest (``training/lifecycle.py: active_champion``). That function is
-    still a round-0 skeleton (``raise NotImplementedError``) and there is no MLflow model
-    registry/alias anywhere in this repo -- ``train_candidate`` never calls
-    ``mlflow.register_model``. So G11 cannot actually be satisfied yet: this function resolves an
-    explicit MLflow *run*, not a registered/promoted *model version*, and :attr:`ScoringContext.
-    model_version` carries the run id with that caveat spelled out at the call site below. This is
-    a deliberate scope cut for this pass, not a silent substitution -- promotion/rollback (T4) is
-    what would make G11 real.
+    With no explicit ``mlflow_run_id``, serving resolves the MLflow registry alias configured by
+    ``model_alias`` (default ``champion``) and fails closed when that alias is absent. An explicit
+    run id remains available for controlled local diagnostics and backward-compatible test fixtures;
+    it does not change the production default away from the champion alias.
 
     Raises at startup when the model's ordered feature names do not equal
     ``PAYSIM_MODEL_FEATURE_ORDER``. Guide s6.4 makes a matching model input contract a promotion
@@ -134,18 +129,30 @@ def build_scoring_context(*, settings: ServingSettings) -> ScoringContext:
     from pit_fintech.serving.feature_provider import build_feature_provider
 
     mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
-    run_id = settings.mlflow_run_id or _latest_finished_run_id()
+    champion = None
+    if settings.mlflow_run_id is None:
+        from pit_fintech.serving.model_loader import load_champion_model
 
-    model = mlflow.sklearn.load_model(f"runs:/{run_id}/model")
-
-    ordered_feature_names = _load_ordered_feature_names(run_id=run_id)
+        champion = load_champion_model(
+            tracking_uri=settings.mlflow_tracking_uri,
+            registered_model_name=settings.registered_model_name,
+            alias=settings.model_alias,
+        )
+        run_id = champion.mlflow_run_id
+        model = champion.model
+        ordered_feature_names = champion.ordered_feature_names
+        decision_threshold = champion.decision_threshold
+    else:
+        run_id = settings.mlflow_run_id
+        model = mlflow.sklearn.load_model(f"runs:/{run_id}/model")
+        ordered_feature_names = _load_ordered_feature_names(run_id=run_id)
+        decision_threshold = _load_decision_threshold(run_id=run_id)
     if tuple(ordered_feature_names) != PAYSIM_MODEL_FEATURE_ORDER:
         raise RuntimeError(
             "model input contract mismatch: MLflow run "
             f"{run_id} ordered_feature_names={ordered_feature_names} != "
             f"PAYSIM_MODEL_FEATURE_ORDER={PAYSIM_MODEL_FEATURE_ORDER}"
         )
-    decision_threshold = _load_decision_threshold(run_id=run_id)
 
     if settings.provider_kind != "redis":
         # build_feature_provider() would raise this same NotImplementedError itself, but raising
@@ -174,11 +181,12 @@ def build_scoring_context(*, settings: ServingSettings) -> ScoringContext:
         provider=provider,
         policy=settings.policy,
         model=model,
-        # No MLflow model registry/alias exists in this repo (see docstring above); the run id
-        # doubles as the model version identifier for this MVP.
-        model_version=run_id,
-        # No deployment manifest system yet either (`training/lifecycle.py` round-0 skeleton).
-        deployment_id=None,
+        model_version=(
+            f"{settings.registered_model_name}@{champion.model_version}" if champion else run_id
+        ),
+        deployment_id=(
+            f"{settings.registered_model_name}:{champion.model_version}" if champion else None
+        ),
         decision_threshold=decision_threshold,
         ordered_feature_names=ordered_feature_names,
         feature_service_version=settings.feature_service_version,

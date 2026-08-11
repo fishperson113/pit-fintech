@@ -304,6 +304,7 @@ def manifest_summary_rows(manifest: ModelCandidateManifest) -> list[dict[str, An
             "test_pr_auc": round(result.test_pr_auc, 6),
             "test_roc_auc": round(result.test_roc_auc, 6),
             "recall_at_fixed_fpr": round(result.test_recall_at_fixed_fpr, 6),
+            "precision_at_fixed_fpr": round(result.test_precision_at_fixed_fpr, 6),
             "observed_fpr": round(result.test_observed_fpr, 6),
             "threshold_policy": result.validation_threshold_policy,
             "seconds": round(result.training_seconds, 3),
