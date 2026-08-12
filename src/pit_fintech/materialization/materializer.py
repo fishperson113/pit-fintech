@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import time
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime
@@ -63,6 +64,9 @@ from pit_fintech.materialization.records import (
     online_run_key,
     online_watermark_key,
 )
+from pit_fintech.platform.lifecycle_logging import log_lifecycle
+
+logger = logging.getLogger(__name__)
 
 #: Writes are batched through a Redis pipeline; a batch this size keeps a round trip small while
 #: keeping the number of round trips low on the full 2.7M-entity store.
@@ -518,6 +522,17 @@ def materialize_to_watermark(
         },
     )
 
+    log_lifecycle(
+        logger,
+        "offline.materialization.completed",
+        gold_post_event_version=version,
+        records_noop=noop,
+        records_rejected=rejected,
+        records_written=written,
+        run_id=run_id,
+        status="success",
+        watermark_step=watermark_step,
+    )
     return MaterializationRunResult(
         status="completed",
         run_id=run_id,
@@ -790,9 +805,81 @@ def rematerialize_after_reset(
     every entity where it was not.
     """
 
-    # T5 round-1: out of scope today -- the G8 recovery lane needs the snapshot/compare harness on
-    # top of reset + materialize, which are both implemented. Left as an explicit gap, not a stub.
-    raise NotImplementedError("T5 round-1: G8 recovery lane is out of scope today")
+    if watermark_step < 1:
+        raise ValueError(f"watermark_step must be >= 1, got {watermark_step}")
+    client = _redis_client(store)
+    prefix = f"pit:{store.feature_service_version}:"
+
+    def snapshot() -> dict[str, dict[str, object]]:
+        result: dict[str, dict[str, object]] = {}
+        for key in client.scan_iter(match=prefix + "*"):
+            if key.endswith(":watermark") or key.endswith(":run"):
+                continue
+            payload = client.get(key)
+            if payload is None:
+                continue
+            record = json.loads(payload)
+            record.pop("materialization_run_id", None)
+            record.pop("written_at", None)
+            result[key] = record
+        return result
+
+    before = snapshot()
+    log_lifecycle(
+        logger,
+        "offline.recovery.started",
+        entities_before=len(before),
+        feature_service_version=store.feature_service_version,
+        run_id=run_id,
+        watermark_step=watermark_step,
+    )
+    reset_online_store(store=store)
+    materialize_to_watermark(
+        project_root=project_root,
+        data_root=data_root,
+        artifact_root=artifact_root,
+        store=store,
+        watermark_step=watermark_step,
+        run_id=run_id,
+        gold_post_event_version=gold_post_event_version,
+    )
+    after = snapshot()
+    all_keys = sorted(set(before) | set(after))
+    differing = tuple(key for key in all_keys if before.get(key) != after.get(key))
+    watermark = read_watermark(store=store)
+    watermark_restored = watermark is not None and watermark[0] == watermark_step
+    service_version_unchanged = all(
+        record.get("feature_service_version") == store.feature_service_version
+        for record in after.values()
+    )
+    identical = len(all_keys) - len(differing)
+    passed = not differing and len(before) == len(after) and watermark_restored
+    log_lifecycle(
+        logger,
+        "offline.recovery.completed",
+        differing_entities=len(differing),
+        entities_after=len(after),
+        entities_before=len(before),
+        feature_service_version_unchanged=service_version_unchanged,
+        passed=passed,
+        records_compared=len(all_keys),
+        records_identical=identical,
+        run_id=run_id,
+        status="success" if passed else "mismatch",
+        watermark_restored=watermark_restored,
+    )
+    return RecoveryReport(
+        store=store.kind,
+        watermark_step=watermark_step,
+        entities_before=len(before),
+        entities_after=len(after),
+        records_compared=len(all_keys),
+        records_identical=identical,
+        differing_entities=differing,
+        watermark_restored=watermark_restored,
+        feature_service_version_unchanged=service_version_unchanged,
+        passed=passed,
+    )
 
 
 def push_to_feast_online_store(

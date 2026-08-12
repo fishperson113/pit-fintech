@@ -44,6 +44,7 @@ from pit_fintech.materialization.materializer import (
     materialize_to_watermark,
     read_online_features,
     read_watermark,
+    rematerialize_after_reset,
 )
 from pit_fintech.materialization.records import OnlineStoreKind
 from pit_fintech.platform.doctor import collect_checks
@@ -58,6 +59,7 @@ notebooks_app = typer.Typer(no_args_is_help=True, help="Notebook quality command
 model_app = typer.Typer(no_args_is_help=True, help="Exploratory and gated model commands")
 features_app = typer.Typer(no_args_is_help=True, help="Versioned feature contract commands")
 materialize_app = typer.Typer(no_args_is_help=True, help="Online store materialization commands")
+backfill_app = typer.Typer(no_args_is_help=True, help="Atomic Gold backfill commands")
 serving_app = typer.Typer(no_args_is_help=True, help="Scoring API commands")
 parity_app = typer.Typer(no_args_is_help=True, help="Offline/online parity reconcile commands")
 app.add_typer(data_app, name="data")
@@ -66,6 +68,7 @@ app.add_typer(notebooks_app, name="notebooks")
 app.add_typer(model_app, name="model")
 app.add_typer(features_app, name="features")
 app.add_typer(materialize_app, name="materialize")
+app.add_typer(backfill_app, name="backfill")
 app.add_typer(serving_app, name="serving")
 app.add_typer(parity_app, name="parity")
 console = Console()
@@ -956,6 +959,55 @@ def notebooks_verify(
     console.print(f"verified {len(paths)} notebooks")
 
 
+@backfill_app.command("run")
+def backfill_run(
+    mode: Annotated[str, typer.Option("--mode", help="full, range or incremental")],
+    start: Annotated[int, typer.Option("--start", min=1)],
+    end: Annotated[int, typer.Option("--end", min=1)],
+    run_id: Annotated[str | None, typer.Option("--run-id")] = None,
+) -> None:
+    """Execute one atomic/idempotent Gold backfill and emit lifecycle evidence."""
+
+    from pit_fintech.backfill.records import BackfillMode
+    from pit_fintech.backfill.state_machine import execute_backfill, plan_backfill
+
+    try:
+        selected_mode = BackfillMode(mode.lower())
+    except ValueError as exc:
+        raise typer.BadParameter("mode must be full, range or incremental") from exc
+    _configure_offline_observability("pit-fintech-backfill")
+    project_root, data_root, artifact_root = _gold_roots()
+    plan = plan_backfill(
+        project_root=project_root,
+        data_root=data_root,
+        artifact_root=artifact_root,
+        mode=selected_mode,
+        cutoff_start_step=start,
+        cutoff_end_step=end,
+        run_id=run_id,
+    )
+    result = execute_backfill(
+        plan=plan,
+        project_root=project_root,
+        data_root=data_root,
+        artifact_root=artifact_root,
+    )
+    table = Table(title="Backfill run")
+    table.add_column("Field")
+    table.add_column("Value")
+    table.add_row("run_id", result.run_id)
+    table.add_row("mode", result.mode)
+    table.add_row("state", result.state)
+    table.add_row("idempotency_key", result.idempotency_key)
+    table.add_row("source_silver_version", str(result.source_silver_transactions_version))
+    table.add_row("gold_pre_version", str(result.committed_gold_pre_decision_version))
+    table.add_row("gold_post_version", str(result.committed_gold_post_event_version))
+    table.add_row("manifest", result.manifest_path)
+    console.print(table)
+    if result.state.value != "committed":
+        raise typer.Exit(code=1)
+
+
 @materialize_app.command("run")
 def materialize_run(
     watermark: Annotated[
@@ -979,6 +1031,7 @@ def materialize_run(
 
     from pit_fintech.features.paysim_specs import PAYSIM_ENTITY, PAYSIM_FEATURE_SERVICE_VERSION
 
+    _configure_offline_observability("pit-fintech-materialization")
     project_root, data_root, artifact_root = _gold_roots()
     resolved_run_id = run_id or (
         f"materialize-{watermark}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%f%z')}"
@@ -1011,6 +1064,67 @@ def materialize_run(
     table.add_row("manifest", result.manifest_path)
     console.print(table)
     if result.status != "completed":
+        raise typer.Exit(code=1)
+
+
+@materialize_app.command("recover")
+def materialize_recover(
+    watermark: Annotated[
+        int,
+        typer.Option("--watermark", min=1, help="Pinned Gold post-event step to restore"),
+    ],
+    gold_post_event_version: Annotated[
+        int,
+        typer.Option("--gold-post-event-version", min=0, help="Pinned Gold Delta version"),
+    ],
+    uri: Annotated[
+        str,
+        typer.Option("--uri", help="Online store connection URI"),
+    ] = "redis://127.0.0.1:6379/0",
+    run_id: Annotated[str | None, typer.Option("--run-id", help="Recovery run identifier")] = None,
+) -> None:
+    """Reset this feature namespace and prove rematerialization restores it exactly."""
+
+    from pit_fintech.features.paysim_specs import PAYSIM_ENTITY, PAYSIM_FEATURE_SERVICE_VERSION
+
+    telemetry = _configure_offline_observability("pit-fintech-recovery")
+    project_root, data_root, artifact_root = _gold_roots()
+    resolved_run_id = run_id or (
+        f"recovery-{watermark}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%f%z')}"
+    )
+    store_config = OnlineStoreConfig(
+        kind=OnlineStoreKind.REDIS,
+        uri=uri,
+        feature_service_version=PAYSIM_FEATURE_SERVICE_VERSION,
+        entity=PAYSIM_ENTITY,
+    )
+    result = rematerialize_after_reset(
+        project_root=project_root,
+        data_root=data_root,
+        artifact_root=artifact_root,
+        store=store_config,
+        watermark_step=watermark,
+        run_id=resolved_run_id,
+        gold_post_event_version=gold_post_event_version,
+    )
+    if telemetry is not None:
+        telemetry.record_parity_check(
+            checked=result.records_compared > 0,
+            mismatches=len(result.differing_entities),
+        )
+    table = Table(title="Materialization recovery")
+    table.add_column("Field")
+    table.add_column("Value")
+    table.add_row("run_id", resolved_run_id)
+    table.add_row("watermark_step", str(result.watermark_step))
+    table.add_row("entities_before", str(result.entities_before))
+    table.add_row("entities_after", str(result.entities_after))
+    table.add_row("records_identical", str(result.records_identical))
+    table.add_row("differing_entities", str(len(result.differing_entities)))
+    table.add_row("watermark_restored", str(result.watermark_restored))
+    table.add_row("passed", "yes" if result.passed else "no")
+    console.print(table)
+    if not result.passed:
         raise typer.Exit(code=1)
 
 

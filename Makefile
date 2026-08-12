@@ -17,6 +17,9 @@ GOLD_ROOT ?= data/lakehouse/paysim1/16910f90577b0d98
 GOLD_PRE_VERSION ?= 8
 GOLD_POST_VERSION ?= 7
 GOLD_LABELS_VERSION ?= 7
+BACKFILL_MODE ?= range
+BACKFILL_START ?= 1
+BACKFILL_END ?= 743
 
 help: ## Show implemented targets and their purpose
 	@awk 'BEGIN {FS = ":.*?## "}; /^[a-zA-Z0-9_.-]+:.*?## / {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -142,6 +145,12 @@ lock: ## Resolve and refresh the exact uv dependency lock
 
 materialize: ## Materialize Gold post-event state into the online store up to WATERMARK
 	uv run pit materialize run --watermark $(WATERMARK)
+
+materialize-recover: ## Reset Redis namespace and verify exact rematerialization recovery
+	uv run pit materialize recover --watermark $(WATERMARK) --gold-post-event-version $(GOLD_POST_VERSION)
+
+backfill: ## Run atomic/idempotent Gold backfill with BACKFILL_MODE and range variables
+	uv run pit backfill run --mode $(BACKFILL_MODE) --start $(BACKFILL_START) --end $(BACKFILL_END)
 
 parity-reconcile: ## Reconcile online aggregates against the offline DuckDB reference (async, ADR-009)
 	uv run pit parity reconcile

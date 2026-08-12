@@ -132,18 +132,39 @@ data/lakehouse/served_events_gold_candidate  Gold candidate/staging
 data/lakehouse/quarantine/served_events      invalid rows
 ```
 
-## Verification
+## M071 — MVP invariant gates and Grafana evidence
 
-Passed:
+Implemented:
+
+- Added `pit backfill run --mode full|range|incremental --start ... --end ...` plus Make/PowerShell
+  wrappers. The command emits `offline.backfill.started/completed` with mode, range, idempotency key,
+  source Silver version and committed Gold versions.
+- Implemented `materialize recover`, which snapshots the scoped Redis namespace, resets it, reruns
+  materialization at a pinned Gold version/watermark and compares normalized records plus watermark.
+  It emits `offline.recovery.started/completed` and fails when records or watermark differ.
+- Materialization emits `offline.materialization.completed` with pinned Gold version, watermark and
+  write/no-op/reject counts.
+- Grafana dashboard version 9 adds `Offline backfill`, `Offline materialization` and
+  `Offline Redis recovery` panels.
+
+Verification:
 
 ```text
-focused served-event pipeline/correlation/lifecycle tests: 4 passed
-ruff check: All checks passed!
-ruff format: 117 files already formatted
-dashboard JSON: valid, version 7
+unit: 110 passed
+Gold/Feast integration: 8 passed (one third-party Ibis deprecation warning)
+T3 backfill smoke: 1 passed
+ruff check/format: pass, 117 files formatted
+dashboard JSON v9: valid, 10 panels
 git diff --check: pass
 ```
 
+Not yet verified:
+
+- `materialize recover` has not been run live because it deliberately deletes the scoped Redis
+  namespace before rebuilding it; owner must run it against the intended Redis/Gold version.
+- Full/range/incremental real backfill evidence and Grafana arrival remain owner-run.
+- The original synthetic T9 E2E module remains skipped; MVP closure will use the invariant-focused
+  lanes above plus explicit recovery/backfill evidence rather than claiming the skipped broad T9 suite.
 No production Gold promotion is wired into the automatic path. No live M070 `make ingest` run was
 performed by this session; owner verification should confirm Silver/candidate paths and Loki evidence.
 

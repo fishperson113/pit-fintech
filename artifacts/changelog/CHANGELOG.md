@@ -1,5 +1,48 @@
 # Project changelog
 
+## Next session — 2026-08-13: Sprint 2 closure plan
+
+Mục tiêu: đóng Sprint 2 theo MVP invariant scope đã chốt, không mở rộng SQLite hoặc Feast PushSource.
+
+Owner-run sequence:
+
+1. Rebuild/recreate API và `pit-online-worker` với OTel packages; xác nhận worker/consumer/parity logs
+   xuất hiện trên Loki/Grafana.
+2. Chạy range backfill hai lần với cùng source/range; xác nhận idempotency key, row/schema/checksum,
+   source Silver version và committed Gold versions giống nhau.
+3. Chạy full hoặc incremental backfill lane phù hợp và lưu manifest/evidence.
+4. Chạy `materialize recover` trên Redis namespace được phép reset; xác nhận
+   `differing_entities=0`, `records_identical=records_compared`, `watermark_restored=True`.
+5. Chạy async parity sau traffic mới; xác nhận `field_mismatches=0`, `missing_online=0`, `passed=True`.
+6. Chạy `make ingest` với Bronze mới hoặc checkpoint no-op; xác nhận Silver + Gold candidate và
+   `label_status=unlabeled` trên dashboard.
+7. Chạy invariant-focused acceptance lanes và cập nhật G2/G3/G6/G8/G10 status. Chỉ ghi
+   `Sprint 2 closed` nếu tất cả evidence trên đã có; nếu còn lane lỗi, ghi `blocked` kèm root cause.
+
+Primary Grafana dashboards:
+
+- `PIT Fintech Observability` — online, Bronze, candidate, materialization, recovery, parity.
+- `PIT Fintech Time Travel & Snapshot Lineage` — version/checksum/watermark lineage.
+
+Expected closure invariant evidence:
+
+```text
+I1 PIT correctness: future-read violations=0
+I2 offline/online parity: mismatches=0 at required checkpoints
+I3 backfill: atomic + idempotent + reproducible from exact versions/checksums
+```
+
+## 2026-08-12 — M071: MVP invariant gates and Grafana evidence
+
+- **Implemented; focused verification passed; live recovery/backfill evidence pending.** Added
+  `pit backfill run` for full/range/incremental state-machine execution and `pit materialize recover`
+  for scoped Redis reset/rematerialization comparison. Added lifecycle logs and Grafana panels for
+  backfill, materialization and recovery.
+- Verification: unit **110 passed**, Gold/Feast integration **8 passed**, T3 smoke **1 passed**, Ruff
+  clean, dashboard JSON v9 valid with 10 panels. Live recovery intentionally not run because it deletes
+  the scoped Redis namespace; full real backfill and Loki arrival remain owner-run.
+- Detail: [M066–M071 consolidated log](milestones/M066-M070-offline-observability-and-candidate-flow.md).
+
 ## 2026-08-12 — M070: Automatic served-event Silver and Gold candidate path
 
 - **Implemented; focused verification passed; live verification pending.** `pit ingest event-history` now

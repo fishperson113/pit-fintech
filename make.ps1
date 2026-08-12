@@ -24,6 +24,8 @@ param(
     [int]$Start = 1,
     [int]$End = 1,
     [string]$RunId = "",
+    [ValidateSet("full", "range", "incremental")]
+    [string]$BackfillMode = "range",
     [int]$Watermark = 743,
     [string]$LocustHost = "http://127.0.0.1:8000",
     [string]$GoldRoot = "data/lakehouse/paysim1/16910f90577b0d98",
@@ -214,6 +216,21 @@ switch ($Target) {
     "lock" { Invoke-Checked "uv" @("lock") }
     "materialize" {
         Invoke-Checked "uv" @("run", "pit", "materialize", "run", "--watermark", "$Watermark")
+    }
+    "materialize-recover" {
+        Invoke-Checked "uv" @(
+            "run", "pit", "materialize", "recover",
+            "--watermark", "$Watermark",
+            "--gold-post-event-version", "$GoldPostVersion",
+            "--run-id", $(if ($RunId) { $RunId } else { "" })
+        )
+    }
+    "backfill" {
+        Invoke-Checked "uv" @(
+            "run", "pit", "backfill", "run",
+            "--mode", "$BackfillMode", "--start", "$Start", "--end", "$End",
+            "--run-id", $(if ($RunId) { $RunId } else { "" })
+        )
     }
     "parity-reconcile" {
         Invoke-Checked "uv" @("run", "pit", "parity", "reconcile")

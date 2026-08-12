@@ -1,10 +1,19 @@
 # Project status
 
-Last updated: 2026-08-12 (M070). Status words are strict:
+Last updated: 2026-08-12 (M071). Status words are strict:
 
 - **planned**: present in the six-week guide, with no claim that code exists;
 - **implemented**: code/artifact exists but the relevant gate may not have run;
 - **verified**: the documented command has passed in this workspace.
+
+## Next session — 2026-08-13
+
+Sprint 2 closure target is the MVP invariant scope, not SQLite/Feast PushSource expansion. Before
+claiming closure, owner must verify in Grafana and manifests: OTel worker arrival; repeated range
+backfill with identical idempotency/checksum/version evidence; full or incremental backfill; Redis
+reset/rematerialization with zero differing records and restored watermark; required async parity
+checkpoints with zero mismatches; and served-event Bronze -> Silver -> unlabeled Gold candidate output.
+If any lane fails, record the exact root cause and leave Sprint 2 `blocked` rather than overclaiming.
 
 ## Project governance
 
@@ -65,6 +74,7 @@ Last updated: 2026-08-12 (M070). Status words are strict:
 ||| M068 event-driven async parity consumer | **implemented (agent static analysis; owner live verification pending)** | Worker now coalesces post-apply parity signals in one daemon consumer thread, runs DuckDB reconcile asynchronously, emits latest parity lifecycle logs/metrics, and never blocks `/score` or Redis event handling. Grafana parity panel accepts manual and worker-emitted parity logs. Worker rebuild and one-request live proof pending. |
 ||| M069 OTLP logs in serving images | **implemented (static config verified; image/live verification pending)** | Worker was proven to run parity but had OTel packages missing, so its logs never reached Loki. Dockerfile now supports `INSTALL_OTEL=1`; API and worker compose builds enable it. Rebuild/recreate and Loki verification pending. |
 ||| M070 served-event Silver and Gold candidate path | **implemented (focused test passed; live verification pending)** | `pit ingest event-history` now idempotently normalizes the resolved Bronze table into `served_events_silver` and computes strict-PIT `served_events_gold_candidate`, including checkpoint no-op runs; invalid rows can be quarantined; candidate rows remain unlabeled and unpromoted. Grafana dashboard v7 adds the candidate panel. |
+||| M071 MVP invariant gates and Grafana evidence | **implemented (focused gates verified; live recovery/backfill evidence pending)** | Added `pit backfill run` and `pit materialize recover`; lifecycle logs/panels cover backfill, materialization and Redis recovery. Unit 110, Gold/Feast integration 8, T3 smoke 1 and lint pass. Recovery intentionally not live-run because it resets the scoped Redis namespace; full real backfill/Loki evidence remains open. |
 
 ## Sprint 1
 

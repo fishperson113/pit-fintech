@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import shutil
 import uuid
 from dataclasses import asdict, dataclass, replace
@@ -63,6 +64,9 @@ from pit_fintech.features.build_offline import (
     promote_staged_gold,
     validate_gold_cutoff_range,
 )
+from pit_fintech.platform.lifecycle_logging import log_lifecycle
+
+logger = logging.getLogger(__name__)
 
 #: The frozen full-range bounds (CLAUDE.md, ADR-002/006): PaySim1 has steps 1-743. Declared here
 #: rather than imported from ``training/dataset.py`` (T4, also round-0/WIP) so T3 does not pick up
@@ -510,6 +514,17 @@ def execute_backfill(
     data_root = data_root.resolve()
     artifact_root = artifact_root.resolve()
 
+    log_lifecycle(
+        logger,
+        "offline.backfill.started",
+        end_step=plan.output_end_step,
+        idempotency_key=plan.idempotency_key,
+        mode=plan.mode,
+        run_id=plan.run_id,
+        start_step=plan.output_start_step,
+        source_silver_version=plan.source_silver_transactions_version,
+    )
+
     if plan.resume_action is BackfillResumeAction.FAIL_SOURCE_CHECKSUM_CHANGED:
         raise RuntimeError(
             f"refusing to execute backfill {plan.run_id!r}: idempotency key "
@@ -647,6 +662,17 @@ def execute_backfill(
     cleanup_staging(artifact_root=artifact_root, run_id=plan.run_id)
     committed_record = replace(committed_record, staging_cleaned=True)
     manifest_path = write_run_manifest(record=committed_record, artifact_root=artifact_root)
+    log_lifecycle(
+        logger,
+        "offline.backfill.completed",
+        gold_post_version=committed_record.committed_gold_post_event_version,
+        gold_pre_version=committed_record.committed_gold_pre_decision_version,
+        idempotency_key=plan.idempotency_key,
+        mode=plan.mode,
+        run_id=plan.run_id,
+        state=committed_record.state,
+        status="success",
+    )
     return replace(committed_record, manifest_path=str(manifest_path))
 
 
