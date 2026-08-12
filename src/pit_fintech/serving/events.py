@@ -62,6 +62,7 @@ def publish_score_event(
     The amount is serialized as a decimal string so the worker's ``Decimal(amount)`` is exact.
     """
 
+    from pit_fintech.contracts.served_events import served_event_id
     from pit_fintech.serving.online_state import _redis_client
 
     client = _redis_client(store)
@@ -73,6 +74,13 @@ def publish_score_event(
         "knowledge_step": str(knowledge_step if knowledge_step is not None else step),
         "transaction_type": transaction_type,
         "amount": str(amount),
+        "event_id": served_event_id(
+            destination_entity_id=entity_id,
+            step=step,
+            knowledge_step=knowledge_step if knowledge_step is not None else step,
+            transaction_type=transaction_type,
+            amount=str(amount),
+        ),
         "feature_service_version": feature_service_version,
     }
     try:

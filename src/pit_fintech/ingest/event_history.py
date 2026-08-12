@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,6 +11,11 @@ from typing import Any
 
 import pyarrow as pa
 from deltalake import DeltaTable, write_deltalake
+
+from pit_fintech.contracts.served_events import served_event_id
+from pit_fintech.platform.lifecycle_logging import log_lifecycle
+
+logger = logging.getLogger(__name__)
 
 REQUIRED_FIELDS = (
     "source_row_number",
@@ -36,18 +41,13 @@ class EventHistoryIngestReport:
 
 
 def _event_id(row: dict[str, Any]) -> str:
-    identity = {
-        name: str(row[name])
-        for name in (
-            "destination_entity_id",
-            "step",
-            "knowledge_step",
-            "transaction_type",
-            "amount",
-        )
-    }
-    payload = json.dumps(identity, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return served_event_id(
+        destination_entity_id=str(row["destination_entity_id"]),
+        step=int(row["step"]),
+        knowledge_step=int(row["knowledge_step"]),
+        transaction_type=str(row["transaction_type"]),
+        amount=str(row["amount"]),
+    )
 
 
 def _read_checkpoint(path: Path) -> int:
@@ -99,8 +99,15 @@ def ingest_event_history(
     """Append unseen Event History rows to Bronze and advance the checkpoint atomically."""
 
     start_line = _read_checkpoint(checkpoint_path)
+    log_lifecycle(
+        logger,
+        "offline.bronze.ingest.started",
+        bronze_path=bronze_path,
+        checkpoint_start=start_line,
+        history_path=history_path,
+    )
     if not history_path.exists():
-        return EventHistoryIngestReport(
+        report = EventHistoryIngestReport(
             history_path=str(history_path),
             bronze_path=str(bronze_path),
             checkpoint_path=str(checkpoint_path),
@@ -110,6 +117,17 @@ def ingest_event_history(
             rows_appended=0,
             duplicate_rows=0,
         )
+        log_lifecycle(
+            logger,
+            "offline.bronze.ingest.completed",
+            bronze_path=bronze_path,
+            checkpoint_end=report.end_line,
+            duplicate_rows=report.duplicate_rows,
+            rows_appended=report.rows_appended,
+            rows_read=report.rows_read,
+            status="no_input",
+        )
+        return report
 
     parsed: list[dict[str, Any]] = []
     with history_path.open(encoding="utf-8") as handle:
@@ -133,25 +151,32 @@ def ingest_event_history(
             duplicate_rows += 1
             continue
         batch_ids.add(event_id)
-        records.append(
-            {
-                "event_id": event_id,
-                "source_row_number": int(row["source_row_number"]),
-                "destination_entity_id": str(row["destination_entity_id"]),
-                "step": int(row["step"]),
-                "knowledge_step": int(row["knowledge_step"]),
-                "transaction_type": str(row["transaction_type"]),
-                "amount": str(row["amount"]),
-                "served_at": str(row["served_at"]),
-                "ingested_at": ingested_at,
-            }
-        )
+        record = {
+            "event_id": event_id,
+            "source_row_number": int(row["source_row_number"]),
+            "destination_entity_id": str(row["destination_entity_id"]),
+            "step": int(row["step"]),
+            "knowledge_step": int(row["knowledge_step"]),
+            "transaction_type": str(row["transaction_type"]),
+            "amount": str(row["amount"]),
+            "served_at": str(row["served_at"]),
+            "ingested_at": ingested_at,
+        }
+        for field in ("request_id", "transaction_id"):
+            if field in row:
+                record[field] = str(row[field])
+        records.append(record)
 
     if records:
         table = pa.Table.from_pylist(records)
-        write_deltalake(str(bronze_path), table, mode="append")
+        write_deltalake(
+            str(bronze_path),
+            table,
+            mode="append",
+            schema_mode="merge" if any("transaction_id" in row for row in records) else None,
+        )
     _write_checkpoint(checkpoint_path, end_line)
-    return EventHistoryIngestReport(
+    report = EventHistoryIngestReport(
         history_path=str(history_path),
         bronze_path=str(bronze_path),
         checkpoint_path=str(checkpoint_path),
@@ -161,3 +186,18 @@ def ingest_event_history(
         rows_appended=len(records),
         duplicate_rows=duplicate_rows,
     )
+    log_lifecycle(
+        logger,
+        "offline.bronze.ingest.completed",
+        bronze_path=bronze_path,
+        checkpoint_end=report.end_line,
+        duplicate_rows=report.duplicate_rows,
+        event_id_first=records[0]["event_id"] if records else None,
+        event_id_last=records[-1]["event_id"] if records else None,
+        rows_appended=report.rows_appended,
+        rows_read=report.rows_read,
+        status="success",
+        transaction_id_first=records[0].get("transaction_id") if records else None,
+        transaction_id_last=records[-1].get("transaction_id") if records else None,
+    )
+    return report

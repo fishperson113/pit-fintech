@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import time
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
@@ -86,6 +87,7 @@ from pit_fintech.features.paysim_specs import (
     paysim_feature_contract_checksum,
     paysim_step_to_timestamp,
 )
+from pit_fintech.platform.lifecycle_logging import log_lifecycle
 from pit_fintech.platform.lineage import (
     COMPONENT_FINGERPRINT_POLICY_VERSION,
     component_dirty,
@@ -93,6 +95,8 @@ from pit_fintech.platform.lineage import (
     current_git_commit,
     repository_dirty,
 )
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:  # pragma: no cover - annotations only
     import duckdb
@@ -991,6 +995,15 @@ def build_offline_features(
     """
 
     progress_started = time.perf_counter()
+    log_lifecycle(
+        logger,
+        "offline.gold.build.started",
+        cutoff_end_step=cutoff_end_step,
+        cutoff_start_step=cutoff_start_step,
+        engine=engine,
+        promote=promote,
+        run_id=run_id,
+    )
 
     def report(message: str) -> None:
         if progress:
@@ -1165,9 +1178,34 @@ def build_offline_features(
     _write_build_manifest(staged, artifact_root)
     report(f"staging complete: {run_id}")
     if not promote:
+        log_lifecycle(
+            logger,
+            "offline.gold.build.staged",
+            future_read_violations=staged.future_read_violations,
+            post_checksum=staged.post_event_state.logical_checksum,
+            post_rows=staged.rows_post_event,
+            pre_rows=staged.rows_in_scope,
+            pre_checksum=staged.pre_decision.logical_checksum,
+            run_id=run_id,
+            silver_version=staged.source_tables[0].version,
+            status=staged.status,
+        )
         return staged
     promotion = promote_staged_gold(build=staged, data_root=data_root)
     if not promotion.promoted:
+        log_lifecycle(
+            logger,
+            "offline.gold.build.completed",
+            future_read_violations=staged.future_read_violations,
+            post_checksum=staged.post_event_state.logical_checksum,
+            post_rows=staged.rows_post_event,
+            pre_rows=staged.rows_in_scope,
+            pre_checksum=staged.pre_decision.logical_checksum,
+            promoted=False,
+            run_id=run_id,
+            silver_version=staged.source_tables[0].version,
+            status=staged.status,
+        )
         return staged
     snapshot_prefix = manifest.raw_file_sha256[:16]
     committed = replace(
@@ -1197,6 +1235,20 @@ def build_offline_features(
         ),
     )
     manifest_path = _write_build_manifest(committed, artifact_root)
+    log_lifecycle(
+        logger,
+        "offline.gold.build.completed",
+        future_read_violations=committed.future_read_violations,
+        post_checksum=committed.post_event_state.logical_checksum,
+        post_rows=committed.rows_post_event,
+        post_version=committed.post_event_state.version,
+        pre_rows=committed.rows_in_scope,
+        pre_checksum=committed.pre_decision.logical_checksum,
+        pre_version=committed.pre_decision.version,
+        promoted=True,
+        run_id=run_id,
+        status=committed.status,
+    )
     return replace(committed, manifest_path=str(manifest_path))
 
 
@@ -1215,6 +1267,12 @@ def promote_staged_gold(
     """
 
     progress_started = time.perf_counter()
+    log_lifecycle(
+        logger,
+        "offline.gold.promote.started",
+        run_id=build.run_id,
+        strategy=strategy,
+    )
 
     def report(message: str) -> None:
         if progress:
@@ -1225,6 +1283,13 @@ def promote_staged_gold(
     failures = tuple(validation for validation in build.validations if validation.status == "fail")
     if failures:
         report(f"refusing promotion: {len(failures)} failing validation(s)")
+        log_lifecycle(
+            logger,
+            "offline.gold.promote.refused",
+            failed_validations=len(failures),
+            run_id=build.run_id,
+            strategy=strategy,
+        )
         return GoldPromotionResult(
             run_id=build.run_id,
             promoted=False,
@@ -1262,6 +1327,15 @@ def promote_staged_gold(
     report(
         f"committed pre_decision_features v{committed_pre.version} and "
         f"post_event_state_updates v{committed_post.version}"
+    )
+    log_lifecycle(
+        logger,
+        "offline.gold.promote.completed",
+        post_version=committed_post.version,
+        pre_version=committed_pre.version,
+        promoted=True,
+        run_id=build.run_id,
+        strategy=strategy,
     )
     return GoldPromotionResult(
         run_id=build.run_id,

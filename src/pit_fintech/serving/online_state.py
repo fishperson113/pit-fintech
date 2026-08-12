@@ -45,6 +45,7 @@ scope.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -62,6 +63,9 @@ from pit_fintech.materialization.materializer import (
     read_watermark,
 )
 from pit_fintech.materialization.records import OnlineFeatureRecord, online_record_key
+from pit_fintech.platform.lifecycle_logging import log_lifecycle
+
+logger = logging.getLogger(__name__)
 
 #: Per-entity event-log key. A distinct ``winlog`` prefix so it never collides with the materialized
 #: aggregate records (`materialization/records.py: ONLINE_KEY_TEMPLATE`). This log is the write
@@ -219,6 +223,8 @@ def apply_score_event(
     knowledge_step: int | None,
     transaction_type: str,
     amount: Decimal,
+    transaction_id: str | None = None,
+    event_id: str | None = None,
 ) -> dict:
     """ADR-010 worker-side write: capture the pre-decision vector, apply the event, publish result.
 
@@ -478,6 +484,9 @@ def apply_score_event(
                 knowledge_step=resolved_knowledge,
                 transaction_type=transaction_type,
                 amount=amount,
+                request_id=request_id,
+                transaction_id=transaction_id,
+                event_id=event_id,
             )
         except Exception as exc:  # pragma: no cover - defensive; never break the write path
             import logging
@@ -658,6 +667,9 @@ def append_event_history(
     transaction_type: str,
     amount: Decimal,
     source_row_number: int | None = None,
+    request_id: str | None = None,
+    transaction_id: str | None = None,
+    event_id: str | None = None,
 ) -> int:
     """Append one served event to the offline-visible **Event History** (ADR-009 two-path fan-out).
 
@@ -675,7 +687,18 @@ def append_event_history(
     path.parent.mkdir(parents=True, exist_ok=True)
     if source_row_number is None:
         source_row_number = _next_event_history_row_number(path)
+    if event_id is None:
+        from pit_fintech.contracts.served_events import served_event_id
+
+        event_id = served_event_id(
+            destination_entity_id=entity_id,
+            step=step,
+            knowledge_step=knowledge_step,
+            transaction_type=transaction_type,
+            amount=amount,
+        )
     record = {
+        "event_id": event_id,
         "source_row_number": source_row_number,
         "destination_entity_id": entity_id,
         "step": step,
@@ -684,6 +707,10 @@ def append_event_history(
         "amount": str(amount),
         "served_at": datetime.now(UTC).isoformat(),
     }
+    if request_id is not None:
+        record["request_id"] = request_id
+    if transaction_id is not None:
+        record["transaction_id"] = transaction_id
     with open(path, "a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n")
     return source_row_number
@@ -737,8 +764,15 @@ def reconcile_parity(
     """
 
     path = event_history_path or (artifact_root / "event_history" / "served_events.jsonl")
+    event_ids: list[str] = []
+    log_lifecycle(
+        logger,
+        "offline.parity.reconcile.started",
+        event_history_path=path,
+        feature_service_version=store.feature_service_version,
+    )
     if not path.exists():
-        return ParityReconcileResult(
+        result = ParityReconcileResult(
             checked_entities=0,
             field_mismatches=0,
             missing_online=(),
@@ -748,6 +782,17 @@ def reconcile_parity(
             # iterated character-by-character by the CLI's `for detail in result.details`).
             details=(f"no event history at {path}",),
         )
+        log_lifecycle(
+            logger,
+            "offline.parity.reconcile.completed",
+            checked_entities=result.checked_entities,
+            event_id_first=event_ids[0] if event_ids else None,
+            event_id_last=event_ids[-1] if event_ids else None,
+            field_mismatches=result.field_mismatches,
+            passed=result.passed,
+            status="no_input",
+        )
+        return result
 
     # Group the served events by entity, to know which entities had live writes.
     by_entity: dict[str, list[LoggedEvent]] = {}
@@ -757,6 +802,8 @@ def reconcile_parity(
             if not line:
                 continue
             record = json.loads(line)
+            if record.get("event_id"):
+                event_ids.append(str(record["event_id"]))
             entity_id = record["destination_entity_id"]
             by_entity.setdefault(entity_id, []).append(
                 LoggedEvent(
@@ -809,7 +856,7 @@ def reconcile_parity(
             )
 
     passed = total_mismatches == 0 and not missing_online
-    return ParityReconcileResult(
+    result = ParityReconcileResult(
         checked_entities=len(by_entity),
         field_mismatches=total_mismatches,
         missing_online=tuple(missing_online),
@@ -817,3 +864,15 @@ def reconcile_parity(
         passed=passed,
         details=tuple(details),
     )
+    log_lifecycle(
+        logger,
+        "offline.parity.reconcile.completed",
+        checked_entities=result.checked_entities,
+        event_id_first=event_ids[0] if event_ids else None,
+        event_id_last=event_ids[-1] if event_ids else None,
+        field_mismatches=result.field_mismatches,
+        missing_online=len(result.missing_online),
+        passed=result.passed,
+        status="success" if result.passed else "mismatch",
+    )
+    return result

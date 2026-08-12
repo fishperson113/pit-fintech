@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
@@ -70,6 +71,20 @@ app.add_typer(parity_app, name="parity")
 console = Console()
 
 
+def _configure_offline_observability(service_name: str):
+    """Export offline lifecycle logs when the shared OTLP endpoint is configured."""
+
+    settings = get_settings()
+    endpoint = settings.otel_endpoint or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+    if not endpoint:
+        return None
+    from pit_fintech.platform.logging_config import configure_logging
+    from pit_fintech.serving.telemetry import configure_telemetry
+
+    configure_logging(level=settings.log_level, json=True)
+    return configure_telemetry(service_name=service_name, endpoint=endpoint, enabled=True)
+
+
 @ingest_app.command("event-history")
 def ingest_event_history_command(
     history_path: Annotated[
@@ -91,6 +106,7 @@ def ingest_event_history_command(
 
     from pit_fintech.ingest.event_history import ingest_event_history
 
+    _configure_offline_observability("pit-fintech-offline-ingest")
     project_root = resolve_project_root(Path.cwd())
     settings = get_settings()
 
@@ -116,12 +132,26 @@ def ingest_event_history_command(
             else artifact_root / "ingest" / "event_history.json"
         ),
     )
+    candidate_report = None
+    if Path(report.bronze_path).exists():
+        from pit_fintech.features.served_event_pipeline import build_served_event_candidate
+
+        candidate_report = build_served_event_candidate(
+            bronze_path=Path(report.bronze_path),
+            silver_path=data_root / "lakehouse" / "served_events_silver",
+            candidate_path=data_root / "lakehouse" / "served_events_gold_candidate",
+            quarantine_path=data_root / "lakehouse" / "quarantine" / "served_events",
+        )
     console.print(f"history: {report.history_path}")
     console.print(f"bronze: {report.bronze_path}")
     console.print(f"rows_read: {report.rows_read}")
     console.print(f"rows_appended: {report.rows_appended}")
     console.print(f"duplicate_rows: {report.duplicate_rows}")
     console.print(f"checkpoint_line: {report.end_line}")
+    if candidate_report is not None:
+        console.print(f"silver_rows: {candidate_report.silver_rows}")
+        console.print(f"gold_candidate_rows: {candidate_report.candidate_rows}")
+        console.print(f"quarantined_rows: {candidate_report.quarantined_rows}")
 
 
 @app.command()
@@ -543,6 +573,7 @@ def features_build_gold(
         console.print("[red]--start must be less than or equal to --end.[/]")
         raise typer.Exit(code=2)
 
+    _configure_offline_observability("pit-fintech-offline-gold")
     project_root, data_root, artifact_root = _gold_roots()
     resolved_run_id = run_id or (
         f"gold-{start}-{end}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%f%z')}"
@@ -582,6 +613,7 @@ def features_promote_gold(
         console.print("[red]Only the PaySim Gold promoter is implemented.[/]")
         raise typer.Exit(code=2)
 
+    _configure_offline_observability("pit-fintech-offline-gold")
     _, data_root, artifact_root = _gold_roots()
     manifest_path = _gold_build_manifest_path(artifact_root=artifact_root, run_id=run_id)
     if not manifest_path.is_file():
@@ -1058,6 +1090,7 @@ def parity_reconcile(
     from pit_fintech.features.paysim_specs import PAYSIM_ENTITY, PAYSIM_FEATURE_SERVICE_VERSION
     from pit_fintech.serving.online_state import reconcile_parity
 
+    telemetry = _configure_offline_observability("pit-fintech-parity")
     _, _, artifact_root = _gold_roots()
     store_config = OnlineStoreConfig(
         kind=OnlineStoreKind.REDIS,
@@ -1083,20 +1116,11 @@ def parity_reconcile(
         # Escape Rich markup so a Windows path with backslashes is not mis-rendered.
         console.print(f"[yellow]{escape(detail)}[/]")
 
-    # Best-effort OTel export (same pattern as scripts/locust_parity.py).
-    import os
-
-    from pit_fintech.serving.telemetry import configure_telemetry
-
-    endpoint = os.environ.get("PIT_OTEL_ENDPOINT") or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
-    telemetry = configure_telemetry(
-        service_name="pit-fintech-parity",
-        endpoint=endpoint,
-        enabled=bool(endpoint),
-    )
-    telemetry.record_parity_check(
-        checked=result.checked_entities > 0, mismatches=result.field_mismatches
-    )
+    # Best-effort OTel export; lifecycle logs were emitted by `reconcile_parity` above.
+    if telemetry is not None:
+        telemetry.record_parity_check(
+            checked=result.checked_entities > 0, mismatches=result.field_mismatches
+        )
 
     if not result.passed:
         raise typer.Exit(code=1)
@@ -1196,6 +1220,9 @@ def serving_worker(
     from pit_fintech.serving.worker import run_worker
 
     settings = get_settings()
+    artifact_root = settings.artifact_root
+    if not artifact_root.is_absolute():
+        artifact_root = Path.cwd() / artifact_root
     configure_logging(level=settings.log_level, json=True)
     telemetry = configure_telemetry(
         service_name="pit-fintech-online-worker",
@@ -1215,6 +1242,7 @@ def serving_worker(
         store=store,
         feature_service_version=PAYSIM_FEATURE_SERVICE_VERSION,
         telemetry=telemetry,
+        artifact_root=artifact_root,
     )
 
 

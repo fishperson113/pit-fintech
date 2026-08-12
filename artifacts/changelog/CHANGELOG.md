@@ -1,5 +1,65 @@
 # Project changelog
 
+## 2026-08-12 — M070: Automatic served-event Silver and Gold candidate path
+
+- **Implemented; focused verification passed; live verification pending.** `pit ingest event-history` now
+  idempotently normalizes the resolved Bronze table into normalized Silver and an unpromoted Gold
+  candidate, including when the checkpoint has no new lines. Strict prior-step/knowledge-time windows
+  are used; no prediction is converted to a fraud label.
+- Invalid normalized rows can be quarantined. Production Gold promotion remains outside the automatic
+  path. Grafana dashboard version 7 adds the `Offline Silver + Gold candidate` panel.
+- Detail: [M066–M070 consolidated log](milestones/M066-M070-offline-observability-and-candidate-flow.md).
+
+## 2026-08-12 — M069: Enable OTLP logs in API/worker images
+
+- **Implemented; image rebuild/live verification pending.** The worker was running the async parity
+  consumer and producing `field_mismatches=0`, but its container logged that OpenTelemetry packages
+  were missing, so worker/consumer/parity evidence never reached Loki.
+- Added Docker build arg `INSTALL_OTEL=1` for `api` and `pit-online-worker`; the image installs the
+  same OTel SDK/exporter/instrumentation packages used by the host serving tools. No parity behavior
+  or request-path semantics changed.
+- Detail: [M066–M070 consolidated log](milestones/M066-M070-offline-observability-and-candidate-flow.md).
+
+## 2026-08-12 — M068: Event-driven async parity consumer
+
+- **Implemented; owner live verification pending.** `pit-online-worker` now signals one coalescing
+  background parity consumer after applied score events. The consumer waits for a quiet period,
+  runs the existing DuckDB reconcile outside `/score` and outside the ordered Redis consumer's wait
+  path, and exports parity lifecycle logs and OTel metrics.
+- A burst of events is coalesced; no thread is created per request. Manual `pit parity reconcile` remains
+  available and uses the same reconcile function.
+- Grafana parity panel accepts manual and worker-emitted parity logs.
+- Detail: [M066–M070 consolidated log](milestones/M066-M070-offline-observability-and-candidate-flow.md).
+
+## 2026-08-12 — M067: End-to-end event identity and Grafana evidence panels
+
+- **Implemented; owner verification pending.** Added a stable `event_id` shared by the Redis score
+  event, online worker log, Event History JSONL, Bronze Delta row and parity lifecycle evidence.
+- Event History now preserves `request_id` and `transaction_id` when present; new Bronze columns are
+  merged without changing the existing PIT feature semantics. Batch lifecycle logs expose first/last
+  event IDs and transaction IDs without emitting one Loki record per row for large batches.
+- Gold lifecycle logs now include Silver source version, Gold row counts/checksums, Delta versions and
+  future-read violation count. Parity logs include event identity bounds and mismatch/pass status.
+- Grafana dashboard v4 now has separate panels for online scoring, online worker writes, Bronze ingest,
+  Gold compute, parity, and the complete lifecycle stream. Logs remain plain-text queries; no JSON parser.
+- Added focused tests for stable event identity and correlation preservation through Bronze ingestion.
+- Detail: [M066–M070 consolidated log](milestones/M066-M070-offline-observability-and-candidate-flow.md).
+
+## 2026-08-12 — M066: Offline lifecycle logging for Loki
+
+- **Implemented; owner verification pending.** Added lifecycle log events for the existing offline
+  boundaries: Event History → Bronze ingest, Gold build/staging/promotion, and offline/online parity
+  reconcile. The events are observational only; logging never invokes a downstream command.
+- CLI offline commands configure the shared OTLP endpoint when `PIT_OTEL_ENDPOINT` or
+  `OTEL_EXPORTER_OTLP_ENDPOINT` is present, using service names `pit-fintech-offline-ingest`,
+  `pit-fintech-offline-gold`, and `pit-fintech-parity`.
+- Log bodies remain Loki-searchable plain text (`offline.* key=value`); this matches the current OTLP
+  behavior where trace/context fields also appear as structured metadata. No `| json` parser is needed.
+- Added a focused lifecycle formatter test. Owner still needs to run the focused test, lint, recreate
+  the API/worker/observability stack as applicable, and execute the offline commands to verify live
+  arrival in Loki.
+- Detail: [M066–M070 consolidated log](milestones/M066-M070-offline-observability-and-candidate-flow.md).
+
 ## 2026-08-11 — M065: Checkpointed Event History to Bronze ingestion
 
 - **Implemented and locally verified.** Added `pit ingest event-history`, `make ingest-event-history`,

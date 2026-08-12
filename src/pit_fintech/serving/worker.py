@@ -15,6 +15,7 @@ import logging
 import time
 from contextlib import nullcontext
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 from pit_fintech.serving.events import (
@@ -46,12 +47,14 @@ def run_worker(
     batch_size: int = 32,
     block_ms: int = 1000,
     telemetry: Any | None = None,
+    artifact_root: Path | None = None,
 ) -> None:
     """Consume score events in order, apply each, publish the result. Runs forever."""
 
     import redis as redis_py
 
     from pit_fintech.serving.online_state import _redis_client, apply_score_event
+    from pit_fintech.serving.parity_consumer import AsyncParityConsumer
 
     client = _redis_client(store)
     stream = score_event_stream_key(feature_service_version=feature_service_version)
@@ -69,6 +72,12 @@ def run_worker(
         CONSUMER_GROUP,
         CONSUMER_NAME,
     )
+    parity_consumer = AsyncParityConsumer(
+        store=store,
+        artifact_root=artifact_root or Path("artifacts"),
+        telemetry=telemetry,
+    )
+    parity_consumer.start()
 
     while True:
         try:
@@ -133,6 +142,8 @@ def run_worker(
                         result = apply_score_event(
                             store=store,
                             request_id=request_id,
+                            transaction_id=fields["transaction_id"],
+                            event_id=fields.get("event_id"),
                             entity_id=entity_id,
                             step=step,
                             knowledge_step=knowledge_step,
@@ -140,12 +151,16 @@ def run_worker(
                             amount=Decimal(fields["amount"]),
                         )
                     logger.info(
-                        "applied entity=%s step=%s status=%s outcome=%s",
+                        "applied event_id=%s transaction_id=%s entity=%s step=%s "
+                        "status=%s outcome=%s",
+                        fields.get("event_id", "-"),
+                        fields["transaction_id"],
                         entity_id,
                         step,
                         result["status"],
                         result.get("outcome", "-"),
                     )
+                    parity_consumer.trigger(event_id=fields.get("event_id"))
                 except Exception as exc:  # pragma: no cover - never hang the waiting request
                     logger.exception(
                         "apply_score_event failed for message=%s request_id=%s: %s",

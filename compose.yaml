@@ -58,6 +58,7 @@ services:
       dockerfile: docker/Dockerfile
       args:
         UV_GROUPS: serving
+        INSTALL_OTEL: "1"
     command:
       - uv
       - run
@@ -116,6 +117,7 @@ services:
       dockerfile: docker/Dockerfile
       args:
         UV_GROUPS: serving
+        INSTALL_OTEL: "1"
     command:
       - uv
       - run
