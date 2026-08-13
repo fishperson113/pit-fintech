@@ -1,12 +1,27 @@
 # Project status
 
-Last updated: 2026-08-12 (M071). Status words are strict:
+Last updated: 2026-08-13 (M072 — Sprint 2 CONDITIONAL PASS). Status words are strict:
 
 - **planned**: present in the six-week guide, with no claim that code exists;
 - **implemented**: code/artifact exists but the relevant gate may not have run;
 - **verified**: the documented command has passed in this workspace.
 
-## Next session — 2026-08-13
+## Sprint 2 closure — 2026-08-13 (M072): CLOSED (owner-accepted)
+
+Owner ran the six MVP invariant lanes. Clean: Lane 1 serving/OTel, Lane 2 backfill idempotency
+(range [697,720] ×2, short-circuit, 0 duplicate), Lane 3 full backfill ([1,743],
+`future_read_violations=0`, Gold `pre_v10`/`post_v9`), Lane 5 async parity
+(`field_mismatches=0 passed=True`), Lane 6 served-event candidate (17 silver/17 candidate,
+`label_status=unlabeled`). Lane 4 Redis recover: determinism verified
+(`records_identical=5,444,725 / 5,444,726`, `watermark_restored=True`) but `differing_entities=1`
+(concurrent worker live-write) — accepted limit, not a blocker. Regression:
+`lint` clean, `test-unit` 110 passed. Recovery snapshot fixed GET→MGET (~1h → ~180s/pass). Owner
+accepted Sprint 2 as **closed** on 2026-08-13; recover quiescent clean pass and optional
+`materialize run --refresh` are accepted limits, not carry-over blockers. Detail:
+[M072 log](milestones/M072-sprint-2-closure.md),
+[completion report](../../docs/reports/sprint-2-completion-report.md).
+
+## Superseded closure plan
 
 Sprint 2 closure target is the MVP invariant scope, not SQLite/Feast PushSource expansion. Before
 claiming closure, owner must verify in Grafana and manifests: OTel worker arrival; repeated range
@@ -75,6 +90,7 @@ If any lane fails, record the exact root cause and leave Sprint 2 `blocked` rath
 ||| M069 OTLP logs in serving images | **implemented (static config verified; image/live verification pending)** | Worker was proven to run parity but had OTel packages missing, so its logs never reached Loki. Dockerfile now supports `INSTALL_OTEL=1`; API and worker compose builds enable it. Rebuild/recreate and Loki verification pending. |
 ||| M070 served-event Silver and Gold candidate path | **implemented (focused test passed; live verification pending)** | `pit ingest event-history` now idempotently normalizes the resolved Bronze table into `served_events_silver` and computes strict-PIT `served_events_gold_candidate`, including checkpoint no-op runs; invalid rows can be quarantined; candidate rows remain unlabeled and unpromoted. Grafana dashboard v7 adds the candidate panel. |
 ||| M071 MVP invariant gates and Grafana evidence | **implemented (focused gates verified; live recovery/backfill evidence pending)** | Added `pit backfill run` and `pit materialize recover`; lifecycle logs/panels cover backfill, materialization and Redis recovery. Unit 110, Gold/Feast integration 8, T3 smoke 1 and lint pass. Recovery intentionally not live-run because it resets the scoped Redis namespace; full real backfill/Loki evidence remains open. |
+|| M072 Sprint 2 closure + recovery MGET fix | **CONDITIONAL PASS (owner-run 2026-08-13)** | Six MVP invariant lanes run owner-side; 5 clean (serving/OTel, backfill idempotency range [697,720]×2 short-circuit 0-dup, full backfill [1,743] `future_read_violations=0` Gold `pre_v10`/`post_v9`, async parity `field_mismatches=0 passed=True`, served-event candidate 17/17 unlabeled). Lane 4 recover determinism verified `records_identical=5,444,725/5,444,726` `watermark_restored=True` but `differing_entities=1` (concurrent worker live-write) — not clean `passed=yes`. Recovery snapshot fixed GET→MGET (`_SNAPSHOT_BATCH=5000`, ~1h→~180s/pass); `[recover +Ns]` progress logs; CLI prints differing keys; comparison/exit not weakened (hard rule #5). `lint` clean, `test-unit` 110 passed. Added `notebooks/06_delta_time_travel.ipynb`. Open: recover clean pass on quiescent store; optional `materialize run --refresh` |
 
 ## Sprint 1
 

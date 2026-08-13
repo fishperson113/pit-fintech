@@ -71,6 +71,9 @@ logger = logging.getLogger(__name__)
 #: Writes are batched through a Redis pipeline; a batch this size keeps a round trip small while
 #: keeping the number of round trips low on the full 2.7M-entity store.
 _ONLINE_BATCH_SIZE: Final = 5000
+#: Recovery snapshots read the whole store back with MGET in batches this size, so a full
+#: snapshot costs ~entities/_SNAPSHOT_BATCH round trips instead of one GET per entity.
+_SNAPSHOT_BATCH: Final = 5000
 #: Progress is printed at most once per this wall interval, mirroring the ``[gold +Xs]`` /
 #: ``[t4 +Xs]`` style used by the other long-running lanes.
 _PROGRESS_INTERVAL_SECONDS: Final = 10.0
@@ -810,21 +813,48 @@ def rematerialize_after_reset(
     client = _redis_client(store)
     prefix = f"pit:{store.feature_service_version}:"
 
-    def snapshot() -> dict[str, dict[str, object]]:
+    progress_started = time.perf_counter()
+    last_report = progress_started
+
+    def report(message: str, force: bool = False) -> None:
+        nonlocal last_report
+        now = time.perf_counter()
+        if force or now - last_report >= _PROGRESS_INTERVAL_SECONDS:
+            print(f"[recover +{now - progress_started:8.1f}s] {message}", flush=True)
+            last_report = now
+
+    def snapshot(label: str) -> dict[str, dict[str, object]]:
+        # Batch the reads with MGET: a per-key GET over ~2.7M entities is one network
+        # round-trip each, which dominates recovery wall time. One MGET per _SNAPSHOT_BATCH
+        # keys cuts the round-trips by three orders of magnitude without changing semantics.
         result: dict[str, dict[str, object]] = {}
-        for key in client.scan_iter(match=prefix + "*"):
+
+        def drain(keys: list[str]) -> None:
+            if not keys:
+                return
+            for key, payload in zip(keys, client.mget(keys), strict=True):
+                if payload is None:
+                    continue
+                record = json.loads(payload)
+                record.pop("materialization_run_id", None)
+                record.pop("written_at", None)
+                result[key] = record
+
+        batch: list[str] = []
+        for key in client.scan_iter(match=prefix + "*", count=_SNAPSHOT_BATCH):
             if key.endswith(":watermark") or key.endswith(":run"):
                 continue
-            payload = client.get(key)
-            if payload is None:
-                continue
-            record = json.loads(payload)
-            record.pop("materialization_run_id", None)
-            record.pop("written_at", None)
-            result[key] = record
+            batch.append(key)
+            if len(batch) >= _SNAPSHOT_BATCH:
+                drain(batch)
+                report(f"{label} snapshot: {len(result):,} records read")
+                batch = []
+        drain(batch)
+        report(f"{label} snapshot done: {len(result):,} records read", force=True)
         return result
 
-    before = snapshot()
+    report("snapshotting current store before reset", force=True)
+    before = snapshot("before-reset")
     log_lifecycle(
         logger,
         "offline.recovery.started",
@@ -833,7 +863,9 @@ def rematerialize_after_reset(
         run_id=run_id,
         watermark_step=watermark_step,
     )
+    report("resetting online store", force=True)
     reset_online_store(store=store)
+    report("re-materializing at pinned Gold version", force=True)
     materialize_to_watermark(
         project_root=project_root,
         data_root=data_root,
@@ -843,7 +875,9 @@ def rematerialize_after_reset(
         run_id=run_id,
         gold_post_event_version=gold_post_event_version,
     )
-    after = snapshot()
+    report("snapshotting rebuilt store", force=True)
+    after = snapshot("after-rebuild")
+    report(f"comparing {len(set(before) | set(after)):,} records", force=True)
     all_keys = sorted(set(before) | set(after))
     differing = tuple(key for key in all_keys if before.get(key) != after.get(key))
     watermark = read_watermark(store=store)

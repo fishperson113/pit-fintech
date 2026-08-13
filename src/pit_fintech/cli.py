@@ -1124,6 +1124,11 @@ def materialize_recover(
     table.add_row("watermark_restored", str(result.watermark_restored))
     table.add_row("passed", "yes" if result.passed else "no")
     console.print(table)
+    if result.differing_entities:
+        count = len(result.differing_entities)
+        preview = ", ".join(result.differing_entities[:20])
+        suffix = ", …" if count > 20 else ""
+        console.print(f"[yellow]differing keys ({count}):[/] {preview}{suffix}")
     if not result.passed:
         raise typer.Exit(code=1)
 

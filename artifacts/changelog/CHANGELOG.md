@@ -1,5 +1,27 @@
 # Project changelog
 
+## 2026-08-13 — M072: Sprint 2 closure (MVP invariant lanes) + recovery performance fix
+
+- Ran the six MVP invariant lanes owner-side. Five clean: serving/OTel (`demo-score` →
+  `pit-online-worker`, model `@1`), backfill idempotency (range [697,720] ×2, same
+  `idempotency_key=d063fa0e…`, 2nd run short-circuited, 0 duplicate), full backfill ([1,743],
+  `future_read_violations=0`, promoted `pre_v10`/`post_v9`), async parity (`field_mismatches=0
+  passed=True`), served-event candidate (`silver_rows=17`/`gold_candidate_rows=17`, unlabeled).
+- Lane 4 Redis recover: determinism verified (`records_identical=5,444,725 / 5,444,726`,
+  `watermark_restored=True`) with `differing_entities=1` — a concurrent worker live-write, not a
+  determinism defect. Recorded as an accepted limit, not a clean `passed=yes`.
+- Fixed the recovery snapshot bottleneck: `rematerialize_after_reset` did one `GET` per key
+  (~5.4M round-trips, ~1h). Batched with `MGET` (`_SNAPSHOT_BATCH=5000`) → ~180s/pass (~40×).
+  Added `[recover +Ns]` progress logging and differing-key printout on mismatch; did not weaken
+  the comparison or the non-zero exit (hard rule #5).
+- Added `notebooks/06_delta_time_travel.ipynb` (review-only Delta version viewer/diff) and the
+  Sprint 2 closure report/deck/checklist under `docs/reports/`.
+- Regression: `lint` clean (118 files); `test-unit` 110 passed.
+- Sprint 2 CLOSED (owner-accepted 2026-08-13); Sprint 3 entry uses the frozen Gold v9/v10 lineage.
+  Recover quiescent clean pass + optional `materialize run --refresh` are accepted limits.
+- Detail: [M072 log](milestones/M072-sprint-2-closure.md);
+  [Sprint 2 completion report](../../docs/reports/sprint-2-completion-report.md).
+
 ## Next session — 2026-08-13: Sprint 2 closure plan
 
 Mục tiêu: đóng Sprint 2 theo MVP invariant scope đã chốt, không mở rộng SQLite hoặc Feast PushSource.
