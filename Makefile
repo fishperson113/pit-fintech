@@ -178,8 +178,6 @@ locust: ## Run the Locust web UI (http://localhost:8089) + offline/online parity
 	uv run locust -f scripts/locust_parity.py --host $(LOCUST_HOST)
 
 mlflow-ui: ## Run the MLflow server on the Windows HOST (Artifacts tab works); stops the container first
-	@echo "Stopping the container MLflow to free port 5000..."
-	docker compose stop mlflow
 	uv run mlflow server --backend-store-uri sqlite:///artifacts/mlflow/tracking.db --host 127.0.0.1 --port 5000
 
 demo: ## Run the end-to-end demo: Redis -> Gold -> materialize -> serve -> score

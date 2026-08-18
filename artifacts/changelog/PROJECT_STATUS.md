@@ -1,6 +1,7 @@
 # Project status
 
-Last updated: 2026-08-13 (M072 — Sprint 2 CONDITIONAL PASS). Status words are strict:
+Last updated: 2026-08-18 (M073 — Sprint 3 feature/model validity notebooks, exploratory). Status
+words are strict:
 
 - **planned**: present in the six-week guide, with no claim that code exists;
 - **implemented**: code/artifact exists but the relevant gate may not have run;
@@ -387,6 +388,19 @@ E1–E5/P1–P5 experiment execution, fault injection report, clean-room audit, 
 final report, and optional TypeScript scorer are all **planned**. OTel Collector, Prometheus and
 Grafana on a separate VPS/ops boundary are **planned/should-have**, not part of core Compose or a
 release dependency.
+
+**M073 — feature/model validity notebooks (nb09–nb13): implemented (exploratory, non-promotable).**
+Owner ran nb09–nb13, logging to MLflow experiment `pit-fintech-notebook-exploration`
+(`manifest_backed=false`). Findings (steering evidence on PaySim AMBER, NOT a verified gate):
+LightGBM 7-feature tuned = test **PR-AUC ~0.38**, CV **0.38 ± 0.11** (warm 0.41 / cold 0.35);
+LightGBM ≈ XGBoost (fair `scale_pos_weight=√(neg/pos)`); Optuna tuning +0.011 on val did not transfer
+to test (+0.0006) → ceiling is feature/data; `event_step` confirmed overfit (dropped from feed);
+12 stored features → 7 deployable *feed* set (reversible, FeatureSpec `paysim-fraud-recipient-v2`
+stays frozen); cold-start (recipients with no history) is the real weakness. Detail:
+[M073 log](milestones/M073-feature-model-validity-notebooks.md),
+[findings report](../../docs/reports/sprint-3-feature-model-validity-findings.md). **Not verified** —
+promotable baseline must run under `src/pit_fintech/training/` with manifest + multi-seed; notebooks
+must be output-cleared before commit (hard rule #4).
 
 This table must be updated whenever an artifact crosses from planned to implemented or from
 implemented to verified.

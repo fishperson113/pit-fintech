@@ -1,0 +1,8 @@
+feature,shap_mean_abs,shap_rank,lgbm_gain,gain_rank,perm_dropPRAUC,perm_rank
+transaction_type_transfer,0.466222,2,12462424.96,1,0.243781,2
+current_amount,0.352641,3,4710697.54,2,0.278471,1
+pit_prior_amount_168h,1.453619,1,4291872.42,3,0.059801,3
+pit_prior_amount_24h,0.247713,4,398384.65,4,0.004725,4
+pit_prior_amount_1h,0.078947,5,109821.31,5,0.00028,5
+pit_prior_count_24h,0.037335,6,83267.53,6,2e-06,6
+pit_prior_count_1h,0.002094,7,12989.31,7,1e-06,7

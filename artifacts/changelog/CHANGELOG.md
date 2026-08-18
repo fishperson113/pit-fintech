@@ -1,5 +1,32 @@
 # Project changelog
 
+## 2026-08-18 — M073: Feature & model validity notebooks (nb09–nb13) + findings report
+
+- Stood up the Sprint 3 data→feature→model validity investigation as **exploratory,
+  non-promotable** notebooks logging to MLflow (`pit-fintech-notebook-exploration`,
+  `manifest_backed=false`). Owner ran each; agent read MLflow + notebook outputs.
+- **nb10 (LightGBM vs XGBoost, fair):** LightGBM test PR-AUC **0.3762** ≈ XGBoost **0.3652**
+  (reproducible ×2). The earlier "5×" gap was a config artifact; `scale_pos_weight=√(neg/pos)` (~20.5,
+  not full ~458) restored log_loss 0.17 (was 9.39 saturated). LightGBM champion (ADR-003) validated.
+- **nb11 (Optuna, 30 trials):** val PR-AUC 0.30006 → 0.31117 (+0.011); best params logged.
+- **nb12 (final test + SHAP):** test PR-AUC **0.3768** — tuning did NOT transfer from val (+0.0006),
+  confirming the ceiling is feature/data, not hyperparameters. Budget top 1% → recall 22.7%; top 0.5%
+  → precision 1.00 / recall 15.1%. SHAP via LightGBM native `pred_contrib` (no `shap`/`numba` dep).
+- **nb13 (walk-forward CV):** 5 folds, E=0 mean **0.379 ± 0.107** (range 0.28–0.51), embargo
+  Δ(168−0)=−0.0125 (small). Warm/cold: warm **0.408 ± 0.043** vs cold **0.350 ± 0.124** — cold-start
+  (recipients with no history, `pit_prior_*`=0) is the real weakness; PIT features earn their keep on
+  warm. Single split is unreliable → report mean±std+min.
+- **nb09 (natural prevalence, relative):** leakage arm PR-AUC 0.8827 (true signal in forbidden
+  balance cols); `event_step` overfit (drop 0.045→0.092, step overlap 0); `current_amount` dominant;
+  has_history flags redundant. → 12 stored → **7 deployable feed set** (reversible; FeatureSpec stays
+  frozen).
+- Added `optuna` to `dev` group; `shap` intentionally kept out of the lock. Relaxed ruff
+  `per-file-ignores` for `notebooks/*.ipynb` (`E402,E501,E702,F401,I001`); `src/`/`tests/` stay
+  strict. New report `docs/reports/sprint-3-feature-model-validity-findings.md`.
+- **Exploratory only** — no promotion gate claimed; notebooks must be output-cleared before commit.
+- Detail: [M073 log](milestones/M073-feature-model-validity-notebooks.md);
+  [findings report](../../docs/reports/sprint-3-feature-model-validity-findings.md).
+
 ## 2026-08-13 — M072: Sprint 2 closure (MVP invariant lanes) + recovery performance fix
 
 - Ran the six MVP invariant lanes owner-side. Five clean: serving/OTel (`demo-score` →

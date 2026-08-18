@@ -24,12 +24,15 @@ dev = [
     "hypothesis>=6.140,<7",
     "ipykernel>=7,<8",
     "jupyterlab>=4.4,<5",
+    "matplotlib>=3.9,<4",
     "nbclient>=0.10,<1",
     "numpy>=2.4,<3",
+    "optuna>=4.9.0",
     "pre-commit>=4.3,<5",
     "pytest>=8.4,<10",
     "pytest-cov>=7,<8",
     "ruff>=0.13,<1",
+    "xgboost>=3.2.0",
 ]
 training = [
     "lightgbm>=4.6,<5",
@@ -85,7 +88,9 @@ src = ["src", "tests", "feature_repo"]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
-"notebooks/*.ipynb" = ["E402"]
+# Notebooks are exploratory EDA surfaces: line-length, import-order/unused-import and
+# one-line display statements are noise there. src/ and tests/ stay strict.
+"notebooks/*.ipynb" = ["E402", "E501", "E702", "F401", "I001"]
 
 [tool.ruff.format]
 quote-style = "double"

@@ -256,8 +256,6 @@ switch ($Target) {
         )
     }
     "mlflow-ui" {
-        Write-Host "Stopping the container MLflow to free port 5000..."
-        Invoke-Checked "docker" @("compose", "stop", "mlflow")
         Invoke-Checked "uv" @(
             "run", "mlflow", "server",
             "--backend-store-uri", "sqlite:///artifacts/mlflow/tracking.db",
