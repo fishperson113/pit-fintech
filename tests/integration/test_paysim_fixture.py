@@ -147,7 +147,7 @@ EXPECTED_FEATURE_ROWS = 11
 _INT64_FIELDS = frozenset(
     name
     for name in PAYSIM_MODEL_FEATURE_ORDER
-    if name.startswith(("pit_prior_count", "recipient_has_history"))
+    if name.startswith(("pit_prior_count", "pit_distinct_senders", "pit_steps_since_last"))
 )
 
 
@@ -187,7 +187,9 @@ def test_paysim_feature_table_pins_the_schema_feature_repo_binds_to() -> None:
     assert tuple(table.column_names) == PAYSIM_FEATURE_TABLE_COLUMNS
     assert PAYSIM_FEATURE_TABLE_COLUMNS[0] == PAYSIM_ENTITY
     assert PAYSIM_FEATURE_TABLE_COLUMNS[1:3] == ("event_timestamp", "created_timestamp")
-    assert PAYSIM_FEATURE_TABLE_COLUMNS[3:15] == PAYSIM_MODEL_FEATURE_ORDER
+    assert PAYSIM_FEATURE_TABLE_COLUMNS[3 : 3 + len(PAYSIM_MODEL_FEATURE_ORDER)] == (
+        PAYSIM_MODEL_FEATURE_ORDER
+    )
 
     utc_timestamp = pa.timestamp("us", tz="UTC")
     assert table.schema.field(PAYSIM_ENTITY).type == pa.string()

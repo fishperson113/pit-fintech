@@ -1,5 +1,97 @@
 # Project changelog
 
+## 2026-08-19 — M076: make staged Gold v2→v3 promotion compatible with Delta-rs 1.6.2
+
+- Fixed the reported `DeltaTable.schema().to_pyarrow()` accessor failure by using
+  `DeltaTable(path).schema().to_arrow().names`.
+- Fixed the tuple/list comparison that incorrectly classified every existing Gold table as a schema
+  change.
+- Fixed the follow-up `No field named event_step` failure. Delta-rs 1.6.2 cannot drop legacy columns
+  during an in-place `schema_mode="overwrite"`; full-range schema migrations now write a sibling
+  replacement table and swap it in with rollback protection. Partial migrations are refused before
+  touching committed Gold.
+- Added a v2-legacy-to-v3 regression test. Verification: Gold partition overwrite 3 passed, Gold
+  offline integration 4 passed, focused Ruff clean, and `git diff --check` passed.
+- Real-data `promote-gold --run-id ...` remains owner-pending; no committed Gold was mutated by
+  agent verification.
+- Detail: [M076 log](milestones/M076-promote-legacy-gold-schema.md).
+
+## 2026-08-19 — M075 follow-up: backfill progress logging + schema-migration promote fix + rollout ordering
+
+- **Fixed a promote-time `DeltaError` on a schema-changing (contract-version) backfill.**
+  `_write_gold_table` always overwrote with a partition `predicate` (`replaceWhere`) +
+  `schema_mode="overwrite"`. That combination can *add* a column but cannot *drop* one: Delta
+  reconciles the untouched partitions against the old on-disk schema and raises
+  `Schema error: No field named recipient_has_history_168h` when the v3 staged table no longer has
+  it. Now `_write_gold_table` compares the committed schema with the canonical one and, on a schema
+  change, does a full **unpredicated** overwrite (a schema change is always a full-range promote);
+  the same-schema incremental/full path keeps the predicate overwrite unchanged. Delta writes are
+  atomic, so the failed promote left the committed Gold untouched (still v2) — no partial corruption.
+  File: `features/build_offline.py`.
+- **`backfill run` now forwards phase progress.** `execute_backfill` gained a `progress` flag (off by
+  default; on from the CLI) that threads into `build_offline_features` and `promote_staged_gold`, so a
+  FULL build emits the same `[gold +Ns]` / `[promote +Ns]` reports as `build-gold`/`promote-gold`
+  instead of ~25 silent minutes. Files: `backfill/state_machine.py`, `cli.py`.
+- **Rollout learning (no code):** a contract-version bump requires **rebuilding Silver first**. The
+  backfill idempotency key derives `feature_definition_version` from the *Silver lakehouse manifest*
+  (`plan_backfill`, state_machine L263), not the live constant. With Silver still stamped
+  `paysim-fraud-recipient-v2`, the v3 FULL backfill computed the v2 key `38e8f854…`, short-circuited
+  to the 2026-08-13 v2 run, and left Gold at v2 (caught by `materialize`: missing
+  `post_distinct_senders_24h`). After `build-lakehouse -Dataset paysim` re-stamped the manifest to v3
+  (Silver v8, checksum `33e8a839…`), the backfill computed a fresh key `0794136…` and built Gold v3.
+  The Track-B plan §5 runbook is amended to put the Silver rebuild ahead of the Gold backfill.
+
+## 2026-08-19 — M075: Implement ADR-011 cold-start FeatureSpec v3 (contract + engines + tests)
+
+- Landed the ADR-011 v3 contract as one coordinated change set: `paysim-fraud-recipient-v3`,
+  **10 model fields** (was 12). Dropped `event_step`, `pit_prior_count_168h`,
+  `recipient_has_history_{1h,24h,168h}`; added `pit_distinct_senders_24h/168h` (fan-in =
+  `COUNT(DISTINCT origin_entity_id)`) and `pit_steps_since_last_event` (recency, sentinel 999).
+- **Two independent engines + oracle** carry the new fields: `paysim_reference.py` (Python oracle),
+  `paysim_recipient.py` + `build_offline.py` (DuckDB pre/post), `models/paysim_training.py` (Silver
+  E1/E4 cohort). `PaySimSourceEvent`/`LoggedEvent`/`gold.post_event_state_updates` gained
+  `origin_entity_id`; the winlog serialization bumped 3-tuple → 4-tuple; the M016 spike and the
+  leakage `STRICT_PIT_FEATURE_COLUMNS` were decoupled to their frozen v2 shapes.
+- **Online write path** threads the sender end to end: `ScoreRequest.name_orig` → `events.py`
+  (Redis Stream) → `worker.py` → `apply_score_event` → winlog + Event History; warm-start seeds
+  `origin_entity_id` from Gold; `_contract_defaults` returns the recency sentinel for a cold read.
+- **Verification (agent-run `uv run --frozen`):** runnable parity proof — oracle == pre-decision SQL
+  (0/10 diffs) and the shift relation holds across offline-post / oracle(s+1) / online (0 diffs);
+  `pytest` temporal **73**, unit **110**, integration **21** passed; `ruff check`/`format` clean.
+  The oracle↔SQL parity test's "recipient" engine was repointed from the leakage table to the real
+  `paysim_pre_decision_feature_sql`. Committed fixture regenerated deterministically.
+- **Not done (owner-gated):** `.\make.ps1` gates; the v3 FULL backfill + winlog reset + re-warm-start
+  + `parity-reconcile`; a v3 champion (M079). Committed Gold is still v2 until the backfill runs; v2
+  metrics do NOT carry to v3. ADR-011 stays **proposed** until the owner-run Gold gates pass.
+  Detail: [M075 log](milestones/M075-cold-start-featurespec-v3-implementation.md).
+
+## 2026-08-19 — M074: ADR-011 cold-start FeatureSpec v3 + Track B backfill strategy (plan)
+
+- Turned the M073 findings into an actionable frozen-contract change plan (Track B). **Design only**
+  — no `src/`/`tests/`/Gold/Silver change; the code lands in M075–M079, each owner-gated.
+- **ADR-011 (`docs/adr/011-cold-start-featurespec-v3.md`, proposed):** freeze
+  `paysim-fraud-recipient-v3`. **Trim** the five non-earning v2 fields (`event_step` overfit,
+  `pit_prior_count_168h` redundant, `recipient_has_history_1h/24h/168h` = binarised counts) and
+  **add** three cold-start features: `pit_distinct_senders_24h/168h` (COUNT DISTINCT
+  `origin_entity_id` — fan-in, structurally distinct from `pit_prior_count_*`) and
+  `pit_steps_since_last_event` (recency, sentinel `999` when no event in the 168h lookback). Result:
+  10 fields (2 request + 8 history). Entity, scope, temporal semantics and the forbidden balance/label
+  set are unchanged.
+- **Owner-locked decisions:** fan-in + recency (chosen over an origin-entity block, deferred to a
+  possible v4; and over recency-only); trim + add (Track A folded into v3 → one backfill, not a trim
+  now and an add later).
+- **Feasibility verified before writing the ADR:** Silver already carries `origin_entity_id`
+  (offline computable); the winlog stores only `(step, knowledge_step, amount)` — no sender identity —
+  so v3 needs a `LoggedEvent.origin_entity_id`, a winlog serialization bump, and a per-event
+  `origin_entity_id` on `gold.post_event_state_updates` for warm-start (mirrors the M057 per-event
+  `amount`).
+- **Backfill strategy (`docs/reports/sprint-3-track-b-cold-start-v3-plan.md`):** a schema change
+  forces `mode=FULL` rebuild of both Gold tables; v3's new `feature_definition_version` yields a fresh
+  idempotency key, so v2 Gold stays intact for rollback (time-travel). Runbook: FULL backfill →
+  idempotency/determinism rerun (G2) → `test-temporal` re-verify (oracle/SQL + future-read) → winlog
+  reset + re-warm-start → `parity-reconcile` (online/offline) → new champion bound to the v3 checksum.
+  v2 metrics do NOT carry over.
+
 ## 2026-08-18 — M073: Feature & model validity notebooks (nb09–nb13) + findings report
 
 - Stood up the Sprint 3 data→feature→model validity investigation as **exploratory,

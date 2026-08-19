@@ -8,7 +8,10 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from pit_fintech.features.paysim_specs import PAYSIM_FEATURE_DEFINITION_VERSION
+from pit_fintech.features.paysim_specs import (
+    PAYSIM_FEATURE_DEFINITION_VERSION,
+    PAYSIM_FEATURE_SERVICE_VERSION,
+)
 
 
 class Settings(BaseSettings):
@@ -26,7 +29,7 @@ class Settings(BaseSettings):
     paysim_csv: Path | None = None
     entity_definition_version: str = "paysim-destination-customer-v1"
     feature_definition_version: str = PAYSIM_FEATURE_DEFINITION_VERSION
-    feature_service_version: str = "paysim-fraud-scoring-v2"
+    feature_service_version: str = PAYSIM_FEATURE_SERVICE_VERSION
     float_tolerance: float = Field(default=1e-6, gt=0)
     redis_url: str = "redis://localhost:6379/0"
     mlflow_tracking_uri: str = "http://localhost:5000"

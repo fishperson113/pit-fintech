@@ -56,6 +56,7 @@ from pit_fintech.features.paysim_reference import (
 from pit_fintech.features.paysim_specs import (
     PAYSIM_FEATURE_SPECS,
     PAYSIM_MODEL_FEATURE_ORDER,
+    PAYSIM_RECENCY_SENTINEL_STEPS,
 )
 from pit_fintech.models import paysim_training
 
@@ -250,19 +251,20 @@ def _exact(*source_row_numbers: int) -> float:
 PRIOR_1H_ROWS = (9,)
 PRIOR_24H_ROWS = (6, 7, 9)
 PRIOR_168H_ROWS = (4, 5, 6, 7, 9)
+# ADR-011 v3: each fixture row has a unique origin (`C_ORIG_<srn>`), so distinct-senders equals the
+# count in the same window. Recency is CUTOFF_STEP minus the latest prior step: row 9 sits at step
+# 399, one before the cutoff, so it is 400 - 399 = 1.
 EXPECTED_CUTOFF_VECTOR: dict[str, int | float] = {
     "current_amount": 0.01,
-    "event_step": 400.0,
     "transaction_type_transfer": 0.0,
     "pit_prior_count_1h": len(PRIOR_1H_ROWS),
     "pit_prior_amount_1h": _exact(*PRIOR_1H_ROWS),
-    "recipient_has_history_1h": 1,
     "pit_prior_count_24h": len(PRIOR_24H_ROWS),
     "pit_prior_amount_24h": _exact(*PRIOR_24H_ROWS),
-    "recipient_has_history_24h": 1,
-    "pit_prior_count_168h": len(PRIOR_168H_ROWS),
     "pit_prior_amount_168h": _exact(*PRIOR_168H_ROWS),
-    "recipient_has_history_168h": 1,
+    "pit_distinct_senders_24h": len(PRIOR_24H_ROWS),
+    "pit_distinct_senders_168h": len(PRIOR_168H_ROWS),
+    "pit_steps_since_last_event": CUTOFF_STEP - 399,
 }
 # Rows the SQL prune removes before the FILTER ever sees them.
 OUTSIDE_PRUNE_ROWS = (1, 2)
@@ -281,6 +283,7 @@ def _oracle_vectors(rows: tuple[_FixtureRow, ...]) -> dict[int, dict[str, int | 
             knowledge_step=row.knowledge_step,
             transaction_type=row.transaction_type,
             amount=row.amount,
+            origin_entity_id=row.origin_entity_id,
             destination_entity_id=row.destination_entity_id,
             destination_entity_kind=paysim_destination_kind(row.destination_entity_id),
         )
@@ -395,10 +398,38 @@ def _training_connection(rows: tuple[_FixtureRow, ...]) -> duckdb.DuckDBPyConnec
     return connection
 
 
+#: Vector table the recipient engine materializes for parity. ADR-011: this drives the real v3
+#: contract engine ``paysim_pre_decision_feature_sql`` (the one that builds Gold), not the leakage
+#: diagnostic table (which keeps the v2 count/amount/has_history shape). The contract engine emits
+#: all ten v3 fields directly, so ``projections`` for this engine is empty.
+_RECIPIENT_VECTOR_TABLE = "paysim_pre_decision_parity_vectors"
+
+
 def _materialize_recipient(connection: duckdb.DuckDBPyConnection) -> None:
-    paysim_recipient.materialize_recipient_leakage_vectors(
-        connection,
-        nonfraud_sample_per_group=1_000,
+    # Map the `paysim` raw view onto the PAYSIM_PRE_DECISION_SOURCE_COLUMNS the contract engine
+    # reads, then run the frozen v3 SQL. Same view the leakage path reads, so the fixture is shared.
+    connection.execute(
+        """
+        CREATE OR REPLACE TEMP TABLE paysim_pre_source AS
+        SELECT
+            source_row_number,
+            step,
+            knowledge_step,
+            type AS transaction_type,
+            amount,
+            nameOrig AS origin_entity_id,
+            nameDest AS destination_entity_id,
+            CASE
+                WHEN starts_with(nameDest, 'C') THEN 'CUSTOMER'
+                WHEN starts_with(nameDest, 'M') THEN 'MERCHANT'
+                ELSE 'UNKNOWN'
+            END AS destination_entity_kind
+        FROM paysim
+        """
+    )
+    connection.execute(
+        f"CREATE OR REPLACE TEMP TABLE {_RECIPIENT_VECTOR_TABLE} AS "
+        + paysim_recipient.paysim_pre_decision_feature_sql("paysim_pre_source")
     )
 
 
@@ -465,20 +496,16 @@ SQL_ENGINES: dict[str, _SqlEngine] = {
         module=paysim_recipient,
         connect=_recipient_connection,
         materialize=_materialize_recipient,
-        vector_table=paysim_recipient.VECTOR_TABLE,
-        # The diagnostic vector table predates the v2 request-time block and materializes only ten
-        # of the twelve fields. The two missing ones are pure request-time projections of columns
-        # it does carry, written here exactly as ADR-003 declares them, so that all twelve fields
-        # are still compared in contract order.
-        projections={
-            "event_step": "step::DOUBLE",
-            "transaction_type_transfer": (
-                "CASE WHEN transaction_type = 'TRANSFER' THEN 1.0 ELSE 0.0 END"
-            ),
-        },
-        # `s.step <> c.step` occurs only in the join; the FILTER spells the same exclusion as
-        # `s.step <= c.step - 1`, so this target cannot reach the predicate by accident.
-        join_same_step_rewrite=_SqlRewrite("s.step <> c.step", "TRUE"),
+        vector_table=_RECIPIENT_VECTOR_TABLE,
+        # The v3 contract engine emits all ten fields directly, so nothing is reconstructed here.
+        projections={},
+        # The join writes its same-step exclusion as `s.step <= c.step - 1`, followed by a newline
+        # before `WHERE`; the FILTER spells the same clause inline (` AND s.knowledge_step ...`), so
+        # the trailing newline makes this target the join and only the join.
+        join_same_step_rewrite=_SqlRewrite(
+            "s.step <= c.step - 1\n",
+            "s.step <= c.step\n",
+        ),
     ),
     "training": _SqlEngine(
         module=paysim_training,
@@ -614,8 +641,10 @@ def test_scoring_scope_excludes_merchant_destinations() -> None:
 
     assert 14 not in oracle
     assert 13 in oracle
-    assert oracle[13]["pit_prior_count_168h"] == 0
-    assert oracle[13]["recipient_has_history_168h"] == 0
+    # Row 13 is a zero-history scored cutoff: no prior events -> counts/fan-in 0 and cold recency.
+    assert oracle[13]["pit_prior_count_24h"] == 0
+    assert oracle[13]["pit_distinct_senders_168h"] == 0
+    assert oracle[13]["pit_steps_since_last_event"] == PAYSIM_RECENCY_SENTINEL_STEPS
 
 
 # --------------------------------------------------------------------------------------------
@@ -725,8 +754,8 @@ def test_removing_knowledge_time_breaks_parity(
     assert mutated["pit_prior_amount_24h"] == _exact(6, 7, 8, 9)
     assert mutated["pit_prior_amount_24h"] != EXPECTED_CUTOFF_VECTOR["pit_prior_amount_24h"]
     # 168h: 1111.11 (4) + 9999.99 (5) + 222.22 (6) + 33.33 (7) + 8888.88 (8) + 500.50 (9)
-    #     = 20756.03
-    assert mutated["pit_prior_count_168h"] == len(PRIOR_168H_ROWS) + 1
+    #     = 20756.03. Every fixture row has a unique origin, so distinct-senders equals the count.
+    assert mutated["pit_distinct_senders_168h"] == len(PRIOR_168H_ROWS) + 1
     assert mutated["pit_prior_amount_168h"] == _exact(4, 5, 6, 7, 8, 9)
 
 
@@ -749,7 +778,7 @@ def test_narrowing_the_sql_prune_breaks_parity(
 
     assert mutated["pit_prior_amount_168h"] == _exact(*PRIOR_24H_ROWS)
     assert mutated["pit_prior_amount_168h"] != EXPECTED_CUTOFF_VECTOR["pit_prior_amount_168h"]
-    assert mutated["pit_prior_count_168h"] == len(PRIOR_24H_ROWS)
+    assert mutated["pit_distinct_senders_168h"] == len(PRIOR_24H_ROWS)
 
 
 @pytest.mark.parametrize("engine_name", SQL_ENGINE_NAMES)
@@ -888,7 +917,7 @@ def test_admitting_same_step_rows_breaks_parity(
              500.50 + 3333.33 + 0.01 = 3833.84
         24h  [376, 400] -> rows 6, 7, 9, 10, 100
              222.22 + 33.33 + 500.50 + 3333.33 + 0.01 = 4089.39
-        168h [232, 400] -> rows 4, 5, 6, 7, 9, 10, 100
+        168h [232, 400] -> rows 4, 5, 6, 7, 9, 10, 100 (each a distinct origin)
              1111.11 + 9999.99 + 222.22 + 33.33 + 500.50 + 3333.33 + 0.01 = 15200.49
 
     Row 11 (step 401) stays out of all three: it is inside the recipient join's +168 prune but
@@ -906,7 +935,7 @@ def test_admitting_same_step_rows_breaks_parity(
     assert mutated["pit_prior_amount_1h"] == _exact(9, 10, CUTOFF_ROW_NUMBER)
     assert mutated["pit_prior_count_24h"] == 5
     assert mutated["pit_prior_amount_24h"] == _exact(6, 7, 9, 10, CUTOFF_ROW_NUMBER)
-    assert mutated["pit_prior_count_168h"] == 7
+    assert mutated["pit_distinct_senders_168h"] == 7
     assert mutated["pit_prior_amount_168h"] == _exact(4, 5, 6, 7, 9, 10, CUTOFF_ROW_NUMBER)
     # The leak is exactly row 10 plus the cutoff's own row: 3333.33 + 0.01 = 3333.34
     assert mutated["pit_prior_amount_168h"] - EXPECTED_CUTOFF_VECTOR[
@@ -941,6 +970,7 @@ def test_paysim_tie_break_is_not_the_synthetic_oracle_tie_break() -> None:
         knowledge_step=cutoff.knowledge_step,
         transaction_type=cutoff.transaction_type,
         amount=cutoff.amount,
+        origin_entity_id=cutoff.origin_entity_id,
         destination_entity_id=cutoff.destination_entity_id,
         destination_entity_kind="CUSTOMER",
     )
@@ -983,7 +1013,11 @@ def test_positive_control_columns_are_not_part_of_the_compared_contract() -> Non
     """
 
     assert set(paysim_recipient.POSITIVE_CONTROL_COLUMNS).isdisjoint(PAYSIM_MODEL_FEATURE_ORDER)
-    assert set(paysim_recipient.STRICT_PIT_FEATURE_COLUMNS) <= set(PAYSIM_MODEL_FEATURE_ORDER)
+    # STRICT_PIT_FEATURE_COLUMNS is the leakage diagnostic's own count/amount/has_history shape
+    # (ADR-011 decoupled it from the model contract), but it must still never carry a leaky control.
+    assert set(paysim_recipient.STRICT_PIT_FEATURE_COLUMNS).isdisjoint(
+        paysim_recipient.POSITIVE_CONTROL_COLUMNS
+    )
 
 
 def test_oracle_value_types_match_the_declared_dtypes() -> None:

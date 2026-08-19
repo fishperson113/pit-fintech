@@ -493,6 +493,7 @@ def execute_backfill(
     project_root: Path,
     data_root: Path,
     artifact_root: Path,
+    progress: bool = False,
 ) -> BackfillRunRecord:
     """Run one planned backfill through the state machine and return the terminal record.
 
@@ -500,6 +501,10 @@ def execute_backfill(
     ``promote_staged_gold`` for the commit, so G3's atomicity lives in exactly one place. A run
     that fails validation returns a ``failed`` record with the failing validations in
     :attr:`BackfillRunRecord.errors` and the main Gold tables untouched -- it does not raise.
+
+    ``progress=True`` forwards the same ``[gold +Ns]`` / ``[promote +Ns]`` phase reporting the
+    ``build-gold`` / ``promote-gold`` CLIs already emit, so a long FULL build is not silent. It is
+    off by default so tests and the late-arrival guard stay quiet.
 
     ``plan.resume_action`` was already decided by :func:`plan_backfill` ->
     :func:`resolve_idempotent_run` without touching data; this function is where that decision
@@ -574,6 +579,7 @@ def execute_backfill(
             cutoff_start_step=plan.output_start_step,
             cutoff_end_step=plan.output_end_step,
             silver_manifest_path=resolved_manifest_path,
+            progress=progress,
         )
     except Exception as exc:  # a failed run lands in `failed`, not a crash
         failed = transition(
@@ -625,7 +631,7 @@ def execute_backfill(
         timings=replace(running_record.timings, validated_at=_now()),
     )
 
-    promotion = promote_staged_gold(build=build, data_root=data_root)
+    promotion = promote_staged_gold(build=build, data_root=data_root, progress=progress)
     if not promotion.promoted:
         failure_errors = tuple(
             BackfillError(

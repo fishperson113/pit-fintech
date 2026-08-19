@@ -8,9 +8,11 @@ from deltalake import DeltaTable
 
 from pit_fintech.features.build_offline import (
     PRE_DECISION_FEATURE_SCHEMA,
+    GoldColumn,
     _schema_for,
     _write_gold_table,
 )
+from pit_fintech.features.paysim_specs import PAYSIM_RECENCY_SENTINEL_STEPS
 
 
 def _pre_decision_row(*, step: int, event_day: int, source_row_number: int) -> dict[str, object]:
@@ -22,23 +24,35 @@ def _pre_decision_row(*, step: int, event_day: int, source_row_number: int) -> d
         "event_timestamp": timestamp,
         "created_timestamp": timestamp,
         "current_amount": 10.0,
-        "event_step": float(step),
         "transaction_type_transfer": 0.0,
         "pit_prior_count_1h": 0,
         "pit_prior_amount_1h": 0.0,
-        "recipient_has_history_1h": 0,
         "pit_prior_count_24h": 0,
         "pit_prior_amount_24h": 0.0,
-        "recipient_has_history_24h": 0,
-        "pit_prior_count_168h": 0,
         "pit_prior_amount_168h": 0.0,
-        "recipient_has_history_168h": 0,
+        "pit_distinct_senders_24h": 0,
+        "pit_distinct_senders_168h": 0,
+        "pit_steps_since_last_event": PAYSIM_RECENCY_SENTINEL_STEPS,
         "source_row_number": source_row_number,
         "step": step,
         "knowledge_step": step,
         "transaction_type": "CASH_OUT",
         "event_day": event_day,
     }
+
+
+LEGACY_PRE_DECISION_SCHEMA = (
+    *PRE_DECISION_FEATURE_SCHEMA[:4],
+    GoldColumn("event_step", "double", False),
+    *PRE_DECISION_FEATURE_SCHEMA[4:6],
+    GoldColumn("recipient_has_history_1h", "int64", False),
+    *PRE_DECISION_FEATURE_SCHEMA[6:7],
+    GoldColumn("recipient_has_history_24h", "int64", False),
+    GoldColumn("pit_prior_count_168h", "int64", False),
+    GoldColumn("pit_prior_amount_168h", "double", False),
+    GoldColumn("recipient_has_history_168h", "int64", False),
+    *PRE_DECISION_FEATURE_SCHEMA[14:],
+)
 
 
 def test_write_gold_table_partition_overwrite_retains_existing_partitions(tmp_path: Path) -> None:
@@ -110,3 +124,30 @@ def test_write_gold_table_non_contiguous_overwrite_does_not_remove_middle_partit
 
     assert set(head.column("event_day").to_pylist()) == {1, 2, 3}
     assert head.num_rows == 3
+
+
+def test_write_gold_table_replaces_legacy_schema_without_event_step_error(tmp_path: Path) -> None:
+    """A v2 committed table can be promoted to the ADR-011 v3 column set."""
+    path = tmp_path / "gold"
+    row = _pre_decision_row(step=1, event_day=1, source_row_number=1)
+    legacy_row = {
+        **row,
+        "event_step": 1.0,
+        "recipient_has_history_1h": 0,
+        "recipient_has_history_24h": 0,
+        "pit_prior_count_168h": 0,
+        "recipient_has_history_168h": 0,
+    }
+    legacy_table = pa.Table.from_pylist(
+        [legacy_row], schema=_schema_for(LEGACY_PRE_DECISION_SCHEMA)
+    )
+    current_table = pa.Table.from_pylist([row], schema=_schema_for(PRE_DECISION_FEATURE_SCHEMA))
+
+    _write_gold_table(path, legacy_table, LEGACY_PRE_DECISION_SCHEMA)
+    _write_gold_table(path, current_table, PRE_DECISION_FEATURE_SCHEMA)
+
+    committed = DeltaTable(path).to_pyarrow_table()
+    assert tuple(committed.column_names) == tuple(
+        column.name for column in PRE_DECISION_FEATURE_SCHEMA
+    )
+    assert committed.num_rows == 1

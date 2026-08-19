@@ -52,6 +52,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
+import shutil
+import tempfile
 import time
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
@@ -84,6 +87,7 @@ from pit_fintech.features.paysim_specs import (
     PAYSIM_FEATURE_SERVICE_VERSION,
     PAYSIM_HISTORY_FEATURE_NAMES,
     PAYSIM_MODEL_FEATURE_ORDER,
+    PAYSIM_RECENCY_SENTINEL_STEPS,
     paysim_feature_contract_checksum,
     paysim_step_to_timestamp,
 )
@@ -163,33 +167,35 @@ class GoldColumn:
 #: One row per **in-scope cutoff** -- ``CASH_OUT``/``TRANSFER`` with a ``CUSTOMER`` destination
 #: (ADR-003 scoring scope). Rows outside the scope stay pipeline data and never appear here.
 #:
-#: Column order is frozen. Columns 1-16 are byte-identical in name, order and type to
-#: ``data/paysim_fixture.py: PAYSIM_FEATURE_TABLE_COLUMNS`` -- the shape T1's Feast `FileSource`
-#: already binds to -- so the full-scale table is a superset of the fixture, never a different
-#: shape. See :data:`GOLD_FEAST_SOURCE_COLUMNS`.
+#: Column order is frozen (ADR-011 v3). Columns 1-14 are byte-identical in name, order and type to
+#: ``data/paysim_fixture.py: PAYSIM_FEATURE_TABLE_COLUMNS`` -- the shape Feast's `FileSource` binds
+#: to -- so the full-scale table is a superset of the fixture, never a different shape. See
+#: :data:`GOLD_FEAST_SOURCE_COLUMNS`.
 #:
-#: Columns 17-20 are the additions T2 needs and the fixture deliberately dropped. ``step`` and
-#: ``knowledge_step`` are back because they are the *ordering authority*: the T4 temporal split is
-#: on step ranges (ADR-002 decision 7: 1-520/521-631/632-743) and the T6 replay order is
-#: ``(step, source_row_number)`` (ADR-002 decision 2). ADR-006 decision 1.4 requires the ordering
-#: to stay on the integer columns, so the table that training and replay read has to carry them.
-#: A consumer must still never join on them where Feast validates on the timestamps.
+#: Columns 15-18 are identity/ordering columns the fixture drops. ``step`` and ``knowledge_step``
+#: are the *ordering authority*: the T4 temporal split is on step ranges (ADR-002 decision 7:
+#: 1-520/521-631/632-743) and the T6 replay order is ``(step, source_row_number)`` (ADR-002
+#: decision 2). ADR-006 decision 1.4 requires the ordering to stay on the integer columns, so the
+#: table training and replay read has to carry them. A consumer must still never join on them where
+#: Feast validates on the timestamps.
 PRE_DECISION_FEATURE_SCHEMA: Final[tuple[GoldColumn, ...]] = (
     GoldColumn(PAYSIM_ENTITY, "string", False),
     GoldColumn("event_timestamp", "timestamp[us, tz=UTC]", False),
     GoldColumn("created_timestamp", "timestamp[us, tz=UTC]", False),
+    # Columns 4-13 are the ten ADR-011 v3 model fields, in contract order (asserted below against
+    # PAYSIM_MODEL_FEATURE_ORDER). Columns 14-18 are the identity/ordering columns training and
+    # replay read; `step`/`knowledge_step` stay because the temporal split and replay order are on
+    # them (ADR-006 decision 1.4), never on the derived timestamps.
     GoldColumn("current_amount", "double", False),
-    GoldColumn("event_step", "double", False),
     GoldColumn("transaction_type_transfer", "double", False),
     GoldColumn("pit_prior_count_1h", "int64", False),
     GoldColumn("pit_prior_amount_1h", "double", False),
-    GoldColumn("recipient_has_history_1h", "int64", False),
     GoldColumn("pit_prior_count_24h", "int64", False),
     GoldColumn("pit_prior_amount_24h", "double", False),
-    GoldColumn("recipient_has_history_24h", "int64", False),
-    GoldColumn("pit_prior_count_168h", "int64", False),
     GoldColumn("pit_prior_amount_168h", "double", False),
-    GoldColumn("recipient_has_history_168h", "int64", False),
+    GoldColumn("pit_distinct_senders_24h", "int64", False),
+    GoldColumn("pit_distinct_senders_168h", "int64", False),
+    GoldColumn("pit_steps_since_last_event", "int64", False),
     GoldColumn("source_row_number", "int64", False),
     GoldColumn("step", "int64", False),
     GoldColumn("knowledge_step", "int64", False),
@@ -213,40 +219,38 @@ GOLD_FEAST_SOURCE_COLUMNS: Final[tuple[str, ...]] = (
 # Schema 2: gold.post_event_state_updates
 # --------------------------------------------------------------------------------------------
 
-#: The nine post-event state field names, in the same window order as
-#: ``PAYSIM_HISTORY_FEATURE_NAMES``, but under a ``post_`` prefix.
+#: The eight post-event state field names (ADR-011 v3), positionally paired with
+#: ``PAYSIM_HISTORY_FEATURE_NAMES`` but under a ``post_`` prefix.
 #:
 #: The rename is a **leakage guard, not cosmetics**. If post-event state carried the contract's own
 #: field names, a training job pointed at the wrong Gold table would silently train on
 #: current-inclusive aggregates -- which is precisely experiment E2, the deliberately leaky positive
 #: control (ADR-003 context table, PR-AUC 0.915528 against E4's 0.324524). With distinct names that
 #: mistake is a ``KeyError`` at read time instead of an impressive-looking metric. T5 maps these
-#: onto the twelve contract names when it writes the online record, and that mapping is
+#: onto the contract names when it writes the online record, and that mapping is
 #: :data:`POST_EVENT_TO_CONTRACT_FIELD` -- the single place the two vocabularies meet.
 POST_EVENT_STATE_FIELD_NAMES: Final[tuple[str, ...]] = (
     "post_count_1h",
     "post_amount_1h",
-    "post_has_history_1h",
     "post_count_24h",
     "post_amount_24h",
-    "post_has_history_24h",
-    "post_count_168h",
     "post_amount_168h",
-    "post_has_history_168h",
+    "post_distinct_senders_24h",
+    "post_distinct_senders_168h",
+    "post_steps_since_last_event",
 )
 
 #: post-event state field -> the contract history field it becomes when T5 writes an online record.
-#: Positional pairing against ``PAYSIM_HISTORY_FEATURE_NAMES``; asserted at import.
+#: Positional pairing against ``PAYSIM_HISTORY_FEATURE_NAMES`` (ADR-011 v3); asserted at import.
 POST_EVENT_TO_CONTRACT_FIELD: Final[dict[str, str]] = {
     "post_count_1h": "pit_prior_count_1h",
     "post_amount_1h": "pit_prior_amount_1h",
-    "post_has_history_1h": "recipient_has_history_1h",
     "post_count_24h": "pit_prior_count_24h",
     "post_amount_24h": "pit_prior_amount_24h",
-    "post_has_history_24h": "recipient_has_history_24h",
-    "post_count_168h": "pit_prior_count_168h",
     "post_amount_168h": "pit_prior_amount_168h",
-    "post_has_history_168h": "recipient_has_history_168h",
+    "post_distinct_senders_24h": "pit_distinct_senders_24h",
+    "post_distinct_senders_168h": "pit_distinct_senders_168h",
+    "post_steps_since_last_event": "pit_steps_since_last_event",
 }
 
 #: One row per **source event**, not per in-scope cutoff. Online state has to move on every event
@@ -256,26 +260,29 @@ POST_EVENT_TO_CONTRACT_FIELD: Final[dict[str, str]] = {
 #: make online state disagree with offline history for every destination that ever received a
 #: ``CASH_IN``, ``DEBIT`` or ``PAYMENT``.
 #:
-#: There are no request-time fields here. ``current_amount``/``event_step``/
-#: ``transaction_type_transfer`` describe the request being scored, not the state of an entity; T7
-#: derives them from the request itself (guide s9.3 step 2).
+#: There are no request-time fields here. ``current_amount``/``transaction_type_transfer`` describe
+#: the request being scored, not the state of an entity; T7 derives them from the request itself
+#: (guide s9.3 step 2).
 POST_EVENT_STATE_SCHEMA: Final[tuple[GoldColumn, ...]] = (
     GoldColumn(PAYSIM_ENTITY, "string", False),
     GoldColumn("event_timestamp", "timestamp[us, tz=UTC]", False),
     GoldColumn("created_timestamp", "timestamp[us, tz=UTC]", False),
     GoldColumn("post_count_1h", "int64", False),
     GoldColumn("post_amount_1h", "double", False),
-    GoldColumn("post_has_history_1h", "int64", False),
     GoldColumn("post_count_24h", "int64", False),
     GoldColumn("post_amount_24h", "double", False),
-    GoldColumn("post_has_history_24h", "int64", False),
-    GoldColumn("post_count_168h", "int64", False),
     GoldColumn("post_amount_168h", "double", False),
-    GoldColumn("post_has_history_168h", "int64", False),
+    GoldColumn("post_distinct_senders_24h", "int64", False),
+    GoldColumn("post_distinct_senders_168h", "int64", False),
+    GoldColumn("post_steps_since_last_event", "int64", False),
     #: Raw per-event amount (the event's own amount, not a window sum). Present so the online
     #: write-path warm-start can seed the per-entity event log (winlog) from Gold alone, without
-    #: reaching down to Silver (medallion layering; ADR-010). Not part of the nine contract fields.
+    #: reaching down to Silver (medallion layering; ADR-010). Not part of the contract fields.
     GoldColumn("amount", "double", False),
+    #: Raw per-event sender identity (ADR-011). Present for the same reason as ``amount``: winlog
+    #: warm-start needs the origin of every seeded event so ``pit_distinct_senders_*`` can be
+    #: recomputed online. Not a contract field.
+    GoldColumn("origin_entity_id", "string", False),
     GoldColumn("source_row_number", "int64", False),
     GoldColumn("step", "int64", False),
     GoldColumn("knowledge_step", "int64", False),
@@ -317,16 +324,18 @@ def _assert_contract_alignment() -> None:
     downstream modules bind to a silently reshaped table.
     """
 
+    field_count = len(PAYSIM_MODEL_FEATURE_ORDER)
     declared = tuple(column.name for column in PRE_DECISION_FEATURE_SCHEMA)
-    if declared[3:15] != PAYSIM_MODEL_FEATURE_ORDER:
+    if declared[3 : 3 + field_count] != PAYSIM_MODEL_FEATURE_ORDER:
         raise RuntimeError(
-            "gold.pre_decision_features no longer carries the frozen twelve fields in contract "
-            f"order: {declared[3:15]} != {PAYSIM_MODEL_FEATURE_ORDER}"
+            "gold.pre_decision_features no longer carries the frozen v3 fields in contract "
+            f"order: {declared[3 : 3 + field_count]} != {PAYSIM_MODEL_FEATURE_ORDER}"
         )
-    if GOLD_FEAST_SOURCE_COLUMNS[3:15] != PAYSIM_MODEL_FEATURE_ORDER:
+    if GOLD_FEAST_SOURCE_COLUMNS[3 : 3 + field_count] != PAYSIM_MODEL_FEATURE_ORDER:
         raise RuntimeError(
-            "the Feast source projection no longer carries the frozen twelve fields in contract "
-            f"order: {GOLD_FEAST_SOURCE_COLUMNS[3:15]} != {PAYSIM_MODEL_FEATURE_ORDER}"
+            "the Feast source projection no longer carries the frozen v3 fields in contract "
+            f"order: {GOLD_FEAST_SOURCE_COLUMNS[3 : 3 + field_count]} != "
+            f"{PAYSIM_MODEL_FEATURE_ORDER}"
         )
     if set(GOLD_FEAST_SOURCE_COLUMNS) - set(declared):
         raise RuntimeError(
@@ -335,7 +344,7 @@ def _assert_contract_alignment() -> None:
         )
     if tuple(POST_EVENT_TO_CONTRACT_FIELD) != POST_EVENT_STATE_FIELD_NAMES:
         raise RuntimeError(
-            "the post-event -> contract field map no longer covers the nine post-event fields in "
+            "the post-event -> contract field map no longer covers the eight post-event fields in "
             f"order: {tuple(POST_EVENT_TO_CONTRACT_FIELD)} != {POST_EVENT_STATE_FIELD_NAMES}"
         )
     if tuple(POST_EVENT_TO_CONTRACT_FIELD.values()) != PAYSIM_HISTORY_FEATURE_NAMES:
@@ -613,26 +622,49 @@ def paysim_post_event_state_sql(relation: str) -> str:
     is a mechanical change plus an ADR-004 fingerprint-boundary review.
     """
 
-    fragments: list[str] = []
-    for window_steps in (1, 24, 168):
-        predicate = (
+    def _inclusive(window_steps: int) -> str:
+        return (
             f"s.step >= c.step - {window_steps} + 1 "
             f"AND s.step <= c.step "
             "AND s.knowledge_step <= c.knowledge_step"
         )
-        fragments.extend(
-            (
-                f"(count(s.source_row_number) FILTER (WHERE {predicate}))::BIGINT "
-                f"AS post_count_{window_steps}h",
-                "coalesce("
-                f"sum(CAST(s.amount AS {PAYSIM_AMOUNT_DECIMAL_TYPE})) "
-                f"FILTER (WHERE {predicate}), 0.0)::DOUBLE "
-                f"AS post_amount_{window_steps}h",
-                f"(CASE WHEN count(s.source_row_number) FILTER (WHERE {predicate}) > 0 "
-                f"THEN 1 ELSE 0 END)::BIGINT AS post_has_history_{window_steps}h",
-            )
+
+    incl_1 = _inclusive(1)
+    incl_24 = _inclusive(24)
+    incl_168 = _inclusive(168)
+
+    def _count(predicate: str, name: str) -> str:
+        return f"(count(s.source_row_number) FILTER (WHERE {predicate}))::BIGINT AS {name}"
+
+    def _amount(predicate: str, name: str) -> str:
+        return (
+            f"coalesce(sum(CAST(s.amount AS {PAYSIM_AMOUNT_DECIMAL_TYPE})) "
+            f"FILTER (WHERE {predicate}), 0.0)::DOUBLE AS {name}"
         )
-    projections = ",\n            ".join(fragments)
+
+    def _distinct(predicate: str, name: str) -> str:
+        return f"(count(DISTINCT s.origin_entity_id) FILTER (WHERE {predicate}))::BIGINT AS {name}"
+
+    # Recency inclusive of the current event, shifted by +1 so it satisfies GOLD_SHIFT_RELATION:
+    # post_steps_since_last(step=s) == pre recency at cutoff s+1 == (s+1) - max(prior step <= s).
+    # The current event is always in the pool, so the FILTER is never empty here, but COALESCE to
+    # the sentinel keeps it identical in shape to the pre-decision projection.
+    recency = (
+        f"coalesce((c.step + 1) - (max(s.step) FILTER (WHERE {incl_168})), "
+        f"{PAYSIM_RECENCY_SENTINEL_STEPS})::BIGINT AS post_steps_since_last_event"
+    )
+    projections = ",\n            ".join(
+        (
+            _count(incl_1, "post_count_1h"),
+            _amount(incl_1, "post_amount_1h"),
+            _count(incl_24, "post_count_24h"),
+            _amount(incl_24, "post_amount_24h"),
+            _amount(incl_168, "post_amount_168h"),
+            _distinct(incl_24, "post_distinct_senders_24h"),
+            _distinct(incl_168, "post_distinct_senders_168h"),
+            recency,
+        )
+    )
     return f"""
         SELECT
             c.{PAYSIM_ENTITY},
@@ -641,6 +673,7 @@ def paysim_post_event_state_sql(relation: str) -> str:
             c.knowledge_step,
             c.transaction_type,
             c.amount,
+            c.origin_entity_id,
             {projections}
         FROM {relation} AS c
         LEFT JOIN {relation} AS s
@@ -653,7 +686,8 @@ def paysim_post_event_state_sql(relation: str) -> str:
             c.step,
             c.knowledge_step,
             c.transaction_type,
-            c.amount
+            c.amount,
+            c.origin_entity_id
         ORDER BY c.step, c.source_row_number
     """
 
@@ -870,6 +904,34 @@ def _partition_predicate(partitions: tuple[int, ...]) -> str:
     )
 
 
+def _replace_gold_table_schema(path: Path, table: pa.Table) -> None:
+    """Swap in a full replacement when Delta-rs cannot drop legacy columns in place."""
+    temporary = Path(tempfile.mkdtemp(prefix=f".{path.name}.schema-", dir=path.parent))
+    shutil.rmtree(temporary)
+    backup = path.with_name(f".{path.name}.previous-schema")
+    if backup.exists():
+        shutil.rmtree(backup)
+    try:
+        write_deltalake(
+            temporary,
+            table,
+            mode="error",
+            partition_by=[GOLD_PARTITION_COLUMN],
+        )
+        os.replace(path, backup)
+        try:
+            os.replace(temporary, path)
+        except Exception:
+            os.replace(backup, path)
+            raise
+        shutil.rmtree(backup)
+    finally:
+        if temporary.exists():
+            shutil.rmtree(temporary)
+        if backup.exists():
+            shutil.rmtree(backup)
+
+
 def _write_gold_table(
     path: Path, table: pa.Table, columns: tuple[GoldColumn, ...]
 ) -> GoldTableSnapshot:
@@ -895,20 +957,44 @@ def _write_gold_table(
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     if (path / "_delta_log").exists():
-        write_deltalake(
-            path,
-            table,
-            mode="overwrite",
-            partition_by=[GOLD_PARTITION_COLUMN],
-            predicate=_partition_predicate(partitions),
-            # Allow the committed Gold schema to evolve (e.g. the per-event `amount` added for the
-            # winlog warm-start, M057). The staged table is always cast to the canonical `schema`
-            # constant above, so the written schema is canonical; `schema_mode="overwrite"`
-            # replaces the old schema instead of failing on a field-count mismatch (18 vs 17). A
-            # schema change requires a full-range promote so every partition is rewritten with the
-            # new schema; after that, incremental promotes write the same schema (no-op).
-            schema_mode="overwrite",
-        )
+        existing_delta = DeltaTable(path)
+        existing_names = tuple(existing_delta.schema().to_arrow().names)
+        schema_changed = existing_names != tuple(schema.names)
+        if schema_changed:
+            # A contract-version bump changes the Gold column *set* -- ADR-011 v2->v3 drops
+            # `recipient_has_history_*`/`pit_prior_count_168h` and adds the fan-in/recency fields.
+            # Delta-rs cannot drop those fields in-place, so require the staged build to cover every
+            # existing partition before swapping in a full replacement table.
+            existing_partitions = tuple(
+                sorted(
+                    {
+                        int(value)
+                        for value in existing_delta.to_pyarrow_dataset()
+                        .to_table(columns=[GOLD_PARTITION_COLUMN])
+                        .column(GOLD_PARTITION_COLUMN)
+                        .to_pylist()
+                    }
+                )
+            )
+            if existing_partitions != partitions:
+                raise ValueError(
+                    "Gold schema migration requires a full-range staged build: "
+                    f"existing partitions={existing_partitions}, staged partitions={partitions}"
+                )
+            _replace_gold_table_schema(path, table)
+        else:
+            write_deltalake(
+                path,
+                table,
+                mode="overwrite",
+                partition_by=[GOLD_PARTITION_COLUMN],
+                predicate=_partition_predicate(partitions),
+                # Same schema (incremental/full range at the frozen contract): replace only this
+                # range's exact partitions. The staged table is cast to the canonical `schema`
+                # above, so `schema_mode="overwrite"` is a no-op on the schema and just keeps the
+                # per-event `amount` evolution (M057) legal.
+                schema_mode="overwrite",
+            )
     else:
         write_deltalake(path, table, mode="error", partition_by=[GOLD_PARTITION_COLUMN])
     delta = DeltaTable(path)
@@ -987,7 +1073,7 @@ def build_offline_features(
 
     Reads source partitions covering ``[cutoff_start_step - GOLD_LOOKBACK_STEPS, cutoff_end_step]``
     and no more (guide s4.2), pinned to one exact Silver Delta version. Both traps in the module
-    docstring apply: the twelve fields come off the SQL engine, the two timestamp columns are
+    docstring apply: the ten model fields come off the SQL engine, the two timestamp columns are
     appended in Python from ``paysim_step_to_timestamp``.
 
     ``promote=True`` runs :func:`promote_staged_gold` in the same call for convenience; it does not

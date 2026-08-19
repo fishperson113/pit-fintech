@@ -54,7 +54,10 @@ from pathlib import Path
 from typing import Final
 
 from pit_fintech.features.paysim_reference import PAYSIM_WINDOW_STEPS
-from pit_fintech.features.paysim_specs import PAYSIM_HISTORY_FEATURE_NAMES
+from pit_fintech.features.paysim_specs import (
+    PAYSIM_HISTORY_FEATURE_NAMES,
+    PAYSIM_RECENCY_SENTINEL_STEPS,
+)
 from pit_fintech.materialization.materializer import (
     OnlineStoreConfig,
     _record_from_payload,
@@ -83,11 +86,17 @@ class LoggedEvent:
     ``knowledge_step`` is carried so the knowledge-time predicate (ADR-005 decision 5) applies at
     write/read time -- it is what makes a late-arriving correction visible to later cutoffs but not
     to earlier ones. On clean PaySim data ``knowledge_step == step`` and the predicate is a no-op.
+
+    ``origin_entity_id`` (the sender, PaySim ``nameOrig``) is carried so the fan-in feature
+    ``pit_distinct_senders_*`` (ADR-011) can be recomputed online exactly as the offline engine
+    computes it from ``silver.paysim_transactions.origin_entity_id``. It is the reason the winlog
+    serialization moved from a 3-tuple to a 4-tuple.
     """
 
     step: int
     knowledge_step: int
     amount: Decimal
+    origin_entity_id: str
 
 
 def winlog_key(*, store: OnlineStoreConfig, entity_id: str) -> str:
@@ -109,12 +118,14 @@ def compute_window_features(
     cutoff_step: int,
     cutoff_knowledge_step: int,
 ) -> dict[str, int | float]:
-    """Compute the nine history fields from an event log, at one cutoff.
+    """Compute the eight ADR-011 v3 history fields from an event log, at one cutoff.
 
     Independent re-implementation of ``paysim_reference.compute_paysim_feature_row``'s history half:
     eligibility ``e.step < cutoff_step AND e.knowledge_step <= cutoff_knowledge_step``; each window
-    ``w`` keeps ``e.step >= cutoff_step - w``. Counts are exact; amounts are summed as ``Decimal``
-    and cast to float once, matching the offline ``DECIMAL(18,2)`` sum bit-for-bit within range.
+    ``w`` keeps ``e.step >= cutoff_step - w``. Counts and distinct-sender counts are exact; amounts
+    are summed as ``Decimal`` and cast to float once, matching the offline ``DECIMAL(18,2)`` sum
+    bit-for-bit within range. Recency is ``cutoff_step - max(prior step)`` within the widest window,
+    or ``PAYSIM_RECENCY_SENTINEL_STEPS`` when there is no eligible prior event there.
 
     Post-event state at step ``t`` is the history **inclusive of** event ``t``, which this function
     yields by passing ``cutoff_step = t + 1`` (``GOLD_SHIFT_RELATION``).
@@ -125,16 +136,35 @@ def compute_window_features(
         for event in events
         if event.step < cutoff_step and event.knowledge_step <= cutoff_knowledge_step
     ]
-    values: dict[str, int | float] = {}
+    count_by_window: dict[int, int] = {}
+    amount_by_window: dict[int, float] = {}
+    senders_by_window: dict[int, int] = {}
     for window_steps in PAYSIM_WINDOW_STEPS:
         lower_bound = cutoff_step - window_steps
         window = [event for event in eligible if event.step >= lower_bound]
         prior_amount = sum((event.amount for event in window), start=Decimal("0")).quantize(
             _MONEY_QUANTUM
         )
-        values[f"pit_prior_count_{window_steps}h"] = len(window)
-        values[f"pit_prior_amount_{window_steps}h"] = float(prior_amount)
-        values[f"recipient_has_history_{window_steps}h"] = 1 if window else 0
+        count_by_window[window_steps] = len(window)
+        amount_by_window[window_steps] = float(prior_amount)
+        senders_by_window[window_steps] = len({event.origin_entity_id for event in window})
+
+    widest_window = max(PAYSIM_WINDOW_STEPS)
+    recency_steps = [event.step for event in eligible if event.step >= cutoff_step - widest_window]
+    steps_since_last = (
+        cutoff_step - max(recency_steps) if recency_steps else PAYSIM_RECENCY_SENTINEL_STEPS
+    )
+
+    values: dict[str, int | float] = {
+        "pit_prior_count_1h": count_by_window[1],
+        "pit_prior_amount_1h": amount_by_window[1],
+        "pit_prior_count_24h": count_by_window[24],
+        "pit_prior_amount_24h": amount_by_window[24],
+        "pit_prior_amount_168h": amount_by_window[168],
+        "pit_distinct_senders_24h": senders_by_window[24],
+        "pit_distinct_senders_168h": senders_by_window[168],
+        "pit_steps_since_last_event": steps_since_last,
+    }
     # Emit in the frozen contract order (assert alignment so a spec reorder is caught here).
     ordered = {name: values[name] for name in PAYSIM_HISTORY_FEATURE_NAMES}
     if set(ordered) != set(values):
@@ -223,6 +253,7 @@ def apply_score_event(
     knowledge_step: int | None,
     transaction_type: str,
     amount: Decimal,
+    origin_entity_id: str,
     transaction_id: str | None = None,
     event_id: str | None = None,
 ) -> dict:
@@ -409,7 +440,14 @@ def apply_score_event(
             )
 
         # Accepted write: append, evict, recompute the post-event aggregate at step t.
-        events.append(LoggedEvent(step=step, knowledge_step=resolved_knowledge, amount=amount))
+        events.append(
+            LoggedEvent(
+                step=step,
+                knowledge_step=resolved_knowledge,
+                amount=amount,
+                origin_entity_id=origin_entity_id,
+            )
+        )
         events.sort(key=lambda event: (event.step, event.knowledge_step))
         events = _evict(events, current_step=step)
         online_values = compute_window_features(
@@ -484,6 +522,7 @@ def apply_score_event(
                 knowledge_step=resolved_knowledge,
                 transaction_type=transaction_type,
                 amount=amount,
+                origin_entity_id=origin_entity_id,
                 request_id=request_id,
                 transaction_id=transaction_id,
                 event_id=event_id,
@@ -553,15 +592,28 @@ def _decode_log(payload: str | None) -> list[LoggedEvent]:
     if payload is None:
         return []
     data = json.loads(payload)
+    # ADR-011 bumped the winlog element from a 3-tuple to a 4-tuple carrying the sender id. The v3
+    # rollout resets the winlog namespace and re-warm-starts, so only 4-tuples are expected here; a
+    # stale 3-tuple is a rollout error, not something to silently pad.
     return [
-        LoggedEvent(step=int(step), knowledge_step=int(knowledge_step), amount=Decimal(str(amount)))
-        for step, knowledge_step, amount in data["events"]
+        LoggedEvent(
+            step=int(step),
+            knowledge_step=int(knowledge_step),
+            amount=Decimal(str(amount)),
+            origin_entity_id=str(origin_entity_id),
+        )
+        for step, knowledge_step, amount, origin_entity_id in data["events"]
     ]
 
 
 def _encode_log(events: list[LoggedEvent]) -> str:
     return json.dumps(
-        {"events": [[event.step, event.knowledge_step, str(event.amount)] for event in events]},
+        {
+            "events": [
+                [event.step, event.knowledge_step, str(event.amount), event.origin_entity_id]
+                for event in events
+            ]
+        },
         separators=(",", ":"),
         sort_keys=True,
     )
@@ -584,8 +636,10 @@ def _events_to_duckdb_rows(events: list[LoggedEvent], *, entity_id: str) -> list
 
     History counts every prior event to a destination regardless of transaction type or destination
     kind (the SQL ``scoped_history`` CTE), so the placeholder ``transaction_type`` does not affect
-    the computed values -- it exists only to satisfy the SQL projection. Amounts are passed as
-    decimal strings so ``CAST(amount AS DECIMAL(18,2))`` is exact.
+    the computed values -- it exists only to satisfy the SQL projection. ``origin_entity_id`` is the
+    real sender though: ``pit_distinct_senders_*`` counts distinct senders (ADR-011), so it must be
+    the value the winlog recorded. Amounts are passed as decimal strings so
+    ``CAST(amount AS DECIMAL(18,2))`` is exact.
     """
 
     return [
@@ -595,6 +649,7 @@ def _events_to_duckdb_rows(events: list[LoggedEvent], *, entity_id: str) -> list
             "step": event.step,
             "knowledge_step": event.knowledge_step,
             "transaction_type": "CASH_OUT",
+            "origin_entity_id": event.origin_entity_id,
             "amount": str(event.amount),
         }
         for index, event in enumerate(events)
@@ -666,6 +721,7 @@ def append_event_history(
     knowledge_step: int,
     transaction_type: str,
     amount: Decimal,
+    origin_entity_id: str,
     source_row_number: int | None = None,
     request_id: str | None = None,
     transaction_id: str | None = None,
@@ -701,6 +757,7 @@ def append_event_history(
         "event_id": event_id,
         "source_row_number": source_row_number,
         "destination_entity_id": entity_id,
+        "origin_entity_id": origin_entity_id,
         "step": step,
         "knowledge_step": knowledge_step,
         "transaction_type": transaction_type,
@@ -805,11 +862,15 @@ def reconcile_parity(
             if record.get("event_id"):
                 event_ids.append(str(record["event_id"]))
             entity_id = record["destination_entity_id"]
+            # These events are used only to group by entity (which entities had live writes); the
+            # offline reference is recomputed from the winlog below, not from this list, so a record
+            # written before the ADR-011 origin field is tolerated with an empty sender here.
             by_entity.setdefault(entity_id, []).append(
                 LoggedEvent(
                     step=int(record["step"]),
                     knowledge_step=int(record["knowledge_step"]),
                     amount=Decimal(str(record["amount"])),
+                    origin_entity_id=str(record.get("origin_entity_id", "")),
                 )
             )
 

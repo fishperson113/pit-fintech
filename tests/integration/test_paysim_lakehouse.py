@@ -23,6 +23,7 @@ from pit_fintech.features.paysim_specs import (
     PAYSIM_FEATURE_SOURCE,
     PAYSIM_FORBIDDEN_MODEL_INPUTS,
     PAYSIM_LABEL_SOURCE,
+    PAYSIM_RECENCY_SENTINEL_STEPS,
     paysim_feature_contract_checksum,
 )
 from pit_fintech.models.paysim_training import (
@@ -214,12 +215,14 @@ def test_exact_silver_versions_build_strict_pit_training_vectors(tmp_path: Path)
 
     rows = vectors.table.to_pylist()
     step_five = next(row for row in rows if row["step"] == 5)
-    assert step_five["pit_prior_count_168h"] == 1
+    # ADR-011 v3: count_168h/has_history_168h were dropped; the 168h history is checked through
+    # pit_prior_amount_168h, and recency (5 - latest prior step 4 = 1) covers has-history.
     assert step_five["pit_prior_amount_168h"] == 5.0
-    assert step_five["recipient_has_history_168h"] == 1
+    assert step_five["pit_steps_since_last_event"] == 1
     assert step_five["max_pit_source_step_168h"] == 4
 
     step_six = next(row for row in rows if row["step"] == 6)
-    assert step_six["pit_prior_count_168h"] == 0
-    assert step_six["recipient_has_history_168h"] == 0
+    # No prior event -> cold: zero history amount and the recency sentinel.
+    assert step_six["pit_prior_amount_168h"] == 0.0
+    assert step_six["pit_steps_since_last_event"] == PAYSIM_RECENCY_SENTINEL_STEPS
     assert step_six["max_pit_source_step_168h"] is None

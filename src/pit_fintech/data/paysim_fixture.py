@@ -16,7 +16,7 @@ only hour ordinals; it is a presentation of the selection, never an input to the
 feature value is ever computed from it.
 
 The feature table is different in kind: Feast computes no window aggregates (M030 Finding 1), so
-the nine history fields have to exist on disk before a `FeatureView` can serve them. It is
+the eight history fields have to exist on disk before a `FeatureView` can serve them. It is
 computed by the **SQL engine** (`features/paysim_recipient.py`), never by the oracle -- an
 oracle-built table later checked against the oracle would make gate G1 a tautology -- and the
 builder then compares it against the oracle field by field and refuses to finish if they disagree.
@@ -69,7 +69,7 @@ FEATURE_TABLE_PATH: Final = FIXTURE_DIR / "paysim_feature_table.parquet"
 
 # The frozen column order of the feature table. `feature_repo/` binds to these names, so changing
 # one is a contract change, not a refactor: entity join key first, then the two ADR-006 timestamp
-# columns Feast validates and joins on, then the twelve contract fields in
+# columns Feast validates and joins on, then the ten contract fields in
 # `PAYSIM_MODEL_FEATURE_ORDER`. `source_row_number` trails as the row identity -- it is not a
 # contract field and is never served as one, but it is the only key that maps a retrieved row back
 # to `paysim_expected_features.json`, which is what the G1 comparison needs.
@@ -133,6 +133,7 @@ _SILVER_COLUMNS: Final = (
     "knowledge_step",
     "transaction_type",
     "amount",
+    "origin_entity_id",
     "destination_entity_id",
     "destination_entity_kind",
 )
@@ -496,9 +497,9 @@ def _fetch_feature_table(
 class PaySimFixtureSelection(NamedTuple):
     """One selection in three shapes, over exactly the same rows in the same order.
 
-    `events` is the oracle's view: the seven columns the frozen contract may read. `source_table`
+    `events` is the oracle's view: the eight columns the frozen contract may read. `source_table`
     is the Feast-facing raw view: every Silver column plus the ADR-006 derived timestamps.
-    `feature_table` is the precomputed twelve-field table a `FeatureView` can actually serve, one
+    `feature_table` is the precomputed ten-field table a `FeatureView` can actually serve, one
     row per in-scope cutoff, computed by the SQL engine.
 
     Only `events` ever reaches the oracle. Neither table is an input to it, and no expected value
@@ -562,6 +563,7 @@ def _event_to_jsonable(event: PaySimSourceEvent) -> dict[str, object]:
         "knowledge_step": event.knowledge_step,
         "transaction_type": event.transaction_type,
         "amount": str(event.amount),
+        "origin_entity_id": event.origin_entity_id,
         "destination_entity_id": event.destination_entity_id,
         "destination_entity_kind": event.destination_entity_kind,
     }
@@ -616,8 +618,8 @@ def _verify_feature_table(
 ) -> None:
     """Re-read the feature table and check the SQL engine against the oracle, field by field.
 
-    This is the point of building the table in SQL. Both sides derive the same twelve fields from
-    the same fifteen rows through completely different machinery -- a DuckDB range self-join with
+    This is the point of building the table in SQL. Both sides derive the same ten fields from
+    the same fixture rows through completely different machinery -- a DuckDB range self-join with
     DECIMAL(18,2) aggregation on one side, explicit Python loops with `decimal.Decimal` on the
     other -- so an agreement is real evidence and a disagreement is a defect in one of them. Every
     difference is collected before raising, because seeing all of them at once is what tells you

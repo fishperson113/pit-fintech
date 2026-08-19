@@ -73,7 +73,7 @@ EXPECTED_FEATURE_ROWS = 11
 # `feature_repo/definitions.py` reshapes the definition version into an identifier-safe
 # `FeatureView` name (Feast breaks on a dashed name at SQLite table creation). Restated here rather
 # than imported from `feature_repo`, so a rename on either side fails the gate.
-FEATURE_VIEW_NAME = "paysim_fraud_recipient_v2"
+FEATURE_VIEW_NAME = "paysim_fraud_recipient_v3"
 
 _FEAST_DTYPE_BY_FEATURE_NAME = {
     spec.name: ("Int64" if spec.dtype == "int64" else "Float64") for spec in PAYSIM_FEATURE_SPECS
@@ -328,8 +328,8 @@ def test_g1_feast_apply_is_idempotent_by_definitions_checksum(g1_run: _G1Run) ->
     )
 
 
-def test_g1_feature_service_resolves_twelve_fields_in_contract_order(g1_run: _G1Run) -> None:
-    """G1 criterion 3: `paysim-fraud-scoring-v2` resolves twelve fields, in order, with dtypes."""
+def test_g1_feature_service_resolves_ten_fields_in_contract_order(g1_run: _G1Run) -> None:
+    """G1 criterion 3: `paysim-fraud-scoring-v3` resolves ten fields, in order, with dtypes."""
 
     from feast import FeatureStore
 

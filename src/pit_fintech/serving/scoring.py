@@ -140,23 +140,23 @@ class MissingEntityRejectedError(RuntimeError):
 
 
 def derive_request_features(*, request: ScoreRequest) -> dict[str, float]:
-    """Step 2: the three request-time fields, from the shared contract.
+    """Step 2: the two request-time fields, from the shared contract (ADR-011 v3).
 
-    ``current_amount = float(amount)``, ``event_step = float(step)``,
+    ``current_amount = float(amount)`` and
     ``transaction_type_transfer = 1.0 if transaction_type == "TRANSFER" else 0.0`` -- the same
     expressions ``features/paysim_specs.py`` declares and
-    ``features/paysim_recipient.py: paysim_pre_decision_feature_sql`` emits offline. They are
-    written in one place per side and must be derived from the specs rather than re-typed, because
-    a divergence here is a G6 mismatch on a *request-time* field, which is the confusing kind.
+    ``features/paysim_recipient.py: paysim_pre_decision_feature_sql`` emits offline. (v3 dropped
+    ``event_step``: an absolute-time coordinate the model overfit, ADR-011.) They are written in one
+    place per side and must be derived from the specs rather than re-typed, because a divergence
+    here is a G6 mismatch on a *request-time* field, which is the confusing kind.
 
-    These three expressions are copied verbatim from the independent Python oracle
+    Both expressions are copied verbatim from the independent Python oracle
     (``features/paysim_reference.py: compute_paysim_feature_row``), not re-derived, so this is the
     same formula proven correct offline rather than a second implementation of it.
     """
 
     return {
         "current_amount": float(request.amount),
-        "event_step": float(request.step),
         "transaction_type_transfer": 1.0 if request.transaction_type == "TRANSFER" else 0.0,
     }
 
@@ -203,7 +203,7 @@ def build_model_vector(
     history_features: dict[str, int | float],
     ordered_feature_names: tuple[str, ...],
 ) -> tuple[float, ...]:
-    """Step 5: assemble the twelve-field model input in frozen contract order.
+    """Step 5: assemble the ten-field model input in frozen contract order (ADR-011 v3).
 
     ``ordered_feature_names`` must be ``PAYSIM_MODEL_FEATURE_ORDER`` (ADR-003: the vector order is
     part of the contract). Raises if a field is missing from either side rather than substituting a

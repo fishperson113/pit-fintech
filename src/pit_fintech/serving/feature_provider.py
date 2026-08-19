@@ -11,10 +11,10 @@ contract, a materialization manifest and parity gates). So it is a project-level
 serving convenience -- which is why it is an ABC with a declared return type rather than a callable
 passed around.
 
-**The interface returns the nine history fields, not twelve.** ``current_amount``, ``event_step``
-and ``transaction_type_transfer`` are request-time fields: they are derived from the request being
+**The interface returns the eight history fields, not ten (ADR-011 v3).** ``current_amount`` and
+``transaction_type_transfer`` are request-time fields: they are derived from the request being
 scored, not looked up (guide s9.3 step 2 -- "derive entity ID/request features bang shared
-contract"). Assembling the twelve-field model vector is
+contract"). Assembling the ten-field model vector is
 :func:`~pit_fintech.serving.scoring.build_model_vector`'s job, and keeping the split explicit is
 what stops a provider from inventing a request-time value when the entity is cold.
 

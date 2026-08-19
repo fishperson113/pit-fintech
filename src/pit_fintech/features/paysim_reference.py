@@ -1,7 +1,7 @@
-"""Independent pure-Python oracle for PaySim FeatureSpec v2.
+"""Independent pure-Python oracle for PaySim FeatureSpec v3 (ADR-011).
 
-This module is the **correctness authority** for the twelve features of
-``paysim-fraud-recipient-v2``. The DuckDB path
+This module is the **correctness authority** for the ten features of
+``paysim-fraud-recipient-v3``. The DuckDB path
 (``features/paysim_recipient.py``, ``models/paysim_training.py``) must reproduce these values;
 when the two disagree the SQL is wrong until proven otherwise, never this module.
 
@@ -26,7 +26,10 @@ What it implements, verbatim from the frozen decisions:
   lower bound inclusive, current event and every other same-``step`` event excluded;
 * money summed in :class:`decimal.Decimal` at ``DECIMAL(18,2)``, never in ``float`` — see
   :func:`exact_money`;
-* exactly the twelve fields of ``PAYSIM_MODEL_FEATURE_ORDER``, in that order.
+* fan-in ``pit_distinct_senders_*`` = ``COUNT(DISTINCT origin_entity_id)`` over the same eligible
+  window; recency ``pit_steps_since_last_event`` = ``cutoff.step - max(prior step)`` within the
+  widest window, or ``PAYSIM_RECENCY_SENTINEL_STEPS`` when the recipient is cold (ADR-011);
+* exactly the ten fields of ``PAYSIM_MODEL_FEATURE_ORDER``, in that order.
 
 ``step`` and ``knowledge_step`` are hour ordinals (ADR-002 decision 1). The derived
 ``event_timestamp``/``created_timestamp`` columns of ADR-006 exist for the Feast layer only and are
@@ -59,6 +62,7 @@ from pit_fintech.features.paysim_specs import (
     PAYSIM_FEATURE_SPECS,
     PAYSIM_HISTORY_FEATURE_NAMES,
     PAYSIM_MODEL_FEATURE_ORDER,
+    PAYSIM_RECENCY_SENTINEL_STEPS,
     PAYSIM_STATIC_FEATURE_NAMES,
 )
 
@@ -169,45 +173,46 @@ PAYSIM_WINDOW_STEPS: Final = _history_window_steps()
 WINDOW_KEYS: Final = tuple(f"{window_steps}h" for window_steps in PAYSIM_WINDOW_STEPS)
 
 
-def _expected_history_names(windows: tuple[int, ...]) -> tuple[str, ...]:
-    return tuple(
-        name
-        for window_steps in windows
-        for name in (
-            f"pit_prior_count_{window_steps}h",
-            f"pit_prior_amount_{window_steps}h",
-            f"recipient_has_history_{window_steps}h",
-        )
-    )
+def _spec_names(availability: str) -> tuple[str, ...]:
+    """The feature names of one availability class, in ``PAYSIM_FEATURE_SPECS`` order."""
+
+    return tuple(spec.name for spec in PAYSIM_FEATURE_SPECS if spec.availability == availability)
+
+
+#: The ADR-011 v3 windows this oracle computes explicitly, asserted below. The history set is
+#: non-uniform by window (count at 1h/24h, amount at 1h/24h/168h, distinct-senders at 24h/168h,
+#: recency once), so the field list is read straight off the specs rather than reconstructed from a
+#: uniform per-window pattern.
+_V3_EXPECTED_WINDOW_STEPS: Final = (1, 24, 168)
 
 
 def _validate_contract_alignment() -> None:
-    """Fail at import if this oracle no longer covers exactly the frozen twelve fields.
+    """Fail at import if this oracle no longer covers exactly the frozen ten fields.
 
-    Field order is part of the contract (ADR-003 §Decision), so a reordered or resized spec must
-    stop this module from loading rather than silently emit a differently shaped vector.
+    Field order is part of the contract (ADR-003 §Decision, ADR-011), so a reordered or resized
+    spec must stop this module from loading rather than silently emit a differently shaped vector.
+    The check compares the name tuples against the ``PAYSIM_FEATURE_SPECS`` derivation, so it is an
+    independent cross-check, not a restatement of the same constant.
     """
 
-    if PAYSIM_STATIC_FEATURE_NAMES != (
-        "current_amount",
-        "event_step",
-        "transaction_type_transfer",
-    ):
+    if _spec_names("request_available") != PAYSIM_STATIC_FEATURE_NAMES:
         raise RuntimeError(
-            "request-time feature names changed; the PaySim oracle implements "
-            "current_amount/event_step/transaction_type_transfer, not "
-            f"{PAYSIM_STATIC_FEATURE_NAMES}"
+            "request-time feature names/order no longer match the specs: "
+            f"{_spec_names('request_available')} != {PAYSIM_STATIC_FEATURE_NAMES}"
         )
-    expected_history = _expected_history_names(PAYSIM_WINDOW_STEPS)
-    if expected_history != PAYSIM_HISTORY_FEATURE_NAMES:
+    if _spec_names("historical_only") != PAYSIM_HISTORY_FEATURE_NAMES:
         raise RuntimeError(
-            "history feature names/order changed; the PaySim oracle derives "
-            f"{expected_history} from the specs but the contract declares "
-            f"{PAYSIM_HISTORY_FEATURE_NAMES}"
+            "history feature names/order no longer match the specs: "
+            f"{_spec_names('historical_only')} != {PAYSIM_HISTORY_FEATURE_NAMES}"
         )
     expected_order = (*PAYSIM_STATIC_FEATURE_NAMES, *PAYSIM_HISTORY_FEATURE_NAMES)
     if expected_order != PAYSIM_MODEL_FEATURE_ORDER:
         raise RuntimeError("model feature order is no longer request-time followed by history")
+    if PAYSIM_WINDOW_STEPS != _V3_EXPECTED_WINDOW_STEPS:
+        raise RuntimeError(
+            "the explicit v3 compute assumes windows (1, 24, 168); the specs now declare "
+            f"{PAYSIM_WINDOW_STEPS} -- update compute_paysim_feature_row alongside the specs"
+        )
 
 
 _validate_contract_alignment()
@@ -242,6 +247,7 @@ class PaySimSourceEvent(BaseModel):
     knowledge_step: int = Field(ge=1)
     transaction_type: str = Field(min_length=1)
     amount: Decimal
+    origin_entity_id: str = Field(min_length=1)
     destination_entity_id: str = Field(min_length=1)
     destination_entity_kind: str = Field(min_length=1)
 
@@ -271,6 +277,7 @@ class PaySimSourceEvent(BaseModel):
             knowledge_step=int(row["knowledge_step"]),
             transaction_type=str(row["transaction_type"]),
             amount=row["amount"],
+            origin_entity_id=str(row["origin_entity_id"]),
             destination_entity_id=destination_entity_id,
             destination_entity_kind=str(
                 row.get("destination_entity_kind") or paysim_destination_kind(destination_entity_id)
@@ -279,7 +286,7 @@ class PaySimSourceEvent(BaseModel):
 
 
 class PaySimFeatureRow(BaseModel):
-    """The twelve-field vector for one cutoff, plus audit lineage for the no-future-read gate."""
+    """The ten-field vector for one cutoff, plus audit lineage for the no-future-read gate."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -399,34 +406,57 @@ def compute_paysim_feature_row(
     cutoff: PaySimSourceEvent,
     events: Sequence[PaySimSourceEvent],
 ) -> PaySimFeatureRow:
-    """Compute the twelve-field pre-decision vector for one cutoff event.
+    """Compute the ten-field pre-decision vector for one cutoff event (ADR-011 v3).
 
     ``cutoff`` is the event being scored; ``events`` is the pool of source rows the platform may
     read from. Rows in ``events`` that fail the eligibility predicate are never touched by any
     aggregate, so no value can depend on data at or after the cutoff.
+
+    The history set is non-uniform by window: count at 1h/24h, amount at 1h/24h/168h, fan-in
+    (distinct senders) at 24h/168h, and recency once over the widest window. Every window is still a
+    strict subset of :func:`eligible_history`, so the no-future-read audit lineage is complete.
     """
 
     history = eligible_history(cutoff, events)
+    # `current_amount` is the request-time amount cast to the contract's float64 dtype, the same
+    # DOUBLE the SQL projects; it is not a sum, so no accumulation happens here.
     values: dict[str, int | float] = {
-        # `current_amount` is the request-time amount cast to the contract's float64 dtype, the
-        # same DOUBLE the SQL projects; it is not a sum, so no accumulation happens here.
         "current_amount": float(cutoff.amount),
-        "event_step": float(cutoff.step),
         "transaction_type_transfer": 1.0 if cutoff.transaction_type == "TRANSFER" else 0.0,
     }
     eligible_row_numbers: dict[str, tuple[int, ...]] = {}
     max_source_step: dict[str, int | None] = {}
 
+    count_by_window: dict[int, int] = {}
+    # Only the final projection leaves the decimal domain, matching the SQL's `::DOUBLE`.
+    amount_by_window: dict[int, float] = {}
+    senders_by_window: dict[int, int] = {}
     for window_steps, window_key in zip(PAYSIM_WINDOW_STEPS, WINDOW_KEYS, strict=True):
         window = history_within_window(history, cutoff, window_steps)
-        prior_count = len(window)
-        prior_amount = sum_money(source.amount for source in window)
-        values[f"pit_prior_count_{window_steps}h"] = prior_count
-        # Only this final projection leaves the decimal domain, matching the SQL's `::DOUBLE`.
-        values[f"pit_prior_amount_{window_steps}h"] = float(prior_amount)
-        values[f"recipient_has_history_{window_steps}h"] = 1 if prior_count > 0 else 0
+        count_by_window[window_steps] = len(window)
+        amount_by_window[window_steps] = float(sum_money(source.amount for source in window))
+        senders_by_window[window_steps] = len({source.origin_entity_id for source in window})
         eligible_row_numbers[window_key] = tuple(source.source_row_number for source in window)
         max_source_step[window_key] = max((source.step for source in window), default=None)
+
+    # Recency is bounded to the widest window so it matches the offline pool, which reads only
+    # [cutoff - 168, cutoff). A recipient with no eligible prior event there is cold -> sentinel.
+    widest_window = max(PAYSIM_WINDOW_STEPS)
+    recency_steps = [
+        source.step for source in history_within_window(history, cutoff, widest_window)
+    ]
+    steps_since_last = (
+        cutoff.step - max(recency_steps) if recency_steps else PAYSIM_RECENCY_SENTINEL_STEPS
+    )
+
+    values["pit_prior_count_1h"] = count_by_window[1]
+    values["pit_prior_amount_1h"] = amount_by_window[1]
+    values["pit_prior_count_24h"] = count_by_window[24]
+    values["pit_prior_amount_24h"] = amount_by_window[24]
+    values["pit_prior_amount_168h"] = amount_by_window[168]
+    values["pit_distinct_senders_24h"] = senders_by_window[24]
+    values["pit_distinct_senders_168h"] = senders_by_window[168]
+    values["pit_steps_since_last_event"] = steps_since_last
 
     return PaySimFeatureRow(
         feature_definition_version=PAYSIM_FEATURE_DEFINITION_VERSION,

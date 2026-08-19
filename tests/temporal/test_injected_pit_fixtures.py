@@ -264,12 +264,14 @@ LATE_ROWS: tuple[_FixtureRow, ...] = (
 
 # Correct history for the step-103 cutoff is {100, 101, 102}: row 99 is known too late, row 101
 # is known exactly at the cutoff and is therefore eligible under `<=`.
+# Columns common to both engines: the leakage diagnostic keeps the v2 count/amount shape while the
+# training engine now emits the ADR-011 v3 set, so `pit_prior_count_168h` (leakage-only) is left out
+# and the 168h window is checked through `pit_prior_amount_168h`, which both engines carry.
 EXPECTED_CUTOFF_VECTOR = {
     "pit_prior_count_1h": 1,
     "pit_prior_amount_1h": 20.0,
     "pit_prior_count_24h": 3,
     "pit_prior_amount_24h": 530.0,
-    "pit_prior_count_168h": 3,
     "pit_prior_amount_168h": 530.0,
     "max_pit_source_step_24h": 102,
 }
@@ -324,7 +326,6 @@ def test_knowledge_time_window_values_match_hand_calculation(engine_name: str) -
     assert vector["pit_prior_count_1h"] == 1
     assert vector["pit_prior_amount_1h"] == 20.0
     # 168h window reaches back past step 99, which is still excluded on knowledge time alone.
-    assert vector["pit_prior_count_168h"] == 3
     assert vector["pit_prior_amount_168h"] == 530.0
     assert vector["max_pit_source_step_24h"] == 102
     assert vector == EXPECTED_CUTOFF_VECTOR

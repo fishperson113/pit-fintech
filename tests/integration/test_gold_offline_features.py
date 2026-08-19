@@ -97,12 +97,12 @@ def test_gold_fixture_build_is_atomic_contract_safe_and_deterministic(tmp_path: 
 
     parity = compare_gold_against_reference(build=first)
     assert parity.sql_rows == parity.oracle_rows == 4
-    assert parity.compared_fields == 48
+    assert parity.compared_fields == 40  # 4 in-scope cutoffs x 10 ADR-011 v3 contract fields
     assert parity.mismatched_fields == 0, parity.differences
     shift = verify_shift_relation(build=first, entity_ids=("C100",))
     assert len(shift) == 1
     assert shift[0].status == "pass"
-    assert shift[0].detail == "compared_fields=36"
+    assert shift[0].detail == "compared_fields=32"  # 4 rows x 8 ADR-011 v3 post-event fields
 
     second = build_offline_features(
         project_root=project_root,

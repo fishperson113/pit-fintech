@@ -25,6 +25,7 @@ from pit_fintech.features.paysim_specs import (
     PAYSIM_FORBIDDEN_MODEL_INPUTS,
     PAYSIM_HISTORY_FEATURE_NAMES,
     PAYSIM_MODEL_FEATURE_ORDER,
+    PAYSIM_RECENCY_SENTINEL_STEPS,
     PAYSIM_STATIC_FEATURE_NAMES,
     WEEK_SECONDS,
     paysim_feature_contract_checksum,
@@ -35,8 +36,8 @@ from pit_fintech.models.paysim_lightgbm import PIT_FEATURE_COLUMNS, STATIC_FEATU
 def test_paysim_feature_contract_identity_and_temporal_policy_are_frozen() -> None:
     contract = PAYSIM_FEATURE_CONTRACT
 
-    assert contract.version == "paysim-fraud-recipient-v2"
-    assert contract.service_version == "paysim-fraud-scoring-v2"
+    assert contract.version == "paysim-fraud-recipient-v3"
+    assert contract.service_version == "paysim-fraud-scoring-v3"
     assert contract.dataset == "paysim1"
     assert contract.entity == "destination_entity_id"
     assert contract.entity_definition_version == "paysim-destination-customer-v1"
@@ -55,11 +56,34 @@ def test_paysim_feature_contract_identity_and_temporal_policy_are_frozen() -> No
     assert contract.float_tolerance == 1e-6
 
 
-def test_paysim_model_feature_order_is_shared_with_lightgbm() -> None:
+def test_paysim_model_feature_order_is_the_frozen_v3_set() -> None:
+    # ADR-011 v3: two request-time fields, then the eight non-uniform history fields.
     expected = (
         "current_amount",
-        "event_step",
         "transaction_type_transfer",
+        "pit_prior_count_1h",
+        "pit_prior_amount_1h",
+        "pit_prior_count_24h",
+        "pit_prior_amount_24h",
+        "pit_prior_amount_168h",
+        "pit_distinct_senders_24h",
+        "pit_distinct_senders_168h",
+        "pit_steps_since_last_event",
+    )
+
+    assert len(PAYSIM_FEATURE_SPECS) == 10
+    assert expected == PAYSIM_MODEL_FEATURE_ORDER
+    assert tuple(spec.name for spec in PAYSIM_FEATURE_SPECS) == expected
+    assert PAYSIM_FEATURE_CONTRACT.model_feature_order == expected
+    assert expected[2:] == PAYSIM_HISTORY_FEATURE_NAMES
+    assert PAYSIM_STATIC_FEATURE_NAMES == ("current_amount", "transaction_type_transfer")
+    # The M016 LightGBM spike columns are deliberately DECOUPLED from the v3 contract (they compute
+    # over the leakage VECTOR_TABLE, frozen M016 evidence), so they keep the v2 shape.
+    assert STATIC_FEATURE_COLUMNS == ("current_amount", "event_step", "transaction_type_transfer")
+    assert PIT_FEATURE_COLUMNS[0:3] == STATIC_FEATURE_COLUMNS
+    # STRICT_PIT_FEATURE_COLUMNS is the leakage diagnostic's own count/amount/has_history shape,
+    # also decoupled from the contract.
+    assert STRICT_PIT_FEATURE_COLUMNS == (
         "pit_prior_count_1h",
         "pit_prior_amount_1h",
         "recipient_has_history_1h",
@@ -70,15 +94,6 @@ def test_paysim_model_feature_order_is_shared_with_lightgbm() -> None:
         "pit_prior_amount_168h",
         "recipient_has_history_168h",
     )
-
-    assert len(PAYSIM_FEATURE_SPECS) == 12
-    assert expected == PAYSIM_MODEL_FEATURE_ORDER
-    assert tuple(spec.name for spec in PAYSIM_FEATURE_SPECS) == expected
-    assert PAYSIM_FEATURE_CONTRACT.model_feature_order == expected
-    assert expected == PIT_FEATURE_COLUMNS
-    assert STATIC_FEATURE_COLUMNS == PAYSIM_STATIC_FEATURE_NAMES
-    assert expected[3:] == PAYSIM_HISTORY_FEATURE_NAMES
-    assert STRICT_PIT_FEATURE_COLUMNS == PAYSIM_HISTORY_FEATURE_NAMES
 
 
 def test_paysim_feature_windows_availability_and_defaults_are_explicit() -> None:
@@ -93,18 +108,21 @@ def test_paysim_feature_windows_availability_and_defaults_are_explicit() -> None
     expected_windows = {
         "pit_prior_count_1h": HOUR_SECONDS,
         "pit_prior_amount_1h": HOUR_SECONDS,
-        "recipient_has_history_1h": HOUR_SECONDS,
         "pit_prior_count_24h": DAY_SECONDS,
         "pit_prior_amount_24h": DAY_SECONDS,
-        "recipient_has_history_24h": DAY_SECONDS,
-        "pit_prior_count_168h": WEEK_SECONDS,
         "pit_prior_amount_168h": WEEK_SECONDS,
-        "recipient_has_history_168h": WEEK_SECONDS,
+        "pit_distinct_senders_24h": DAY_SECONDS,
+        "pit_distinct_senders_168h": WEEK_SECONDS,
+        "pit_steps_since_last_event": WEEK_SECONDS,
     }
     for name, window_seconds in expected_windows.items():
         assert by_name[name].availability == "historical_only"
         assert by_name[name].window_seconds == window_seconds
+
+    # Every history field defaults to 0/0.0 except recency, which defaults to the cold sentinel.
+    for name in ("pit_prior_count_1h", "pit_prior_amount_1h", "pit_distinct_senders_24h"):
         assert by_name[name].default == 0 or by_name[name].default == 0.0
+    assert by_name["pit_steps_since_last_event"].default == PAYSIM_RECENCY_SENTINEL_STEPS
 
 
 def test_paysim_forbidden_inputs_and_version_boundaries_are_shared() -> None:
@@ -148,6 +166,6 @@ def test_features_cli_exposes_frozen_paysim_contract() -> None:
     assert result.exit_code == 0
     assert PAYSIM_FEATURE_DEFINITION_VERSION in result.stdout
     assert paysim_feature_contract_checksum() in result.stdout
-    assert "PaySim FeatureSpec v2" in result.stdout
-    assert "feature_count: 12" in result.stdout
+    assert "PaySim FeatureSpec v3" in result.stdout
+    assert "feature_count: 10" in result.stdout
     assert "isFraud" in result.stdout

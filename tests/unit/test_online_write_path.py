@@ -22,22 +22,32 @@ from pit_fintech.serving.online_state import (
 )
 
 
-def _event(step: int, amount: str, knowledge_step: int | None = None) -> LoggedEvent:
-    return LoggedEvent(step=step, knowledge_step=knowledge_step or step, amount=Decimal(amount))
+def _event(
+    step: int, amount: str, knowledge_step: int | None = None, origin: str = "A"
+) -> LoggedEvent:
+    return LoggedEvent(
+        step=step,
+        knowledge_step=knowledge_step or step,
+        amount=Decimal(amount),
+        origin_entity_id=origin,
+    )
 
 
 def test_post_event_state_at_step_t_is_pre_decision_history_at_t_plus_one() -> None:
     """The shift relation (GOLD_SHIFT_RELATION): post_event_state(step=t) == history(cutoff=t+1)."""
-    events = [_event(1, "100.00"), _event(2, "200.00")]
+    # Two senders so the ADR-011 fan-in feature is exercised (distinct = 2).
+    events = [_event(1, "100.00", origin="A"), _event(2, "200.00", origin="B")]
     # post_event_state(step=2) == pre_decision_history(cutoff=3): the 24h window [-21,3) holds both
     # events, and the 1h window [2,3) holds the step-2 event.
     values = compute_window_features(events=events, cutoff_step=3, cutoff_knowledge_step=3)
     assert values["pit_prior_count_24h"] == 2
     assert values["pit_prior_amount_24h"] == 300.0
-    assert values["recipient_has_history_24h"] == 1
+    assert values["pit_distinct_senders_24h"] == 2
+    assert values["pit_distinct_senders_168h"] == 2
     assert values["pit_prior_count_1h"] == 1
     assert values["pit_prior_amount_1h"] == 200.0
-    assert values["recipient_has_history_1h"] == 1
+    # Recency: latest prior event is step 2, cutoff 3 -> 1.
+    assert values["pit_steps_since_last_event"] == 1
 
 
 def test_late_arrival_visible_only_from_its_knowledge_cutoff() -> None:
@@ -102,13 +112,12 @@ def test_count_parity_mismatches_integer_exact_and_float_tolerance() -> None:
     online = {
         "pit_prior_count_1h": 1,
         "pit_prior_amount_1h": 100.0,
-        "recipient_has_history_1h": 1,
         "pit_prior_count_24h": 1,
         "pit_prior_amount_24h": 100.0,
-        "recipient_has_history_24h": 1,
-        "pit_prior_count_168h": 1,
         "pit_prior_amount_168h": 100.0,
-        "recipient_has_history_168h": 1,
+        "pit_distinct_senders_24h": 1,
+        "pit_distinct_senders_168h": 1,
+        "pit_steps_since_last_event": 5,
     }
     offline_same = dict(online)
     assert count_parity_mismatches(online=online, offline=offline_same) == 0
@@ -124,6 +133,15 @@ def test_count_parity_mismatches_integer_exact_and_float_tolerance() -> None:
     offline_count_diff = dict(online)
     offline_count_diff["pit_prior_count_24h"] = 2  # integer mismatch
     assert count_parity_mismatches(online=online, offline=offline_count_diff) == 1
+
+    # ADR-011 fan-in and recency are integers too -> exact comparison, no float tolerance.
+    offline_senders_diff = dict(online)
+    offline_senders_diff["pit_distinct_senders_168h"] = 2
+    assert count_parity_mismatches(online=online, offline=offline_senders_diff) == 1
+
+    offline_recency_diff = dict(online)
+    offline_recency_diff["pit_steps_since_last_event"] = 6
+    assert count_parity_mismatches(online=online, offline=offline_recency_diff) == 1
 
 
 def test_compute_window_features_emits_contract_order() -> None:

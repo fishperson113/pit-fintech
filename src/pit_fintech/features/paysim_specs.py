@@ -1,4 +1,4 @@
-"""Frozen PaySim application FeatureSpec v2."""
+"""Frozen PaySim application FeatureSpec v3 (ADR-011: cold-start fan-in + recency)."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ HOUR_SECONDS: Final = 60 * 60
 DAY_SECONDS: Final = 24 * HOUR_SECONDS
 WEEK_SECONDS: Final = 7 * DAY_SECONDS
 
-PAYSIM_FEATURE_DEFINITION_VERSION: Final = "paysim-fraud-recipient-v2"
-PAYSIM_FEATURE_SERVICE_VERSION: Final = "paysim-fraud-scoring-v2"
+PAYSIM_FEATURE_DEFINITION_VERSION: Final = "paysim-fraud-recipient-v3"
+PAYSIM_FEATURE_SERVICE_VERSION: Final = "paysim-fraud-scoring-v3"
 PAYSIM_FEATURE_CONTRACT_NAME: Final = "paysim-fraud-recipient-features"
 PAYSIM_FEATURE_SOURCE: Final = "silver.paysim_transactions"
 PAYSIM_LABEL_SOURCE: Final = "silver.paysim_labels"
@@ -57,21 +57,29 @@ def paysim_step_to_timestamp(step_ordinal: int) -> datetime:
 # at lakehouse build time by the `amount_decimal_roundtrip_failures` quality gate.
 PAYSIM_AMOUNT_DECIMAL_TYPE: Final = "DECIMAL(18,2)"
 
+# ADR-011: `pit_steps_since_last_event` takes this sentinel when a recipient has no eligible prior
+# event within the widest (168h) history window. It is strictly larger than any in-window gap (max
+# window 168), so the feature is monotone in staleness: a larger value always means a colder
+# recipient. It is also the contract default for the field (a cold read returns the sentinel, never
+# 0 -- 0 would mean "an event just happened", the opposite signal).
+PAYSIM_RECENCY_SENTINEL_STEPS: Final = 999
+
 PAYSIM_STATIC_FEATURE_NAMES: Final = (
     "current_amount",
-    "event_step",
     "transaction_type_transfer",
 )
+# ADR-011 v3 history set. Non-uniform by window on purpose (nb09/nb12): count only earns a place at
+# 1h/24h, amount at 1h/24h/168h; the redundant `recipient_has_history_*` flags and `event_step` were
+# dropped; fan-in (`pit_distinct_senders_*`) and recency (`pit_steps_since_last_event`) were added.
 PAYSIM_HISTORY_FEATURE_NAMES: Final = (
     "pit_prior_count_1h",
     "pit_prior_amount_1h",
-    "recipient_has_history_1h",
     "pit_prior_count_24h",
     "pit_prior_amount_24h",
-    "recipient_has_history_24h",
-    "pit_prior_count_168h",
     "pit_prior_amount_168h",
-    "recipient_has_history_168h",
+    "pit_distinct_senders_24h",
+    "pit_distinct_senders_168h",
+    "pit_steps_since_last_event",
 )
 PAYSIM_MODEL_FEATURE_ORDER: Final = (
     *PAYSIM_STATIC_FEATURE_NAMES,
@@ -125,15 +133,6 @@ PAYSIM_FEATURE_SPECS: Final = (
         default=0.0,
     ),
     _spec(
-        name="event_step",
-        source_column="step",
-        expression="CAST(step AS DOUBLE)",
-        aggregation="identity",
-        availability="request_available",
-        dtype="float64",
-        default=0.0,
-    ),
-    _spec(
         name="transaction_type_transfer",
         source_column="transaction_type",
         expression="CASE WHEN transaction_type = 'TRANSFER' THEN 1.0 ELSE 0.0 END",
@@ -162,15 +161,6 @@ PAYSIM_FEATURE_SPECS: Final = (
         default=0.0,
     ),
     _spec(
-        name="recipient_has_history_1h",
-        expression="CASE WHEN pit_prior_count_1h > 0 THEN 1 ELSE 0 END",
-        aggregation="indicator",
-        availability="historical_only",
-        window_seconds=HOUR_SECONDS,
-        dtype="int64",
-        default=0,
-    ),
-    _spec(
         name="pit_prior_count_24h",
         expression="COUNT(prior destination events)",
         aggregation="count",
@@ -190,24 +180,6 @@ PAYSIM_FEATURE_SPECS: Final = (
         default=0.0,
     ),
     _spec(
-        name="recipient_has_history_24h",
-        expression="CASE WHEN pit_prior_count_24h > 0 THEN 1 ELSE 0 END",
-        aggregation="indicator",
-        availability="historical_only",
-        window_seconds=DAY_SECONDS,
-        dtype="int64",
-        default=0,
-    ),
-    _spec(
-        name="pit_prior_count_168h",
-        expression="COUNT(prior destination events)",
-        aggregation="count",
-        availability="historical_only",
-        window_seconds=WEEK_SECONDS,
-        dtype="int64",
-        default=0,
-    ),
-    _spec(
         name="pit_prior_amount_168h",
         source_column="amount",
         expression="COALESCE(SUM(prior destination amount), 0.0)",
@@ -217,14 +189,44 @@ PAYSIM_FEATURE_SPECS: Final = (
         dtype="float64",
         default=0.0,
     ),
+    # ADR-011 cold-start fan-in: distinct source accounts that paid this recipient in the window.
+    # Structurally distinct from `pit_prior_count_*` (a burst from one sender and the same volume
+    # from many senders read identically there, differently here). Source column `origin_entity_id`
+    # is the ingested `nameOrig`; it is neither a balance column, a label nor post-outcome.
     _spec(
-        name="recipient_has_history_168h",
-        expression="CASE WHEN pit_prior_count_168h > 0 THEN 1 ELSE 0 END",
-        aggregation="indicator",
+        name="pit_distinct_senders_24h",
+        source_column="origin_entity_id",
+        expression="COUNT(DISTINCT prior origin_entity_id)",
+        aggregation="distinct_count",
+        availability="historical_only",
+        window_seconds=DAY_SECONDS,
+        dtype="int64",
+        default=0,
+    ),
+    _spec(
+        name="pit_distinct_senders_168h",
+        source_column="origin_entity_id",
+        expression="COUNT(DISTINCT prior origin_entity_id)",
+        aggregation="distinct_count",
         availability="historical_only",
         window_seconds=WEEK_SECONDS,
         dtype="int64",
         default=0,
+    ),
+    # ADR-011 cold-start recency: hour ordinals since the recipient's most recent prior event within
+    # the 168h lookback; `PAYSIM_RECENCY_SENTINEL_STEPS` when there is none (cold). Bounded to the
+    # widest window so it matches the offline pool, which reads only [cutoff - 168, cutoff).
+    _spec(
+        name="pit_steps_since_last_event",
+        source_column="step",
+        expression=(
+            "COALESCE(current.step - MAX(prior destination step), PAYSIM_RECENCY_SENTINEL_STEPS)"
+        ),
+        aggregation="time_since_previous",
+        availability="historical_only",
+        window_seconds=WEEK_SECONDS,
+        dtype="int64",
+        default=PAYSIM_RECENCY_SENTINEL_STEPS,
     ),
 )
 

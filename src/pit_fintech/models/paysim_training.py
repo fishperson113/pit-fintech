@@ -48,6 +48,7 @@ from pit_fintech.features.paysim_specs import (
     PAYSIM_FEATURE_DEFINITION_VERSION,
     PAYSIM_FORBIDDEN_MODEL_INPUTS,
     PAYSIM_MODEL_FEATURE_ORDER,
+    PAYSIM_RECENCY_SENTINEL_STEPS,
     PAYSIM_STATIC_FEATURE_NAMES,
     paysim_feature_contract_checksum,
 )
@@ -417,6 +418,13 @@ def _prior_window_predicate(window_steps: int) -> str:
 
 
 def _window_columns(window_steps: int) -> str:
+    """Raw per-window ingredients (ADR-011 v3): count, amount, fan-in, and the max prior step.
+
+    All four are emitted for every window; the final projection assembles only the contract fields
+    it needs from them (count at 1h/24h, amount at 1h/24h/168h, distinct-senders at 24h/168h, the
+    168h max step for recency). Kept aligned with the recipient engine's history columns.
+    """
+
     prior = _prior_window_predicate(window_steps)
     return f"""
         (count(s.source_row_number) FILTER (WHERE {prior}))::BIGINT
@@ -425,17 +433,10 @@ def _window_columns(window_steps: int) -> str:
             sum(CAST(s.amount AS {PAYSIM_AMOUNT_DECIMAL_TYPE})) FILTER (WHERE {prior}),
             0.0
         )::DOUBLE AS pit_prior_amount_{window_steps}h,
+        (count(DISTINCT s.origin_entity_id) FILTER (WHERE {prior}))::BIGINT
+            AS pit_distinct_senders_{window_steps}h,
         (max(s.step) FILTER (WHERE {prior}))::BIGINT
             AS max_pit_source_step_{window_steps}h
-    """
-
-
-def _derived_history_columns(window_steps: int) -> str:
-    return f"""
-        pit_prior_count_{window_steps}h,
-        pit_prior_amount_{window_steps}h,
-        CASE WHEN pit_prior_count_{window_steps}h > 0 THEN 1 ELSE 0 END::BIGINT
-            AS recipient_has_history_{window_steps}h
     """
 
 
@@ -519,11 +520,31 @@ def _materialize_vector_table(
     window_columns = ",\n".join(
         _window_columns(window_steps).strip() for window_steps in LEAKAGE_WINDOWS_STEPS
     )
-    derived_columns = ",\n".join(
-        _derived_history_columns(window_steps).strip() for window_steps in LEAKAGE_WINDOWS_STEPS
+    history_join_columns = ",\n".join(
+        (
+            f"history.pit_prior_count_{window_steps}h, "
+            f"history.pit_prior_amount_{window_steps}h, "
+            f"history.pit_distinct_senders_{window_steps}h"
+        )
+        for window_steps in LEAKAGE_WINDOWS_STEPS
     )
     max_source_columns = ",\n".join(
         f"history.max_pit_source_step_{window_steps}h" for window_steps in LEAKAGE_WINDOWS_STEPS
+    )
+    # ADR-011 v3 contract fields in model order, assembled from the raw window ingredients above.
+    v3_feature_columns = ",\n".join(
+        (
+            "current_amount",
+            "transaction_type_transfer",
+            "pit_prior_count_1h",
+            "pit_prior_amount_1h",
+            "pit_prior_count_24h",
+            "pit_prior_amount_24h",
+            "pit_prior_amount_168h",
+            "pit_distinct_senders_24h",
+            "pit_distinct_senders_168h",
+            "pit_steps_since_last_event",
+        )
     )
     connection.execute(
         f"""
@@ -538,6 +559,7 @@ def _materialize_vector_table(
                 event.step,
                 event.knowledge_step,
                 event.transaction_type,
+                event.origin_entity_id,
                 event.destination_entity_id,
                 event.amount
             FROM {TRANSACTION_SOURCE_VIEW} AS event
@@ -584,15 +606,13 @@ def _materialize_vector_table(
                 target.destination_entity_id,
                 target.target_label,
                 target.current_amount::DOUBLE AS current_amount,
-                target.step::DOUBLE AS event_step,
                 CASE WHEN target.transaction_type = 'TRANSFER' THEN 1.0 ELSE 0.0 END::DOUBLE
                     AS transaction_type_transfer,
-                {
-            ", ".join(
-                f"history.pit_prior_count_{window_steps}h, history.pit_prior_amount_{window_steps}h"
-                for window_steps in LEAKAGE_WINDOWS_STEPS
-            )
-        },
+                {history_join_columns},
+                coalesce(
+                    target.step - history.max_pit_source_step_{max(LEAKAGE_WINDOWS_STEPS)}h,
+                    {PAYSIM_RECENCY_SENTINEL_STEPS}
+                )::BIGINT AS pit_steps_since_last_event,
                 {max_source_columns}
             FROM windowed AS history
             JOIN {TARGET_TABLE} AS target
@@ -614,10 +634,7 @@ def _materialize_vector_table(
             transaction_type,
             destination_entity_id,
             target_label,
-            current_amount,
-            event_step,
-            transaction_type_transfer,
-            {derived_columns},
+            {v3_feature_columns},
             {max_source_columns}
         FROM target_vectors AS history
         ORDER BY step, source_row_number

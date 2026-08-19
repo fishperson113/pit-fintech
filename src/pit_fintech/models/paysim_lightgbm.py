@@ -32,8 +32,6 @@ from pit_fintech.features.paysim_recipient import (
 )
 from pit_fintech.features.paysim_specs import (
     PAYSIM_FEATURE_DEFINITION_VERSION,
-    PAYSIM_MODEL_FEATURE_ORDER,
-    PAYSIM_STATIC_FEATURE_NAMES,
 )
 
 LIGHTGBM_SPIKE_VERSION: Final = "paysim-lightgbm-spike-v1"
@@ -51,8 +49,23 @@ COHORT_POLICY: Final = (
     "non-fraud rows per temporal split and transaction type"
 )
 
-STATIC_FEATURE_COLUMNS: Final = PAYSIM_STATIC_FEATURE_NAMES
-PIT_FEATURE_COLUMNS: Final = PAYSIM_MODEL_FEATURE_ORDER
+# The M016 spike columns are pinned to the leakage-cohort shape (event_step + count/amount/
+# has_history per window), deliberately NOT the frozen contract: this is exploratory, frozen M016
+# evidence computed over the leakage VECTOR_TABLE, which ADR-011 did not reshape. The v3 contract
+# feed is exercised by the Gold E1-E4 matrix (models/paysim_gold.py) and T4 training, not here.
+STATIC_FEATURE_COLUMNS: Final = ("current_amount", "event_step", "transaction_type_transfer")
+PIT_FEATURE_COLUMNS: Final = (
+    *STATIC_FEATURE_COLUMNS,
+    "pit_prior_count_1h",
+    "pit_prior_amount_1h",
+    "recipient_has_history_1h",
+    "pit_prior_count_24h",
+    "pit_prior_amount_24h",
+    "recipient_has_history_24h",
+    "pit_prior_count_168h",
+    "pit_prior_amount_168h",
+    "recipient_has_history_168h",
+)
 LEAKY_FEATURE_COLUMNS: Final = (
     *STATIC_FEATURE_COLUMNS,
     "current_inclusive_count_1h",

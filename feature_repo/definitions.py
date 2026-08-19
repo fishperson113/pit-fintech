@@ -1,4 +1,4 @@
-"""Real Feast objects for `paysim-fraud-recipient-v2` (ADR-006; guide §3.2-3.2.1).
+"""Real Feast objects for `paysim-fraud-recipient-v3` (ADR-006, ADR-011; guide §3.2-3.2.1).
 
 Entity, `FileSource`, `FeatureView`, `FeatureService` -- the objects `feast apply` discovers when
 run from this directory. Every name, dtype and version string below is imported straight from the
@@ -11,8 +11,8 @@ the way it is from the installed `pit_fintech` package -- `feature_repo` is neve
 importable package from its own directory.
 
 Two frozen strings appear here and must stay distinct (ADR-006 decision 2):
-`PAYSIM_FEATURE_DEFINITION_VERSION` ("paysim-fraud-recipient-v2", the feature contract) and
-`PAYSIM_FEATURE_SERVICE_VERSION` ("paysim-fraud-scoring-v2", the serving contract). The
+`PAYSIM_FEATURE_DEFINITION_VERSION` ("paysim-fraud-recipient-v3", the feature contract) and
+`PAYSIM_FEATURE_SERVICE_VERSION` ("paysim-fraud-scoring-v3", the serving contract). The
 `FeatureView` name is the definition version with dashes replaced by underscores (Feast requires
 an `isidentifier()`-safe name -- confirmed empirically: a dashed `FeatureView` name breaks the
 SQLite online-store table name at `apply()` time with `OperationalError near "-"`). The
@@ -27,7 +27,7 @@ pre-decision feature table (M030 Finding 1: Feast does not compute window aggreg
 `feast/aggregation/__init__.py:17`, "not yet supported"; confirmed absent from
 `feast/infra/offline_stores/duckdb.py` and `file_source.py`). That table is the SQL engine's
 output (`features/paysim_recipient.py`, not the Python oracle), one row per cutoff, columns
-`destination_entity_id, event_timestamp, created_timestamp, <12 contract fields>,
+`destination_entity_id, event_timestamp, created_timestamp, <10 contract fields>,
 source_row_number` (`src/pit_fintech/data/paysim_fixture.py: PAYSIM_FEATURE_TABLE_COLUMNS`). This
 module does not build that table and does not assume it exists on disk.
 
@@ -38,11 +38,11 @@ producer; the locked T1 scope for this file is the offline/historical retrieval 
 criterion), so `FeatureView` reads the `FileSource` directly. Adding a `PushSource` layer later is
 next-step work, not a correction.
 
-Also deliberately narrower than guide §3.2's last bullet: the three `request_available` fields
-(`current_amount`, `event_step`, `transaction_type_transfer`) are served here as ordinary batch
-fields from the precomputed table, the same as the nine `historical_only` fields, because that is
-what the precomputed table actually contains (`PAYSIM_FEATURE_TABLE_COLUMNS` carries all twelve).
-Splitting request-time computation into an `OnDemandFeatureView` is T7 (FastAPI scoring) scope.
+Also deliberately narrower than guide §3.2's last bullet: the two `request_available` fields
+(`current_amount`, `transaction_type_transfer`) are served here as ordinary batch fields from the
+precomputed table, the same as the eight `historical_only` fields, because that is what the
+precomputed table actually contains (`PAYSIM_FEATURE_TABLE_COLUMNS` carries all ten). Splitting
+request-time computation into an `OnDemandFeatureView` is T7 (FastAPI scoring) scope.
 """
 
 from __future__ import annotations
@@ -86,7 +86,7 @@ paysim_pre_decision_features_source = FileSource(
     created_timestamp_column="created_timestamp",
 )
 
-paysim_fraud_recipient_v2 = FeatureView(
+paysim_fraud_recipient_v3 = FeatureView(
     name=PAYSIM_FEATURE_DEFINITION_VERSION.replace("-", "_"),
     entities=[destination_entity],
     schema=[
@@ -97,8 +97,8 @@ paysim_fraud_recipient_v2 = FeatureView(
     tags={"definition_version": PAYSIM_FEATURE_DEFINITION_VERSION},
 )
 
-paysim_fraud_scoring_v2 = FeatureService(
+paysim_fraud_scoring_v3 = FeatureService(
     name=PAYSIM_FEATURE_SERVICE_VERSION,
-    features=[paysim_fraud_recipient_v2],
+    features=[paysim_fraud_recipient_v3],
     tags={"feature_service_version": PAYSIM_FEATURE_SERVICE_VERSION},
 )

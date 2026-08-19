@@ -1,6 +1,7 @@
 # Project status
 
-Last updated: 2026-08-18 (M073 — Sprint 3 feature/model validity notebooks, exploratory). Status
+Last updated: 2026-08-19 (M076 — Gold v2→v3 promotion compatibility implemented and fixture-verified;
+owner-run real-data promote remains pending). Status
 words are strict:
 
 - **planned**: present in the six-week guide, with no claim that code exists;
@@ -401,6 +402,64 @@ stays frozen); cold-start (recipients with no history) is the real weakness. Det
 [findings report](../../docs/reports/sprint-3-feature-model-validity-findings.md). **Not verified** —
 promotable baseline must run under `src/pit_fintech/training/` with manifest + multi-seed; notebooks
 must be output-cleared before commit (hard rule #4).
+
+**M074 — ADR-011 cold-start FeatureSpec v3 + Track B backfill strategy: planned (design only).**
+Turns the M073 findings into an actionable frozen-contract change (Track B). ADR-011 (**proposed**)
+freezes `paysim-fraud-recipient-v3`: **trim** the five non-earning v2 fields (`event_step`,
+`pit_prior_count_168h`, `recipient_has_history_1h/24h/168h`) and **add** three cold-start features
+(`pit_distinct_senders_24h/168h` fan-in, `pit_steps_since_last_event` recency, sentinel 999) → 10
+fields, entity/scope/temporal semantics/forbidden set unchanged. Owner-locked: fan-in+recency (not an
+origin-entity block → v4), trim+add (Track A folded in → one backfill). Feasibility checked: Silver
+carries `origin_entity_id` (offline OK); the winlog stores no sender identity (needs a serialization
+bump + per-event `origin_entity_id` on `gold.post_event_state_updates` for warm-start). Backfill
+strategy: schema change forces `mode=FULL` rebuild of both Gold tables; v3's new idempotency key
+leaves v2 Gold intact for rollback; re-verify oracle/SQL + online/offline parity; train a new champion
+bound to the v3 checksum (v2 metrics do NOT carry over). Code lands in M075–M079, each owner-gated. No
+`src/`/`tests/`/Gold/Silver change in this milestone. Detail:
+[M074 log](milestones/M074-cold-start-featurespec-v3-plan.md),
+[ADR-011](../../docs/adr/011-cold-start-featurespec-v3.md),
+[Track B plan + backfill runbook](../../docs/reports/sprint-3-track-b-cold-start-v3-plan.md).
+
+**M075 — implement ADR-011 FeatureSpec v3: implemented (agent-run tests green; owner gates pending).**
+Landed the v3 contract as one coordinated change set — `paysim-fraud-recipient-v3`, 10 model fields
+(dropped `event_step`/`pit_prior_count_168h`/`recipient_has_history_*`; added
+`pit_distinct_senders_24h/168h` fan-in + `pit_steps_since_last_event` recency). Both DuckDB engines,
+the Python oracle, the Gold pre/post schemas, the Silver E1/E4 cohort, the online write path
+(winlog + `origin_entity_id`, 4-tuple serialization), Feast defs, config and the committed fixture
+all moved together. Agent-run evidence: a runnable parity proof (oracle == pre-decision SQL, 0/10
+diffs; shift relation offline-post == oracle(s+1) == online, 0 diffs) plus `pytest` temporal 73 /
+unit 110 / integration 21 passed and `ruff` clean. **Not verified** — owner must run `.\make.ps1`
+gates; the v3 FULL backfill + winlog reset/re-warm-start + `parity-reconcile` + a v3 champion (M079)
+remain, committed Gold is still v2, and v2 metrics do not carry to v3 (hard rule #5). ADR-011 stays
+**proposed** until owner-run Gold gates pass. Detail:
+[M075 log](milestones/M075-cold-start-featurespec-v3-implementation.md).
+
+**M075 follow-up — schema-migration promote fix + backfill progress logging + v3 rollout ordering:
+implemented.** Fixed a promote-time `DeltaError` (`No field named recipient_has_history_168h`): a
+predicate-scoped overwrite cannot drop a column, so `_write_gold_table` now does an unpredicated full
+overwrite when the committed schema differs from the canonical one (a contract-version migration is
+always full-range). The failed promote left committed Gold untouched (Delta atomic write) and the
+staged v3 tables survive, so recovery re-promotes the existing staging rather than rebuilding.
+`execute_backfill` also gained a `progress` flag (CLI on, default off) forwarded to
+`build_offline_features`/`promote_staged_gold`, so a FULL build emits `[gold +Ns]`/`[promote +Ns]`
+reports instead of ~25 silent minutes. Owner-run rollout also corrected my earlier runbook: a contract-version bump needs
+**Silver rebuilt first** — the backfill idempotency key derives `feature_definition_version` from the
+Silver lakehouse manifest, so a stale v2 manifest made the v3 backfill short-circuit to the v2 run
+(caught by `materialize`'s missing `post_distinct_senders_24h`). After `build-lakehouse -Dataset
+paysim` re-stamped Silver to v3 (v8, checksum `33e8a839…`), the backfill built Gold v3 for real. Track
+B plan §5 runbook amended (Silver rebuild ahead of backfill; version-scoped winlog namespace means no
+v2 reset needed). Detail:
+[M075 log](milestones/M075-cold-start-featurespec-v3-implementation.md).
+
+**M076 — promote legacy Gold schema boundary: implemented (fixture-verified; owner gate pending).**
+Fixed the reported `DeltaTable.schema().to_pyarrow()` API mismatch and the follow-up
+`No field named event_step` failure. The writer now normalizes schema-name comparison, preserves
+same-schema partition-scoped overwrites, refuses partial v2→v3 migrations, and performs a
+full-range sibling-table swap with rollback for the legacy-column drop. Regression coverage:
+`test_gold_partition_overwrite.py` 3 passed; `test_gold_offline_features.py` 4 passed; focused
+Ruff and `git diff --check` passed. The original real-data `promote-gold --run-id ...` rerun is
+still owner-pending; this agent did not mutate committed Gold. Detail:
+[M076 log](milestones/M076-promote-legacy-gold-schema.md).
 
 This table must be updated whenever an artifact crosses from planned to implemented or from
 implemented to verified.

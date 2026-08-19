@@ -30,13 +30,12 @@ from pit_fintech.models.paysim_lightgbm import (
 POST_HISTORY_FEATURE_NAMES: tuple[str, ...] = (
     "post_count_1h",
     "post_amount_1h",
-    "post_has_history_1h",
     "post_count_24h",
     "post_amount_24h",
-    "post_has_history_24h",
-    "post_count_168h",
     "post_amount_168h",
-    "post_has_history_168h",
+    "post_distinct_senders_24h",
+    "post_distinct_senders_168h",
+    "post_steps_since_last_event",
 )
 GOLD_POST_EVENT_FEATURE_ORDER: tuple[str, ...] = (
     *PAYSIM_STATIC_FEATURE_NAMES,
@@ -134,26 +133,23 @@ def build_gold_experiment_table(
                 END AS split,
                 l.isFraud::BIGINT AS target_label,
                 p.current_amount,
-                p.event_step,
                 p.transaction_type_transfer,
                 p.pit_prior_count_1h,
                 p.pit_prior_amount_1h,
-                p.recipient_has_history_1h,
                 p.pit_prior_count_24h,
                 p.pit_prior_amount_24h,
-                p.recipient_has_history_24h,
-                p.pit_prior_count_168h,
                 p.pit_prior_amount_168h,
-                p.recipient_has_history_168h,
+                p.pit_distinct_senders_24h,
+                p.pit_distinct_senders_168h,
+                p.pit_steps_since_last_event,
                 q.post_count_1h,
                 q.post_amount_1h,
-                q.post_has_history_1h,
                 q.post_count_24h,
                 q.post_amount_24h,
-                q.post_has_history_24h,
-                q.post_count_168h,
                 q.post_amount_168h,
-                q.post_has_history_168h
+                q.post_distinct_senders_24h,
+                q.post_distinct_senders_168h,
+                q.post_steps_since_last_event
             FROM pre_decision AS p
             INNER JOIN post_event AS q USING (source_row_number, step)
             INNER JOIN labels AS l USING (source_row_number, step)

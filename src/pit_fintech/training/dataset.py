@@ -35,7 +35,6 @@ ENTITY_DATAFRAME_COLUMNS: tuple[str, ...] = (
     "step",
     "isFraud",
     "current_amount",
-    "event_step",
     "transaction_type_transfer",
 )
 
@@ -150,7 +149,6 @@ def build_entity_dataframe(
         "destination_entity_id",
         "event_timestamp",
         "current_amount",
-        "event_step",
         "transaction_type_transfer",
         "step",
         "transaction_type",

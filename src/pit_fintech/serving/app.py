@@ -430,6 +430,11 @@ def create_app(*, settings: ServingSettings) -> FastAPI:
                         knowledge_step=payload.knowledge_step,
                         transaction_type=payload.transaction_type,
                         amount=payload.amount,
+                        # ADR-011 fan-in: the sender (PaySim nameOrig). Empty when a client omits it
+                        # (e.g. a synthetic demo request) -- the winlog then records no sender for
+                        # this event, which under-counts a future cutoff's distinct senders rather
+                        # than fabricating one.
+                        origin_entity_id=payload.name_orig or "",
                     )
                 publish_ms = (time.perf_counter() - publish_started) * 1000.0
 

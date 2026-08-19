@@ -56,10 +56,13 @@ def publish_score_event(
     knowledge_step: int | None,
     transaction_type: str,
     amount: Any,
+    origin_entity_id: str,
 ) -> str:
     """``XADD`` one score event to the stream. Returns the message id.
 
     The amount is serialized as a decimal string so the worker's ``Decimal(amount)`` is exact.
+    ``origin_entity_id`` (the sender) is carried so the worker can record it on the winlog for the
+    ADR-011 fan-in feature; the current event only becomes a distinct-sender for a *later* cutoff.
     """
 
     from pit_fintech.contracts.served_events import served_event_id
@@ -70,6 +73,7 @@ def publish_score_event(
         "request_id": request_id,
         "transaction_id": transaction_id,
         "entity_id": entity_id,
+        "origin_entity_id": origin_entity_id,
         "step": str(step),
         "knowledge_step": str(knowledge_step if knowledge_step is not None else step),
         "transaction_type": transaction_type,

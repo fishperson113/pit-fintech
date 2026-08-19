@@ -203,7 +203,12 @@ def _record_from_payload(payload: str) -> OnlineFeatureRecord:
 
 
 def _contract_defaults() -> dict[str, int | float]:
-    """The contract defaults for the nine history fields (counts 0, amounts 0.0, flags 0)."""
+    """The contract defaults for the eight v3 history fields (ADR-011).
+
+    Counts/fan-in default to 0 and amounts to 0.0, but recency defaults to
+    ``PAYSIM_RECENCY_SENTINEL_STEPS`` (a cold recipient is maximally stale, not "just seen"); the
+    value is read from ``spec.default`` rather than hard-coded so it cannot drift from the contract.
+    """
 
     return {
         spec.name: spec.default
@@ -343,7 +348,7 @@ def materialize_to_watermark(
         winlog_rows = connection.execute(
             f"""
             SELECT c.{PAYSIM_ENTITY} AS destination_entity_id,
-                   c.source_row_number, c.step, c.knowledge_step, c.amount
+                   c.source_row_number, c.step, c.knowledge_step, c.amount, c.origin_entity_id
             FROM gold_post_event AS c
             JOIN latest_per_entity AS l
                 ON l.{PAYSIM_ENTITY} = c.{PAYSIM_ENTITY}
@@ -985,13 +990,14 @@ def post_event_row_to_record(
 
 
 def _build_winlog_by_entity(rows: pa.Table) -> dict[str, str]:
-    """Group warm-start Silver rows into per-entity winlog payloads (ADR-010).
+    """Group warm-start Gold rows into per-entity winlog payloads (ADR-010, ADR-011).
 
     Each entity's winlog is the encoded ``LoggedEvent`` list the write path recomputes from --
-    ``[step, knowledge_step, amount]`` within the entity's widest window. Amounts go through
-    ``exact_money`` so the stored decimal string matches the offline ``DECIMAL(18,2)`` sum exactly
-    (no float noise). Imported lazily to avoid a module-level circular import with
-    ``serving/online_state`` (which imports this module).
+    ``[step, knowledge_step, amount, origin_entity_id]`` within the entity's widest window. Amounts
+    go through ``exact_money`` so the stored decimal string matches the offline ``DECIMAL(18,2)``
+    exactly (no float noise); ``origin_entity_id`` seeds the ADR-011 fan-in feature so
+    ``pit_distinct_senders_*`` is recomputed online exactly as offline. Imported lazily to avoid a
+    module-level circular import with ``serving/online_state`` (which imports this module).
     """
 
     from pit_fintech.serving.online_state import LoggedEvent, _encode_log
@@ -1004,6 +1010,7 @@ def _build_winlog_by_entity(rows: pa.Table) -> dict[str, str]:
                 step=int(row["step"]),
                 knowledge_step=int(row["knowledge_step"]),
                 amount=exact_money(row["amount"]),
+                origin_entity_id=str(row["origin_entity_id"]),
             )
         )
     return {entity: _encode_log(events) for entity, events in by_entity.items()}

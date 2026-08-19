@@ -18,6 +18,7 @@ from pit_fintech.features.paysim_specs import (
     PAYSIM_FEATURE_CONTRACT,
     PAYSIM_FEATURE_DEFINITION_VERSION,
     PAYSIM_HISTORY_FEATURE_NAMES,
+    PAYSIM_RECENCY_SENTINEL_STEPS,
     PAYSIM_STATIC_FEATURE_NAMES,
 )
 
@@ -28,7 +29,20 @@ PAYSIM_TRAIN_END_STEP: Final = 520
 PAYSIM_VALIDATION_END_STEP: Final = 631
 TARGET_TABLE: Final = "paysim_leakage_targets"
 VECTOR_TABLE: Final = "paysim_recipient_leakage_vectors"
-STRICT_PIT_FEATURE_COLUMNS: Final = PAYSIM_HISTORY_FEATURE_NAMES
+# The strict, non-leaky history columns the leakage VECTOR_TABLE materializes (count/amount/
+# has_history per window). This is the leakage *diagnostic* shape (M015, notebook 03), deliberately
+# NOT the frozen contract feature set: the diagnostic keeps its own count/has_history columns for
+# the positive-control comparison, so it is pinned here rather than to the contract history names
+# (which ADR-011 reshaped for the model). The two evolve independently.
+STRICT_PIT_FEATURE_COLUMNS: Final = tuple(
+    column
+    for window_steps in LEAKAGE_WINDOWS_STEPS
+    for column in (
+        f"pit_prior_count_{window_steps}h",
+        f"pit_prior_amount_{window_steps}h",
+        f"recipient_has_history_{window_steps}h",
+    )
+)
 POSITIVE_CONTROL_COLUMNS: Final = (
     *(
         column
@@ -148,39 +162,57 @@ def _derived_window_columns(window_steps: int) -> str:
 
 
 def _pre_decision_history_columns() -> tuple[str, tuple[str, ...]]:
-    """The nine history columns of the pre-decision projection, and the names they emit.
+    """The eight ADR-011 v3 history columns of the pre-decision projection, and the names they emit.
 
-    Same shape as :func:`_window_columns` minus the positive controls, which exist only for the
-    leakage diagnostics and are not contract fields. ``recipient_has_history_*`` is cast to
-    ``BIGINT`` because DuckDB types a bare ``CASE ... THEN 1`` as ``INTEGER`` while the contract
-    declares ``int64``; the leakage path never had to care, a Parquet schema does.
+    Non-uniform by window on purpose: count at 1h/24h, amount at 1h/24h/168h, fan-in
+    (``count(DISTINCT origin_entity_id)``) at 24h/168h, and recency once over the widest window.
+    Money sums stay in ``DECIMAL(18,2)`` (M027); each ``FILTER`` re-applies the window bound on top
+    of the join's ``s.step <= c.step - 1``. Recency is ``c.step - max(prior step)`` bounded to the
+    widest window (the same pool the offline build reads), or ``PAYSIM_RECENCY_SENTINEL_STEPS`` when
+    the recipient is cold. Every count/distinct/recency is cast to ``BIGINT`` because DuckDB types a
+    bare aggregate as ``INTEGER`` while the contract declares ``int64``; a Parquet schema cares.
     """
 
-    fragments: list[str] = []
-    names: list[str] = []
-    for window_steps in LEAKAGE_WINDOWS_STEPS:
-        prior = _prior_window_predicate(window_steps)
-        fragments.append(
-            f"""
-            (count(s.source_row_number) FILTER (WHERE {prior}))::BIGINT
-                AS pit_prior_count_{window_steps}h,
-            coalesce(
-                sum(CAST(s.amount AS {PAYSIM_AMOUNT_DECIMAL_TYPE})) FILTER (WHERE {prior}),
-                0.0
-            )::DOUBLE AS pit_prior_amount_{window_steps}h,
-            (CASE
-                WHEN (count(s.source_row_number) FILTER (WHERE {prior})) > 0 THEN 1 ELSE 0
-             END)::BIGINT AS recipient_has_history_{window_steps}h
-            """
+    prior_1 = _prior_window_predicate(1)
+    prior_24 = _prior_window_predicate(24)
+    prior_168 = _prior_window_predicate(MAX_LEAKAGE_WINDOW_STEPS)
+
+    def _count(predicate: str, name: str) -> str:
+        return f"(count(s.source_row_number) FILTER (WHERE {predicate}))::BIGINT AS {name}"
+
+    def _amount(predicate: str, name: str) -> str:
+        return (
+            f"coalesce(sum(CAST(s.amount AS {PAYSIM_AMOUNT_DECIMAL_TYPE})) "
+            f"FILTER (WHERE {predicate}), 0.0)::DOUBLE AS {name}"
         )
-        names.extend(
-            (
-                f"pit_prior_count_{window_steps}h",
-                f"pit_prior_amount_{window_steps}h",
-                f"recipient_has_history_{window_steps}h",
-            )
-        )
-    return ",\n".join(fragment.strip() for fragment in fragments), tuple(names)
+
+    def _distinct(predicate: str, name: str) -> str:
+        return f"(count(DISTINCT s.origin_entity_id) FILTER (WHERE {predicate}))::BIGINT AS {name}"
+
+    fragments = (
+        _count(prior_1, "pit_prior_count_1h"),
+        _amount(prior_1, "pit_prior_amount_1h"),
+        _count(prior_24, "pit_prior_count_24h"),
+        _amount(prior_24, "pit_prior_amount_24h"),
+        _amount(prior_168, "pit_prior_amount_168h"),
+        _distinct(prior_24, "pit_distinct_senders_24h"),
+        _distinct(prior_168, "pit_distinct_senders_168h"),
+        (
+            f"coalesce(c.step - (max(s.step) FILTER (WHERE {prior_168})), "
+            f"{PAYSIM_RECENCY_SENTINEL_STEPS})::BIGINT AS pit_steps_since_last_event"
+        ),
+    )
+    names = (
+        "pit_prior_count_1h",
+        "pit_prior_amount_1h",
+        "pit_prior_count_24h",
+        "pit_prior_amount_24h",
+        "pit_prior_amount_168h",
+        "pit_distinct_senders_24h",
+        "pit_distinct_senders_168h",
+        "pit_steps_since_last_event",
+    )
+    return ",\n            ".join(fragments), names
 
 
 # The columns `paysim_pre_decision_feature_sql` reads off its relation. They are exactly the seven
@@ -191,10 +223,11 @@ PAYSIM_PRE_DECISION_SOURCE_COLUMNS: Final = (
     "knowledge_step",
     "transaction_type",
     "amount",
+    "origin_entity_id",
     "destination_entity_id",
     "destination_entity_kind",
 )
-# Identity columns the projection carries alongside the twelve contract fields. `step` and
+# Identity columns the projection carries alongside the ten contract fields. `step` and
 # `knowledge_step` are the integer ordinals ADR-006 derives the Feast timestamps from in Python;
 # they are emitted so the caller can derive them, never so SQL can.
 PAYSIM_PRE_DECISION_IDENTITY_COLUMNS: Final = (
@@ -206,14 +239,14 @@ PAYSIM_PRE_DECISION_IDENTITY_COLUMNS: Final = (
 
 
 def paysim_pre_decision_feature_sql(relation: str) -> str:
-    """One pre-decision vector per in-scope cutoff: the twelve frozen contract fields, in order.
+    """One pre-decision vector per in-scope cutoff: the ten frozen contract fields, in order.
 
     ``relation`` is any DuckDB relation carrying ``PAYSIM_PRE_DECISION_SOURCE_COLUMNS``; the
     self-join means every history row must be present in it, so the caller is responsible for
     handing over a pool that already spans ``[cutoff_step - 168, cutoff_step]`` for every cutoff.
 
     This exists because Feast computes no window aggregates (M030 Finding 1), so a `FeatureView`
-    has to read a table where the nine history fields are already materialized. Building it here,
+    has to read a table where the eight history fields are already materialized. Building it here,
     from :func:`_prior_window_predicate` and :data:`PAYSIM_AMOUNT_DECIMAL_TYPE`, keeps that table
     on the shipped SQL engine: comparing it against ``features/paysim_reference.py`` is then two
     independent derivations, whereas a table built by the oracle and checked against the oracle
@@ -229,9 +262,9 @@ def paysim_pre_decision_feature_sql(relation: str) -> str:
             "pre-decision projection no longer emits the frozen history fields in contract order: "
             f"{history_names} != {PAYSIM_HISTORY_FEATURE_NAMES}"
         )
-    if PAYSIM_STATIC_FEATURE_NAMES != ("current_amount", "event_step", "transaction_type_transfer"):
+    if PAYSIM_STATIC_FEATURE_NAMES != ("current_amount", "transaction_type_transfer"):
         raise RuntimeError(
-            "request-time feature names changed; this projection emits current_amount/event_step/"
+            "request-time feature names changed; this projection emits current_amount/"
             f"transaction_type_transfer, not {PAYSIM_STATIC_FEATURE_NAMES}"
         )
     contract = PAYSIM_FEATURE_CONTRACT
@@ -244,7 +277,6 @@ def paysim_pre_decision_feature_sql(relation: str) -> str:
             c.step,
             c.knowledge_step,
             CAST(c.amount AS DOUBLE) AS current_amount,
-            CAST(c.step AS DOUBLE) AS event_step,
             (CASE WHEN c.transaction_type = 'TRANSFER' THEN 1.0 ELSE 0.0 END)::DOUBLE
                 AS transaction_type_transfer,
             {history_columns}

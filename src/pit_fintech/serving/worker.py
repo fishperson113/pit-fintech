@@ -149,6 +149,7 @@ def run_worker(
                             knowledge_step=knowledge_step,
                             transaction_type=fields["transaction_type"],
                             amount=Decimal(fields["amount"]),
+                            origin_entity_id=fields.get("origin_entity_id", ""),
                         )
                     logger.info(
                         "applied event_id=%s transaction_id=%s entity=%s step=%s "
