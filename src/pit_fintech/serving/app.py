@@ -23,9 +23,9 @@ from __future__ import annotations
 
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Final, Literal
+from typing import TYPE_CHECKING, ClassVar, Final, Literal
 
 from pit_fintech.features.paysim_specs import PAYSIM_FEATURE_DEFINITION_VERSION
 from pit_fintech.platform.logging_config import bind_request_context, clear_request_context
@@ -287,23 +287,54 @@ class _MetricsState:
 
     request_count: int = 0
     error_count: int = 0
+    success_count: int = 0
     total_latency_ms: float = 0.0
+    latency_bucket_counts: dict[float, int] = field(default_factory=dict)
+
+    LATENCY_BUCKETS: ClassVar[tuple[float, ...]] = (
+        1.0,
+        2.0,
+        5.0,
+        10.0,
+        25.0,
+        50.0,
+        100.0,
+        250.0,
+        500.0,
+        1000.0,
+        2500.0,
+        5000.0,
+        float("inf"),
+    )
 
     def record_success(self, latency_ms: float) -> None:
         self.request_count += 1
+        self.success_count += 1
         self.total_latency_ms += latency_ms
+        for upper_bound in self.LATENCY_BUCKETS:
+            if latency_ms <= upper_bound:
+                self.latency_bucket_counts[upper_bound] = (
+                    self.latency_bucket_counts.get(upper_bound, 0) + 1
+                )
 
     def record_error(self) -> None:
         self.request_count += 1
         self.error_count += 1
 
     def render(self) -> str:
-        average_ms = self.total_latency_ms / self.request_count if self.request_count else 0.0
-        return (
+        average_ms = self.total_latency_ms / self.success_count if self.success_count else 0.0
+        lines = [
             f"pit_scoring_requests_total {self.request_count}\n"
             f"pit_scoring_errors_total {self.error_count}\n"
             f"pit_scoring_latency_ms_avg {average_ms:.3f}\n"
-        )
+        ]
+        for upper_bound in self.LATENCY_BUCKETS:
+            le = "+Inf" if upper_bound == float("inf") else f"{upper_bound:g}"
+            count = self.latency_bucket_counts.get(upper_bound, 0)
+            lines.append(f'pit_scoring_latency_ms_bucket{{le="{le}"}} {count}\n')
+        lines.append(f"pit_scoring_latency_ms_count {self.success_count}\n")
+        lines.append(f"pit_scoring_latency_ms_sum {self.total_latency_ms:.3f}\n")
+        return "".join(lines)
 
 
 def create_app(*, settings: ServingSettings) -> FastAPI:

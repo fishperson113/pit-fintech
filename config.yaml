@@ -1,0 +1,22 @@
+# Non-secret application defaults. Override individual values with explicit PIT_* process environment variables.
+# Keep this file as the normal local runtime configuration source.
+
+project_root: .
+data_root: ./data
+artifact_root: ./artifacts
+dataset: sample
+paysim_csv: ./data/raw/paysim/PS_20174392719_1491204439457_log.csv
+
+entity_definition_version: paysim-destination-customer-v1
+feature_definition_version: paysim-fraud-recipient-v3
+feature_service_version: paysim-fraud-scoring-v3
+float_tolerance: 1.0e-6
+
+redis_url: redis://localhost:6379/0
+mlflow_tracking_uri: http://localhost:5000
+api_host: 0.0.0.0
+api_port: 8000
+jupyter_port: 8888
+log_level: INFO
+log_json: false
+otel_endpoint: http://100.116.36.6:4318

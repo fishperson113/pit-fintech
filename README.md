@@ -48,8 +48,9 @@ location:
 data/raw/paysim/PS_20174392719_1491204439457_log.csv
 ```
 
-Alternatively, set `PAYSIM_CSV` in the shell or copy `.env.example` to `.env` and set
-`PIT_PAYSIM_CSV`. Freeze the raw input once before running EDA:
+Alternatively, set `PAYSIM_CSV` in the shell or override `paysim_csv` with
+`PIT_PAYSIM_CSV` in `.env`. The committed non-secret defaults live in `config.yaml`. Freeze the raw
+input once before running EDA:
 
 ```bash
 make data-snapshot
@@ -159,7 +160,7 @@ promotes both tables, and reports the Delta versions and predicate.
 | `parity-reconcile` | Reconcile online aggregates against the offline DuckDB reference over the Event History (async, ADR-009) |
 | `worker` | Run the `pit-online-worker` — consume score events, maintain the online store (ADR-010) |
 | `worker-up` / `worker-down` | Start / stop the `pit-online-worker` Docker container |
-| `serve-otel` | Start the scoring API with OTel traces/metrics, reading `PIT_OTEL_ENDPOINT` from `.env` |
+| `serve-otel` | Start the scoring API with OTel traces/metrics, reading `otel_endpoint` from `config.yaml` or `PIT_OTEL_ENDPOINT` |
 | `locust` | Run the Locust web UI + offline/online parity harness against a running service (`LOCUST_HOST`) |
 | `doctor` | Read-only host, dependency, Delta, resource, port, Git, and credential checks |
 | `lab` | Start JupyterLab with project code importable from the locked environment |
@@ -225,8 +226,9 @@ The serving API exposes `/metrics` in Prometheus text format (`pit_scoring_reque
 `pit_scoring_errors_total`, `pit_scoring_latency_ms_avg`) whether or not OTel is enabled.
 Prometheus pulls, so the app must be reachable from the Prometheus host:
 
-1. In `.env`, set `PIT_API_HOST=0.0.0.0` (binds all interfaces; keep `127.0.0.1` for local-only)
-   and keep `PIT_API_PORT=8000`. `pit serving up` reads these through `PIT_API_HOST`/`PIT_API_PORT`.
+1. In `config.yaml`, set `api_host: 0.0.0.0` (binds all interfaces; keep `127.0.0.1` for local-only)
+   and keep `api_port: 8000`. For a deployment-only override, use `PIT_API_HOST`/`PIT_API_PORT` in
+   `.env` or the process environment; environment values take precedence over YAML.
    Allow inbound on that port over Tailscale in the Windows firewall.
 2. Start the service: `.\make.ps1 serve` (or `uv run pit serving up --host 0.0.0.0`).
 3. On the VPS, add a scrape job to the `prometheus.yml` Prometheus actually mounts (see note

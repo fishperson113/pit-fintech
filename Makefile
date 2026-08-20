@@ -158,7 +158,7 @@ parity-reconcile: ## Reconcile online aggregates against the offline DuckDB refe
 serve: ## Start the FastAPI scoring service against the local Redis online store
 	uv run pit serving up
 
-serve-otel: ## Start FastAPI scoring with OTel traces/metrics (reads PIT_OTEL_ENDPOINT from .env)
+serve-otel: ## Start FastAPI scoring with OTel traces/metrics (config.yaml + PIT_OTEL_ENDPOINT override)
 	uv run pit serving up --otel
 
 worker: ## Run the pit-online-worker: consume score events and maintain the online store (ADR-010)

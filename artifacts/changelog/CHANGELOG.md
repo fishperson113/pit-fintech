@@ -1,5 +1,115 @@
 # Project changelog
 
+## 2026-08-19 — M084: add Prometheus latency percentiles and improve dashboard panels
+
+- Current Prometheus queries were empty because the configured API scrape target refused the
+  connection; the dashboard was not the only issue.
+- Added classic Prometheus latency histogram buckets to `/metrics`, with separate success latency
+  count/sum and request/error counters.
+- Reworked the observability dashboard panels for request rate, error rate percentage, and p50/p90/
+  p95/p99 latency using `histogram_quantile` over a 5-minute window.
+- Focused tests passed (`3 passed`), Ruff/compile/diff checks passed, and dashboard JSON parsed.
+- Restarting the API and reloading Grafana/Prometheus remain owner steps for live data.
+- Detail: [M077–M084 consolidated log](milestones/M077-M084-yaml-config-v3-serving-and-observability.md).
+
+## 2026-08-19 — M083: diagnose missing OTLP logs at Collector boundary
+
+- VPS logs showed only Collector `Metrics` batches, no `Logs` batches, while Loki returned zero log
+  lines for `service_name=~".+"`.
+- Loki is at `97.62%` disk and explicitly throttling WAL writes; this is an independent ingestion
+  blocker and must be remediated without deleting the named Loki volume.
+- Updated the VPS Collector config to non-deprecated `otlp_grpc`/`otlp_http` exporter names and added a
+  `debug/logs` exporter alongside Loki, making the next fresh request observable at the Collector.
+- YAML validation passed. VPS deployment, fresh log smoke, and disk remediation remain owner-pending.
+- Detail: [M077–M084 consolidated log](milestones/M077-M084-yaml-config-v3-serving-and-observability.md).
+
+## 2026-08-19 — M082: make config.yaml the runtime source for OTLP
+
+- Removed implicit `.env` loading from `Settings`; explicit process `PIT_*` variables remain possible,
+  but `config.yaml` is now the normal source.
+- Copied `config.yaml` into the worker image and removed Compose `${PIT_OTEL_ENDPOINT}` interpolation,
+  so the API/worker no longer depend on `.env` for the Collector endpoint.
+- Effective settings verified as `http://100.116.36.6:4318` and `paysim-fraud-scoring-v3`.
+- Real telemetry smoke through `configure_telemetry()` created an OTLP log and `force_flush=True`
+  completed without exporter errors. Dockerfile/Compose/config tests passed.
+- Loki persistence after VPS recreation remains pending; this smoke proves API-side log creation and
+  flush, not the downstream Loki query.
+- Detail: [M077–M084 consolidated log](milestones/M077-M084-yaml-config-v3-serving-and-observability.md).
+
+## 2026-08-19 — M081: repair Grafana/Loki visibility and metric dashboard coverage
+
+- Live read-only probes found Prometheus healthy and scraping the API target `UP`, with current
+  `pit_scoring_requests_total`, `pit_scoring_errors_total`, and `pit_scoring_latency_ms_avg` values.
+- The actual Grafana observability dashboard had only Loki panels, so Prometheus metrics had no panels
+  to display. Added request-rate, error-ratio, and latency panels and bumped dashboard version 9→10.
+- Added Loki OTLP resource mapping to promote `service.name` as the `service_name` stream label while
+  retaining request/entity/trace values as structured metadata; dashboard selectors now have a stable
+  low-cardinality label.
+- Updated the separate VPS stack README and the PIT sample Loki config. YAML/JSON parsing, Compose
+  config, live Prometheus target, and metric queries passed read-only verification.
+- VPS service recreate and a fresh OTLP log query remain owner-pending; no VPS services were started
+  by this agent.
+- Detail: [M077–M084 consolidated log](milestones/M077-M084-yaml-config-v3-serving-and-observability.md).
+
+## 2026-08-19 — M080: optimize worker Docker dependency rebuilds
+
+- Audited the worker dependency path: it is a Python Redis Streams consumer with async DuckDB/pyarrow
+  parity, not the Redis server. The shared project dependencies therefore include the offline wheels,
+  and the old Dockerfile had no persistent uv cache.
+- Added BuildKit syntax and locked `/root/.cache/uv` mounts to both Docker `uv sync` layers and the
+  optional OTel install layer. Repeated worker/API rebuilds can now reuse downloaded wheels.
+- Kept runtime dependencies unchanged because the current worker parity path still imports offline
+  SQL/Arrow code; this optimization targets repeated build latency without changing behavior.
+- Verification: Dockerfile build check had no warnings, Compose config passed, and focused Ruff/tests
+  passed. The worker image was rebuilt and is now running on the v3 stream; Redis reports `loading:0`
+  and `PONG`. The initial recreate printed a transient container-name conflict, but final Compose
+  state is healthy and no manual container deletion was needed.
+- Detail: [M077–M084 consolidated log](milestones/M077-M084-yaml-config-v3-serving-and-observability.md).
+
+## 2026-08-19 — M079: fix promotion gate for the v3 T4 candidate
+
+- Confirmed the serving input path is correct: request features + Redis history are assembled in the
+  active 10-field v3 order before `predict_proba`.
+- Found the lifecycle mismatch: champion alias still pointed to v2 run `84d68...`, while v3 T4 run
+  `70dbc360bbfd43a480198bb712ad03d7` had the correct `ordered_feature_names.json`.
+- Updated `model promote-champion` to accept the current T4 E4 candidate tags, while requiring the
+  active v3 service version and exact ordered model input contract. Old v2 candidates are rejected
+  before alias mutation.
+- Verification: full unit suite 115 passed; focused Ruff, format, and `py_compile` passed. No alias
+  mutation was performed by agent verification.
+- Owner command: `uv run pit model promote-champion --run-id 70dbc360bbfd43a480198bb712ad03d7`, then
+  `.\make.ps1 serve-otel`.
+- Detail: [M077–M084 consolidated log](milestones/M077-M084-yaml-config-v3-serving-and-observability.md).
+
+## 2026-08-19 — M078: diagnose serving blocker and align v3 training lineage
+
+- `serve-otel` correctly failed closed: champion alias `paysim-fraud-lightgbm@champion` resolves
+  MLflow run `84d68cb115e946f886b83c594da7960f`, which declares the legacy 12-field v2 model order,
+  while the active v3 contract requires 10 fields.
+- Read-only MLflow inspection found no v3 run (`feature_count=10` / `paysim-fraud-scoring-v3`),
+  so serving cannot be made safe by accepting the old model.
+- Fixed `scripts/run_t4_training.py` to use the shared `PAYSIM_FEATURE_SERVICE_VERSION` constant
+  instead of hardcoding v2; an initial attempted manifest-field lookup was corrected because
+  `ApplicationLakehouseManifest` has no `feature_service_version` field. Added a regression test
+  for the v3 lineage.
+- Verification: focused Ruff and `py_compile` passed; the v3 lineage regression plus full unit suite
+  passed (113 tests). V3 retraining and champion promotion remain owner-pending.
+- Detail: [M077–M084 consolidated log](milestones/M077-M084-yaml-config-v3-serving-and-observability.md).
+
+## 2026-08-19 — M077: move non-secret runtime configuration to YAML
+
+- Added committed root `config.yaml` for paths, dataset defaults, contract versions, local service
+  URLs, ports, logging, and the optional OTel endpoint.
+- Updated `Settings` to load YAML after process environment and `.env`, so `PIT_*` variables remain
+  deployment/CI overrides while YAML becomes the readable default configuration source.
+- Reduced `.env.example` to optional overrides, credentials, and invocation-only flags; no secrets
+  were moved into YAML.
+- Added direct `pyyaml>=6,<7` dependency and refreshed `uv.lock`.
+- Updated README, VPS deployment notes, Makefile, and PowerShell help text.
+- Verification: config tests 2 passed, full unit suite 112 passed, focused Ruff/format checks passed,
+  and `uv lock` resolved 240 packages.
+- Detail: [M077–M084 consolidated log](milestones/M077-M084-yaml-config-v3-serving-and-observability.md).
+
 ## 2026-08-19 — M076: make staged Gold v2→v3 promotion compatible with Delta-rs 1.6.2
 
 - Fixed the reported `DeltaTable.schema().to_pyarrow()` accessor failure by using

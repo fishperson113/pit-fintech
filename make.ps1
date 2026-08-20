@@ -327,7 +327,7 @@ switch ($Target) {
             @("materialize", "materialize Gold post-event state into the online store up to -Watermark"),
             @("parity-reconcile", "reconcile online aggregates against the offline DuckDB reference (async, ADR-009)"),
             @("serve", "start the FastAPI scoring service against the local Redis online store"),
-            @("serve-otel", "start FastAPI scoring with OTel traces/metrics (reads PIT_OTEL_ENDPOINT from .env)"),
+            @("serve-otel", "start FastAPI scoring with OTel traces/metrics (config.yaml + PIT_OTEL_ENDPOINT override)"),
             @("worker", "run the pit-online-worker (consume score events, maintain the online store, ADR-010)"),
             @("worker-up", "start the pit-online-worker Docker container"),
             @("worker-down", "stop the pit-online-worker container"),

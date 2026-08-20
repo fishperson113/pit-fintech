@@ -95,7 +95,7 @@ docker compose exec prometheus kill -HUP 1
 ## On the Windows machine (scoring API)
 
 ```env
-# .env
+# .env or the deployment environment; config.yaml contains the local defaults
 PIT_API_HOST=0.0.0.0          # so Prometheus can scrape /metrics over Tailscale
 PIT_API_PORT=8000
 PIT_OTEL_ENDPOINT=http://<vps-tailscale-ip>:4318   # OTLP/HTTP to the Collector

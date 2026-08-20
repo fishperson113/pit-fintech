@@ -1,7 +1,7 @@
 # Project status
 
-Last updated: 2026-08-19 (M076 — Gold v2→v3 promotion compatibility implemented and fixture-verified;
-owner-run real-data promote remains pending). Status
+Last updated: 2026-08-19 (M084 — Prometheus histogram metrics and p50/p90/p95/p99 dashboard panels
+implemented and unit-verified; API scrape/runtime verification pending). Status
 words are strict:
 
 - **planned**: present in the six-week guide, with no claim that code exists;
@@ -460,6 +460,15 @@ full-range sibling-table swap with rollback for the legacy-column drop. Regressi
 Ruff and `git diff --check` passed. The original real-data `promote-gold --run-id ...` rerun is
 still owner-pending; this agent did not mutate committed Gold. Detail:
 [M076 log](milestones/M076-promote-legacy-gold-schema.md).
+
+**M077 — YAML-backed runtime configuration: implemented and unit-verified.**
+Added committed `config.yaml` for non-secret defaults and changed `Settings` source precedence to
+init args > process environment > `.env` > YAML. `.env.example` now contains only optional
+machine/deployment overrides, credentials, and invocation flags. Added direct `pyyaml` dependency,
+refreshed `uv.lock`, updated README/VPS/runner documentation, and added YAML-loading plus
+environment-precedence tests. Verification: `test_config` 2 passed, full `tests/unit` 112 passed,
+focused Ruff/format checks passed, and `uv lock` resolved 240 packages. Detail:
+[M077–M084 consolidated log](milestones/M077-M084-yaml-config-v3-serving-and-observability.md).
 
 This table must be updated whenever an artifact crosses from planned to implemented or from
 implemented to verified.

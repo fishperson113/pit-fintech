@@ -75,9 +75,7 @@ services:
       PIT_MLFLOW_TRACKING_URI: http://mlflow:5000
       PIT_API_HOST: 0.0.0.0
       PIT_API_PORT: "8000"
-      PIT_FEATURE_SERVICE_VERSION: ${PIT_FEATURE_SERVICE_VERSION:-paysim-fraud-scoring-v2}
       PIT_LOG_JSON: "true"
-      PIT_OTEL_ENDPOINT: ${PIT_OTEL_ENDPOINT:-}
     ports:
       - "127.0.0.1:${PIT_API_PORT:-8000}:8000"
     volumes:
@@ -131,9 +129,7 @@ services:
       - "6379"
     environment:
       PIT_REDIS_URL: redis://redis:6379/0
-      PIT_FEATURE_SERVICE_VERSION: ${PIT_FEATURE_SERVICE_VERSION:-paysim-fraud-scoring-v2}
       PIT_LOG_JSON: "true"
-      PIT_OTEL_ENDPOINT: ${PIT_OTEL_ENDPOINT:-}
     volumes:
       # The worker appends the Event History under artifacts/, so this mount is read-write (the API
       # mount above stays read-only).

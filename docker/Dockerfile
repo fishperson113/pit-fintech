@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.7
+
 FROM python:3.11-slim
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.23 /uv /uvx /bin/
@@ -12,20 +14,24 @@ ARG UV_GROUPS=""
 ARG INSTALL_OTEL="0"
 
 COPY pyproject.toml uv.lock README.md ./
-RUN if [ -n "$UV_GROUPS" ]; then \
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    if [ -n "$UV_GROUPS" ]; then \
       uv sync --frozen --no-default-groups --no-install-project --group "$UV_GROUPS"; \
     else \
       uv sync --frozen --no-default-groups --no-install-project; \
     fi
 
 COPY src ./src
-RUN if [ -n "$UV_GROUPS" ]; then \
+COPY config.yaml ./config.yaml
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    if [ -n "$UV_GROUPS" ]; then \
       uv sync --frozen --no-default-groups --group "$UV_GROUPS"; \
     else \
       uv sync --frozen --no-default-groups; \
     fi
 
-RUN if [ "$INSTALL_OTEL" = "1" ]; then \
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    if [ "$INSTALL_OTEL" = "1" ]; then \
       uv pip install --python /app/.venv/bin/python \
         opentelemetry-sdk \
         opentelemetry-exporter-otlp-proto-http \

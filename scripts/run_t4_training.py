@@ -16,6 +16,7 @@ from pit_fintech.features.build_offline import (
     GOLD_PRE_DECISION_TABLE,
     GoldTableSnapshot,
 )
+from pit_fintech.features.paysim_specs import PAYSIM_FEATURE_SERVICE_VERSION
 from pit_fintech.models.paysim_lightgbm import default_tracking_uri
 from pit_fintech.training.dataset import (
     EntityDataframeSpec,
@@ -35,6 +36,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-boost-rounds", type=int, default=300)
     parser.add_argument("--early-stopping-rounds", type=int, default=30)
     return parser
+
+
+def _training_feature_service_version() -> str:
+    """Return the active service version used by the current model feature contract."""
+    return PAYSIM_FEATURE_SERVICE_VERSION
 
 
 def _gold_snapshot(*, path: Path, table_name: str) -> GoldTableSnapshot:
@@ -85,7 +91,7 @@ def main() -> int:
         dataset_snapshot_id=manifest.dataset_snapshot_id,
         entity_definition_version=manifest.entity_definition_version,
         feature_definition_version=manifest.feature_definition_version,
-        feature_service_version="paysim-fraud-scoring-v2",
+        feature_service_version=_training_feature_service_version(),
         feature_contract_checksum=manifest.feature_contract_checksum,
         gold_pre_decision=pre_snapshot,
         label_table_path=labels.path,

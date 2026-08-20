@@ -1,4 +1,4 @@
-"""Environment-backed local configuration with safe defaults."""
+"""YAML-backed local configuration with optional process-environment overrides."""
 
 from __future__ import annotations
 
@@ -6,7 +6,15 @@ from functools import lru_cache
 from pathlib import Path
 
 from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    EnvSettingsSource,
+    InitSettingsSource,
+    PydanticBaseSettingsSource,
+    SecretsSettingsSource,
+    SettingsConfigDict,
+    YamlConfigSettingsSource,
+)
 
 from pit_fintech.features.paysim_specs import (
     PAYSIM_FEATURE_DEFINITION_VERSION,
@@ -16,11 +24,33 @@ from pit_fintech.features.paysim_specs import (
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
         env_prefix="PIT_",
+        yaml_file="config.yaml",
         extra="ignore",
         case_sensitive=False,
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: InitSettingsSource,
+        env_settings: EnvSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: SecretsSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Load process environment first, then committed YAML defaults.
+
+        A dotenv file is deliberately not loaded. Deployment-specific values may still be supplied
+        explicitly as ``PIT_*`` process environment variables, but ``config.yaml`` is the normal
+        local runtime source.
+        """
+        return (
+            init_settings,
+            env_settings,
+            YamlConfigSettingsSource(settings_cls),
+            file_secret_settings,
+        )
 
     project_root: Path = Path(".")
     data_root: Path = Path("./data")

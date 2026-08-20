@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
@@ -72,6 +73,38 @@ app.add_typer(backfill_app, name="backfill")
 app.add_typer(serving_app, name="serving")
 app.add_typer(parity_app, name="parity")
 console = Console()
+
+
+def _model_promotion_rejection(
+    *,
+    tags: Mapping[str, str],
+    params: Mapping[str, str],
+    ordered_feature_names: tuple[str, ...],
+) -> str | None:
+    """Return a rejection reason for a candidate before moving the champion alias."""
+    from pit_fintech.features.paysim_specs import (
+        PAYSIM_FEATURE_SERVICE_VERSION,
+        PAYSIM_MODEL_FEATURE_ORDER,
+    )
+
+    experiment_id = tags.get("experiment_id") or params.get("experiment_id")
+    eligible = tags.get("deployable") == "true" or (
+        experiment_id == "E4" and tags.get("candidate_or_baseline") == "candidate"
+    )
+    if not eligible:
+        return "Only a deployable Gold E4 run or a T4 E4 candidate can become champion."
+    if tags.get("feature_service_version") != PAYSIM_FEATURE_SERVICE_VERSION:
+        return (
+            "The candidate feature service version does not match the active contract: "
+            f"expected {PAYSIM_FEATURE_SERVICE_VERSION!r}, "
+            f"observed {tags.get('feature_service_version')!r}."
+        )
+    if tuple(ordered_feature_names) != PAYSIM_MODEL_FEATURE_ORDER:
+        return (
+            "The candidate ordered_feature_names do not match the active model input contract: "
+            f"expected {PAYSIM_MODEL_FEATURE_ORDER}, observed {tuple(ordered_feature_names)}."
+        )
+    return None
 
 
 def _configure_offline_observability(service_name: str):
@@ -932,8 +965,22 @@ def model_promote_champion(
     resolved_tracking_uri = tracking_uri or default_tracking_uri(artifact_root)
     mlflow.set_tracking_uri(resolved_tracking_uri)
     run = mlflow.MlflowClient().get_run(run_id)
-    if run.data.tags.get("experiment_id") != "E4" or run.data.tags.get("deployable") != "true":
-        console.print("[red]Only a deployable Gold E4 run can become champion.[/]")
+    try:
+        ordered_feature_names = tuple(
+            mlflow.artifacts.load_dict(f"runs:/{run_id}/ordered_feature_names.json")[
+                "ordered_feature_names"
+            ]
+        )
+    except Exception as exc:
+        console.print(f"[red]Cannot validate model input contract: {exc}[/]")
+        raise typer.Exit(code=2) from exc
+    rejection = _model_promotion_rejection(
+        tags=run.data.tags,
+        params=run.data.params,
+        ordered_feature_names=ordered_feature_names,
+    )
+    if rejection is not None:
+        console.print(f"[red]{rejection}[/]")
         raise typer.Exit(code=2)
     version = promote_run_to_champion(
         tracking_uri=resolved_tracking_uri,
