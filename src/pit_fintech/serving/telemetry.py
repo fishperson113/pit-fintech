@@ -18,7 +18,7 @@ or ``make tools`` (POSIX) installs locust plus the four OTel packages in one sho
 
 When the packages are absent or ``otel_enabled`` is false, :func:`configure_telemetry` returns a
 no-op :class:`Telemetry` so the service runs unchanged -- observability is never a hard dependency
-of the scoring path (the same rule the correctness lanes follow for Feast/Redis).
+of the scoring path (the same rule the correctness lanes follow for Redis).
 
 Instruments exposed for Grafana dashboards:
 

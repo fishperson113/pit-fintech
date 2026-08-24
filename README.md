@@ -9,7 +9,7 @@ The repository is intentionally milestone-driven. Sprint 1 is complete: the temp
 PaySim feasibility evidence, versioned Bronze/Silver path and exact-Silver E1/E4 baseline are
 verified. See the [Sprint 1 completion report](docs/reports/sprint-1-completion-report.md).
 Redis/MLflow infrastructure is wired for the next vertical slice. Gold staging and explicit
-promotion are now represented by CLI/Make/PowerShell commands; Feast, serving, replay, and cloud
+promotion are now represented by CLI/Make/PowerShell commands; serving, replay, and cloud
 remain explicitly planned rather than represented by placeholder commands.
 
 ## Quick start
@@ -53,20 +53,20 @@ Alternatively, set `PAYSIM_CSV` in the shell or override `paysim_csv` with
 input once before running EDA:
 
 ```bash
-make data-snapshot
-make profile DATASET=paysim
+uv run pit data snapshot --dataset paysim
+uv run pit data profile --dataset paysim
+make build-lakehouse DATASET=paysim
 make lab
 ```
 
 ```powershell
-.\make.ps1 data-snapshot
-.\make.ps1 profile -Dataset paysim
-.\make.ps1 test-lakehouse
+uv run pit data snapshot --dataset paysim
+uv run pit data profile --dataset paysim
 .\make.ps1 build-lakehouse -Dataset paysim
 .\make.ps1 lab
 ```
 
-`data-snapshot` writes a machine-readable manifest under
+`pit data snapshot` writes a machine-readable manifest under
 `artifacts/datasets/paysim1/<checksum-prefix>/snapshot-manifest.json`. It does not copy or mutate
 the raw CSV.
 
@@ -85,11 +85,11 @@ four child runs to a local SQLite-backed MLflow store with a separate local arti
 It does not require Redis, Docker, or an MLflow server:
 
 ```bash
-make model-spike
+uv run --group training pit model spike --dataset paysim
 ```
 
 ```powershell
-.\make.ps1 model-spike
+uv run --group training pit model spike --dataset paysim
 ```
 
 The command writes a validated manifest under
@@ -152,36 +152,34 @@ promotes both tables, and reports the Delta versions and predicate.
 
 ## Implemented command contract
 
+This is the trimmed core set of `make` / `make.ps1` targets. Every capability the repo exposes is
+still reachable directly through the `pit` CLI (`uv run pit ...`); the removed targets were thin
+wrappers, not lost functionality.
+
 | Command | Outcome |
 |---|---|
-| `bootstrap` | Sync the exact `uv.lock` environment and install pre-commit hooks |
-| `setup` | Sync the full locked environment — every dependency group (`dev`, `training`, `tracking`, `feast`, `serving`) — and install pre-commit hooks |
-| `tools` | Install hand-installed dev tools (locust + the ADR-008 OpenTelemetry packages) into the current env |
-| `parity-reconcile` | Reconcile online aggregates against the offline DuckDB reference over the Event History (async, ADR-009) |
-| `worker` | Run the `pit-online-worker` — consume score events, maintain the online store (ADR-010) |
-| `worker-up` / `worker-down` | Start / stop the `pit-online-worker` Docker container |
-| `serve-otel` | Start the scoring API with OTel traces/metrics, reading `otel_endpoint` from `config.yaml` or `PIT_OTEL_ENDPOINT` |
-| `locust` | Run the Locust web UI + offline/online parity harness against a running service (`LOCUST_HOST`) |
+| `bootstrap` | Sync the exact `uv.lock` environment (`dev`) and install pre-commit hooks |
+| `setup` | Sync the full locked environment — every dependency group (`dev`, `training`, `tracking`, `serving`) — and install pre-commit hooks |
 | `doctor` | Read-only host, dependency, Delta, resource, port, Git, and credential checks |
+| `lock` | Resolve and refresh the exact `uv.lock` |
 | `lab` | Start JupyterLab with project code importable from the locked environment |
-| `lab-training` | Start JupyterLab with the development and training dependency groups |
-| `lab-container` | Start an isolated, localhost-only JupyterLab Compose profile |
+| `lab-training` | Start JupyterLab with the development and training dependency groups (modeling notebooks) |
 | `data-sample` | Validate hand-calculated vectors and materialize the synthetic Parquet fixture |
-| `data-snapshot` | Hash/profile the PaySim raw CSV and persist its immutable identity manifest |
-| `profile` | Profile the synthetic fixture or real PaySim CSV through the same CLI boundary |
-| `test-temporal` | Exercise future, duplicate, tie, late-arrival, boundary, cold-start, and ordering cases |
-| `build-lakehouse` | Write sample or PaySim Bronze/Silver Delta tables for `DATASET` |
-| `lakehouse-history` | Inspect exact local Delta versions and operations for `DATASET` |
-| `features` | Inspect the frozen PaySim FeatureSpec v2, model order and checksum |
-| `test-lakehouse` | Verify sample/PaySim-fixture schema, quality, rerun, isolation, and time travel |
-| `test-notebooks` | Execute all Sprint 1 notebooks in memory without storing outputs |
-| `model-spike` | Run the standalone PaySim LightGBM E1–E4 candidate matrix with local MLflow |
+| `build-lakehouse` | Write sample or PaySim Bronze/Silver Delta tables for `DATASET` (runs `test-temporal` first) |
+| `gold` | Build Gold pre-decision and post-event tables into staging for an inclusive `START`/`END` range |
+| `promote-gold` | Promote a staged Gold run (`RUN_ID`) into the committed tables |
 | `train` | Train locked E1/E4 baselines from exact PaySim Silver Delta versions |
-| `gold` | Build Gold pre-decision and post-event tables into staging for an inclusive step range |
-| `promote-gold` | Promote a staged Gold run into the committed tables |
+| `serve` | Start the FastAPI scoring service against the local Redis online store |
+| `worker` | Run the `pit-online-worker` — consume score events, maintain the online store (ADR-010) |
+| `materialize` | Materialize Gold post-event state into the online store up to `WATERMARK` |
+| `backfill` | Run an atomic/idempotent Gold backfill with `BACKFILL_MODE` and the range variables |
+| `mlflow-ui` | Run the MLflow tracking server on the Windows host |
+| `demo-score` | Fire one normal and one suspicious transaction at a running API |
+| `up-core`, `status`, `logs`, `down` | Operate the Redis + `pit-online-worker` Compose stack without deleting volumes |
+| `test-temporal` | Exercise future, duplicate, tie, late-arrival, boundary, cold-start, and ordering cases |
+| `test-unit` | Run the fast non-temporal unit tests |
 | `lint`, `test`, `check` | Run the same fast quality lane locally and in CI |
 | `changelog-check` | Ensure staged implementation changes update milestone audit logs |
-| `up-core`, `status`, `logs`, `down` | Operate Redis and MLflow without deleting volumes |
 
 See [project status](artifacts/changelog/PROJECT_STATUS.md) for the exact distinction between planned,
 implemented, and verified artifacts.
@@ -190,7 +188,6 @@ implemented, and verified artifacts.
 
 ```text
 src/pit_fintech/       reusable contracts, canonicalization, oracle, CLI, diagnostics
-feature_repo/          frozen v1 specs; Feast definitions begin after Sprint 1 gates
 data/fixtures/         committed temporal source, hand-calculated vectors, generated Parquet
 tests/temporal/        exhaustive PIT correctness lane
 tests/unit/            deterministic hashing, ordering, specs, artifact tests
@@ -216,9 +213,10 @@ fail loudly. Scoring/replay must query before updating online state.
 
 ## Local infrastructure
 
-`compose.yaml` keeps the core footprint to Redis and MLflow. JupyterLab is an opt-in profile.
-All published ports bind to `127.0.0.1`; Jupyter retains token authentication. Runtime volumes
-survive `make down` / `.\make.ps1 down`.
+`compose.yaml` keeps the core footprint to Redis and the `pit-online-worker` (ADR-010 event
+write path). The scoring API and MLflow run directly on the host (`.\make.ps1 serve` /
+`mlflow-ui`). The published Redis port binds to `127.0.0.1`; the `redis-data` runtime volume
+survives `make down` / `.\make.ps1 down`.
 
 ## Connecting the scoring API to Prometheus / Grafana
 
@@ -290,7 +288,7 @@ count, amount sum and cold-start indicators at 1h, 24h and 168h. Historical feat
 excluded. Inspect the ordered contract and its canonical checksum with:
 
 ```powershell
-.\make.ps1 features
+uv run pit features show --dataset paysim
 ```
 
 The existing `fraud-history-v1` spec remains the independent synthetic-oracle contract. It is not
@@ -298,6 +296,8 @@ the PaySim serving vector.
 
 ## Scope guard
 
-No Spark, Kafka, Kubernetes, Airflow, or GPU is required. Feast is a registry/retrieval
-contract and will not replace the independent oracle. Cloud and TypeScript serving start only
-after Python replay parity and Sprint 2 gates pass.
+No Spark, Kafka, Kubernetes, Airflow, or GPU is required. Feast was removed (ADR-012): the in-tree
+PIT platform (versioned `FeatureSpec`, `FeatureProvider`, Redis key/schema, materialization
+manifest, parity gates) is the sole feature contract and the independent oracle is the correctness
+source of truth. Cloud and TypeScript serving start only after Python replay parity and Sprint 2
+gates pass.

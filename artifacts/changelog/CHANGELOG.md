@@ -1,5 +1,55 @@
 # Project changelog
 
+## 2026-08-24 — M087: remove Feast entirely (ADR-012)
+
+- Removed Feast from the repository after review concluded it was never load-bearing and could not
+  be: it is off the runtime path (only `RedisFeatureProvider` is wired), cannot compute the window
+  aggregates (M030), and cannot own the online windowed-write under the optimistic lock
+  (ADR-008/010); the in-tree PIT oracle owns correctness by thesis (AGENTS.md §11).
+- Deleted `feature_store/`, `platform/feast_registry.py`, `data/paysim_fixture.py` (+ the
+  `pit data build-fixture` command and its `paysim_*` fixtures), and the Feast test lanes
+  (`test_feast_registry_g1`, `test_feast_definitions_checksum`, `test_paysim_fixture` ×2). The
+  synthetic temporal oracle (`data/sample.py`, `tests/temporal`) is untouched — it never used Feast.
+- Surgically removed the Feast seams: `FeastFeatureProvider`/`kind="feast"`, `feast_repo_path`,
+  `retrieval_backend="feast"`, `push_to_feast_online_store`, `GOLD_FEAST_SOURCE_COLUMNS` /
+  `export_feast_source_parquet`, the unused `feast_definitions_checksum` lineage field, and the
+  `feast` dependency group. Kept `PAYSIM_FEAST_EPOCH_0`/`paysim_step_to_timestamp` (load-bearing
+  ADR-006 time mapping, only Feast-named).
+- Recorded in [ADR-012](../../docs/adr/012-remove-feast.md); AGENTS.md §11 + README + CLAUDE updated.
+- Gate (owner-run): `lint` / `test-unit` / `test`. `ruff check`/`format` + `py_compile` clean
+  locally; `uv.lock` already regenerated (feast removed, `uv lock --check` passes); `test-temporal`/
+  `test-unit` behaviour unchanged. Log: [M087](milestones/M087-remove-feast.md).
+
+## 2026-08-24 — M086: slim dev surface (Compose, Make targets, Feast repo layout)
+
+- Trimmed `compose.yaml` to the two services the owner actually runs locally: `redis` (online
+  store) and `pit-online-worker` (ADR-010 event write path). Removed the `mlflow`, `api`, `minio`,
+  and `jupyter` services plus the `mlflow-data`/`minio-data` volumes — the scoring API and MLflow
+  now run directly on the Windows host (`serve` / `mlflow-ui`).
+- Deleted `deploy/vps/docker-compose.otel.yml` (MLflow + Grafana are no longer hosted as one
+  on-machine cluster); kept the otel/Tempo/Prometheus/Grafana config samples and inlined the two
+  service definitions into `deploy/vps/README.md` for merging into the VPS's own compose.
+- Trimmed `Makefile` + `make.ps1` from ~60 targets to a 29-target core set (env / data-model /
+  serving / compose-ops / quality + `demo-score`); removed the `demo-*`/`debug-*`/`locust*` cluster,
+  `serve-otel`, `worker-up`/`worker-down`, `tools`, `redis-up`/`redis-down`, `parity-reconcile`,
+  `materialize-recover`, the extra `test-*` lanes, `model-spike`, `gold-evaluate`, `ingest*`,
+  `features`, `profile`, `data-snapshot`, `lakehouse-history`, `build-fixture`, `test-notebooks`,
+  and `demo`. Every removed target is still reachable via `uv run pit ...`. Targets and PowerShell
+  switch cases verified 1:1.
+- Repointed the live docs (`README.md` contract table + walkthroughs, `deploy/vps/README.md`,
+  `docs/data-access.md`, `docs/demo/e2e-demo.md`) off the removed targets to the `pit` CLI;
+  historical audit logs and point-in-time reports left unchanged.
+- Feast repo layout: kept Feast as a separate top-level dir but deleted the unused re-export shim
+  `feature_repo/feature_specs.py` and renamed `feature_repo/` → `feature_store/` (idiomatic name;
+  `git mv`, history preserved). Contract still sourced from `src/features/paysim_specs.py`; no ADR
+  cut (fields/semantics/versions and Feast's role unchanged). Repointed load-bearing refs
+  (`pyproject.toml`, `Makefile`/`make.ps1` ruff args, `verify_milestone_changelog.py` prefixes,
+  `test_feast_registry_g1.py` path + `from feature_store import definitions`).
+- Gate: `docker compose config`, `up -d redis pit-online-worker`, `make help` / `.\make.ps1`, and
+  the owner-run G1 lane (needs `feast` group + CSV) — all owner-pending. `ruff check`/`format`,
+  `py_compile` clean locally. No `test-temporal`/`test-unit` behavior changed. Log:
+  [M086](milestones/M086-slim-compose-to-redis-and-worker.md).
+
 ## 2026-08-20 — M085: re-order modeling notebooks to the correct DS/ML pipeline + MLflow logging
 
 - Fixed the misordered modeling notebooks: walk-forward CV sat *after* Optuna tuning and SHAP, and

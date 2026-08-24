@@ -14,101 +14,11 @@ services:
       timeout: 3s
       retries: 10
 
-  mlflow:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-      args:
-        UV_GROUPS: tracking
-    command:
-      - uv
-      - run
-      - --no-sync
-      - mlflow
-      - server
-      - --host=0.0.0.0
-      - --port=5000
-      - --backend-store-uri=sqlite:////runtime/tracking.db
-      - --artifacts-destination=/runtime/artifacts
-    ports:
-      - "127.0.0.1:5000:5000"
-    volumes:
-      - ./artifacts/mlflow:/runtime
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')",
-        ]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-
-  # T8 (guide s10) -- the scoring API. Core service, no profile: guide s10 lists Redis, the MLflow
-  # tracking server and the scoring API as the minimum Compose set.
-  #
-  # Round-0 status: the image builds and the container starts, but `pit_fintech.serving.app` is a
-  # skeleton whose bodies raise NotImplementedError, so the healthcheck below will not go healthy
-  # until T7 is implemented. That is the honest state, not a misconfiguration.
-  api:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-      args:
-        UV_GROUPS: serving
-        INSTALL_OTEL: "1"
-    command:
-      - uv
-      - run
-      - --no-sync
-      - uvicorn
-      - pit_fintech.serving.app:create_app
-      - --factory
-      - --host=0.0.0.0
-      - --port=8000
-    environment:
-      # `Settings` reads the PIT_ prefix (src/pit_fintech/config.py). Service names resolve on the
-      # Compose network, so these override the localhost defaults.
-      PIT_REDIS_URL: redis://redis:6379/0
-      PIT_MLFLOW_TRACKING_URI: http://mlflow:5000
-      PIT_API_HOST: 0.0.0.0
-      PIT_API_PORT: "8000"
-      PIT_LOG_JSON: "true"
-    ports:
-      - "127.0.0.1:${PIT_API_PORT:-8000}:8000"
-    volumes:
-      # Guide s10.1: raw/silver/artifacts bind-mounted read-only or read-write as needed. Serving
-      # reads Gold and manifests and must never write them -- AGENTS.md s11 keeps the medallion off
-      # the synchronous request path, so read-only here is the enforcement, not a precaution.
-      - ./data:/app/data:ro
-      - ./artifacts:/app/artifacts:ro
-      - ./feature_repo:/app/feature_repo:ro
-    depends_on:
-      redis:
-        condition: service_healthy
-      mlflow:
-        condition: service_healthy
-    healthcheck:
-      # Guide s10.2: ready is true only when model + online store + feature version all load. The
-      # readiness probe is the gate; liveness alone would report a process that cannot score.
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')",
-        ]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 20s
-
-  # ADR-010 -- the event-based write path. A dedicated, distinct instance that consumes score
-  # events from the Redis Stream and maintains the online store under the optimistic lock, so the
-  # API never mutates the store or blocks on the offline engine. `/score` needs this service to be
-  # running; a stopped worker makes requests time out (`503 online_store_timeout`).
+  # ADR-010 -- the event-based write path. Consumes score events from the Redis Stream and
+  # maintains the online store under the optimistic lock, so the scoring API never mutates the
+  # store or blocks on the offline engine. The API runs directly on the host (uvicorn) and
+  # produces the events this worker consumes; a stopped worker makes `/score` time out
+  # (`503 online_store_timeout`).
   pit-online-worker:
     build:
       context: .
@@ -131,64 +41,12 @@ services:
       PIT_REDIS_URL: redis://redis:6379/0
       PIT_LOG_JSON: "true"
     volumes:
-      # The worker appends the Event History under artifacts/, so this mount is read-write (the API
-      # mount above stays read-only).
+      # The worker appends the Event History under artifacts/, so this mount is read-write.
       - ./artifacts:/app/artifacts
     depends_on:
       redis:
         condition: service_healthy
     restart: unless-stopped
 
-  # Guide s10: "optional MinIO profile de smoke-test Delta tables tren S3-compatible storage."
-  # Opt-in only (`--profile minio`) so the core lane stays Redis + MLflow + API.
-  minio:
-    profiles: ["minio"]
-    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
-    command: ["server", "/data", "--console-address", ":9001"]
-    environment:
-      MINIO_ROOT_USER: ${PIT_MINIO_USER:-pitminio}
-      MINIO_ROOT_PASSWORD: ${PIT_MINIO_PASSWORD:-pitminio123}
-    ports:
-      - "127.0.0.1:9000:9000"
-      - "127.0.0.1:9001:9001"
-    volumes:
-      - minio-data:/data
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
-  jupyter:
-    profiles: ["lab"]
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-      args:
-        UV_GROUPS: dev
-    working_dir: /app
-    command:
-      - uv
-      - run
-      - --no-sync
-      - jupyter
-      - lab
-      - --ip=0.0.0.0
-      - --port=8888
-      - --no-browser
-      - --allow-root
-      - --ServerApp.token=${PIT_JUPYTER_TOKEN:-pit-local}
-    ports:
-      - "127.0.0.1:${PIT_JUPYTER_PORT:-8888}:8888"
-    volumes:
-      - ./notebooks:/app/notebooks
-      - ./src:/app/src:ro
-      - ./data/fixtures:/app/data/fixtures:ro
-      - ./docs/reports:/app/docs/reports
-
 volumes:
   redis-data:
-  mlflow-data:
-  # Guide s10.1: named volumes for runtime state. Teardown must not remove the raw dataset, which
-  # lives in the bind-mounted ./data tree and is deliberately not a volume.
-  minio-data:

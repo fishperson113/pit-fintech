@@ -117,8 +117,7 @@ def backfill_idempotency_key(
     :data:`BACKFILL_IDEMPOTENCY_KEY_POLICY_VERSION` is prepended to the hashed payload, so the
     digest differs from a bare five-field hash. The reason is that this repo versions every
     identity it hashes -- ``platform/lineage.py: component_fingerprint`` prefixes
-    ``component-fingerprint-v1``, ``platform/feast_registry.py`` prefixes
-    ``feast-definitions-checksum-v1`` -- and an unversioned key cannot be migrated later without
+    ``component-fingerprint-v1`` -- and an unversioned key cannot be migrated later without
     silently colliding old and new schemes. Dropping the prefix is a one-line change if the
     reviewer prefers the formula literally; it is flagged in the round-0 report rather than made
     quietly.

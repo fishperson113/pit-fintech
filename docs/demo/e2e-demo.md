@@ -16,22 +16,29 @@ Huong dan chay demo cho nguoi ngoai doc. Toan bo so lieu duoi day la so do that 
 
 ## Chuoi lenh theo thu tu
 
-```bash
-# 1. Bat Redis + MLflow (uoc tinh ~30-60s, lan dau co the lau hon do pull image)
-make up-core
-# hoac chi Redis: make redis-up
+> Luu y kien truc hien tai: Redis + pit-online-worker chay trong compose; MLflow tracking server
+> chay truc tiep tren host bang `make mlflow-ui` (khong con la container). So lieu ben duoi ghi
+> tu lan chay 2026-08-06 khi MLflow con la container.
 
-# 2. Xac nhan ca hai healthy (~5s)
+```bash
+# 1. Bat Redis (+ pit-online-worker) (uoc tinh ~30-60s, lan dau co the lau hon do pull image)
+make up-core
+# hoac chi Redis: docker compose up -d redis
+
+# 1b. MLflow tracking server tren host (cua so rieng)
+make mlflow-ui
+
+# 2. Xac nhan Redis healthy (~5s)
 docker compose ps
-#   pit-fintech-redis-1   Up ... (healthy)   127.0.0.1:6379->6379/tcp
-#   pit-fintech-mlflow-1  Up ... (healthy)   127.0.0.1:5000->5000/tcp
+#   pit-fintech-redis-1              Up ... (healthy)   127.0.0.1:6379->6379/tcp
+#   pit-fintech-pit-online-worker-1  Up ...
 
 # 3. (LAN DAU HOAC KHI RESET) Materialize Gold -> Redis, toi watermark 743 (~6,5 phut)
 make materialize WATERMARK=743
 #   cuoi ra: watermark step 743 written; 2.722.362 entity, 2.527.816 written / 194.546 noop
 
 # 4. Chay demo day du: Redis check -> Gold check -> materialize -> serve -> score 3 case (~7-8 phut)
-make demo
+UV_PROJECT_ENVIRONMENT=.venv uv run --frozen --all-groups python scripts/run_demo_e2e.py
 # hoac neu store DA o watermark 743 roi, chay nhanh, bo qua materialize (~42 giay):
 UV_PROJECT_ENVIRONMENT=.venv uv run --frozen --all-groups python scripts/run_demo_e2e.py --skip-materialize
 ```
@@ -50,8 +57,8 @@ make serve
 UV_PROJECT_ENVIRONMENT=.venv uv run --frozen --all-groups pit materialize show
 
 # Tat services (du lieu Redis nam trong volume redis-data, khong mat khi down)
-make redis-down
-# hoac: docker compose down   (khong xoa volume)
+make down
+# hoac chi Redis: docker compose stop redis   (khong xoa volume)
 ```
 
 ## Ket qua mong doi cua 3 case

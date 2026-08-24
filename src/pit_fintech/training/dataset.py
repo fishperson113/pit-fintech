@@ -58,7 +58,7 @@ class EntityDataframeSpec:
     label_table_version: int
     start_step: int
     end_step: int
-    retrieval_backend: Literal["feast", "duckdb_gold"]
+    retrieval_backend: Literal["duckdb_gold"]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -119,8 +119,7 @@ def _read_exact(path: str | Path, version: int, project_root: Path) -> pa.Table:
 def _assert_gold_scope(spec: EntityDataframeSpec) -> None:
     if spec.retrieval_backend != "duckdb_gold":
         raise NotImplementedError(
-            "Feast historical retrieval is a separate control-plane lane; use duckdb_gold for T4 "
-            "until the Feast source export is explicitly wired"
+            f"only duckdb_gold retrieval is supported; got {spec.retrieval_backend!r}"
         )
     if spec.start_step < 1 or spec.end_step < spec.start_step:
         raise ValueError("retrieval step range must satisfy 1 <= start <= end")

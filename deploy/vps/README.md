@@ -48,7 +48,6 @@ unit-tested**.
 
 | File | Purpose |
 |---|---|
-| `docker-compose.otel.yml` | OTel Collector (`otel-collector`) + Tempo services; run standalone or merge into your existing compose |
 | `otelcol-config.yaml` | Collector pipeline: traces → Tempo, metrics → debug |
 | `tempo-config.yaml` | Minimal Tempo config (query frontend 3200, OTLP/gRPC ingest 4317, local storage) |
 | `prometheus-scrape-job.yml` | Prometheus scrape job for the scoring API |
@@ -58,18 +57,40 @@ unit-tested**.
 
 ### 1. Collector + Tempo
 
-Run standalone (recommended — keeps your existing Prometheus/Grafana compose untouched):
+Add the `otel-collector` and `tempo` services to the `docker-compose.yml` on the VPS that already
+runs your Prometheus/Grafana, then copy the two config files next to it:
 
 ```bash
 cd ~/prometheus-grafana
-cp <repo>/deploy/vps/docker-compose.otel.yml ./
 cp <repo>/deploy/vps/otelcol-config.yaml ./
 cp <repo>/deploy/vps/tempo-config.yaml ./
-docker compose -f docker-compose.otel.yml up -d
 ```
 
-Or merge the `otel-collector` and `tempo` services into your existing `docker-compose.yml` and
-`docker compose up -d`.
+```yaml
+# add under services: in your existing docker-compose.yml
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector
+    command: ["--config=/etc/otelcol/config.yaml"]
+    ports:
+      - "4318:4318"   # OTLP/HTTP from the app (PIT_OTEL_ENDPOINT)
+      - "4317:4317"   # OTLP/gRPC from the app, optional
+    volumes:
+      - ./otelcol-config.yaml:/etc/otelcol/config.yaml:ro
+    restart: unless-stopped
+
+  tempo:
+    image: grafana/tempo:latest
+    container_name: tempo
+    command: ["-config.file=/etc/tempo.yaml"]
+    ports:
+      - "3200:3200"   # query frontend (Grafana Tempo data source)
+    volumes:
+      - ./tempo-config.yaml:/etc/tempo.yaml:ro
+    restart: unless-stopped
+```
+
+Then `docker compose up -d`.
 
 ### 2. Prometheus scrape job
 
@@ -104,8 +125,10 @@ PIT_OTEL_ENDPOINT=http://<vps-tailscale-ip>:4318   # OTLP/HTTP to the Collector
 Start with telemetry on:
 
 ```powershell
-.\make.ps1 tools       # install the OTel packages + locust (first time / after `setup`)
-.\make.ps1 serve-otel  # uv run pit serving up --otel
+# first time / after `setup`, install the OTel packages (+ locust for load tests)
+uv pip install locust opentelemetry-sdk opentelemetry-exporter-otlp-proto-http `
+    opentelemetry-instrumentation-fastapi opentelemetry-instrumentation-logging
+uv run pit serving up --otel
 ```
 
 Allow inbound on port 8000 (and, only if you also let Grafana query Tempo from the browser, the
@@ -114,9 +137,9 @@ VPS ports) through the Windows firewall on the Tailscale interface.
 ## Verification
 
 * `http://<vps-ip>:9090/targets` shows `pit_fintech_scoring` UP.
-* `docker compose -f docker-compose.otel.yml logs -f otel-collector` shows spans being forwarded.
+* `docker compose logs -f otel-collector` shows spans being forwarded.
 * Grafana: a fresh `score` trace exists in Tempo Explore; the dashboard shows non-zero request
-  counters after traffic (e.g. `.\make.ps1 locust`).
+  counters after traffic (e.g. `uv run locust -f scripts/locust_parity.py --host http://127.0.0.1:8000`).
 
 ## Troubleshooting — crash-looping containers
 

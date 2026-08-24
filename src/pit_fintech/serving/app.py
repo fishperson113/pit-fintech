@@ -10,11 +10,10 @@ single-process path is the bottleneck. The MVP deploys in one process on purpose
 Guide s10.2 fixes the probes: ``/health/live`` and ``/health/ready``, where ready is true only when
 the model, the online store **and** the feature version all load correctly.
 
-``fastapi`` and ``uvicorn`` are the optional ``serving`` dependency group, and ADR-006 decision 3
-caps ``uvicorn[standard]`` at ``0.34.0`` because every Feast release pins it transitively and ``uv``
-resolves all groups into one universe. Imports therefore stay inside function bodies and under
-``TYPE_CHECKING``, so importing ``pit_fintech.serving`` never drags FastAPI into the correctness
-lanes.
+``fastapi`` and ``uvicorn`` are the optional ``serving`` dependency group. ``uvicorn[standard]`` is
+pinned at ``0.34.0`` -- a cap inherited from the now-removed Feast dependency (ADR-012); kept
+pending review. Imports stay inside function bodies and under ``TYPE_CHECKING``, so importing
+``pit_fintech.serving`` never drags FastAPI into the correctness lanes.
 
 Round-0 status: signatures only. Every body raises ``NotImplementedError``.
 """
@@ -42,8 +41,6 @@ from pit_fintech.serving.scoring import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - annotations only
-    from pathlib import Path
-
     from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
@@ -72,9 +69,8 @@ class ServingSettings:
 
     host: str
     port: int
-    provider_kind: Literal["redis", "sqlite", "feast", "upstash"]
+    provider_kind: Literal["redis", "sqlite", "upstash"]
     online_store_uri: str
-    feast_repo_path: Path | None
     mlflow_tracking_uri: str
     registered_model_name: str
     model_alias: str = "champion"

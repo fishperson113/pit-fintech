@@ -373,9 +373,13 @@ model-spike | train | lab-training  # Sprint 1 model commands, not promotion pat
 - Chỉ dùng một logical replay producer; nhiều entity không đồng nghĩa cần nhiều producer.
 - Không dùng Ray Train/Ray Tune/Ray Serve nếu chưa có benchmark chứng minh distributed
   training, large-scale HPO hoặc serving replicas là bottleneck thực tế.
-- Feast là registry/retrieval/materialization contract mỏng, không compute feature và không thay
-  thế independent PIT oracle. Chỉ bỏ Feast qua ADR và phải thay đủ versioned FeatureSpec,
-  FeatureProvider, materialization manifest và parity gates.
+- Feast đã được gỡ bỏ hoàn toàn (ADR-012). Lý do: correctness source of truth cố ý là independent
+  PIT oracle tự viết (`features/paysim_reference.py`) + SQL engine, và Feast không compute được
+  window aggregate (M030) cũng như không hợp với online windowed-write dưới optimistic lock
+  (ADR-008/009/010) — nên nó chỉ còn là skeleton, không nằm trên đường score. Các thứ Feast lẽ ra
+  cung cấp đều đã tồn tại độc lập trong `src/`: versioned FeatureSpec (`features/paysim_specs.py`),
+  FeatureProvider (`serving/feature_provider.py`), Redis key/schema (`materialization/records.py`),
+  materialization manifest và parity gates. Đưa Feast trở lại = ADR mới.
 - Medallion Bronze/Silver/Gold chỉ thuộc offline path và chạy bằng CLI/Makefile; notebook không
   phải pipeline executor, serving không đi xuyên medallion.
 - Query/score online phải xảy ra trước khi event hiện tại update state.

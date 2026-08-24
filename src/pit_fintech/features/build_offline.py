@@ -7,8 +7,7 @@ foundation for G1/G2/G4/G5/G6/G7/G9/G10 as well.
 Guide s4.0 fixes two artifacts from one contract, and they are NOT interchangeable:
 
 * ``pre_decision_features`` -- the aggregate immediately *before* each transaction. Training reads
-  it (T4), and it is also the table Feast's ``FeatureView`` serves (guide s3.2.1), so T1 and T2
-  have a real dependency.
+  it (T4).
 * ``post_event_state_updates`` -- the aggregate *after* consuming each transaction. T5 materializes
   it into the online store. Guide s4.0: never materialize the latest ``pre_decision_features`` row,
   because it excludes the newest transaction and leaves online state one event behind.
@@ -167,17 +166,15 @@ class GoldColumn:
 #: One row per **in-scope cutoff** -- ``CASH_OUT``/``TRANSFER`` with a ``CUSTOMER`` destination
 #: (ADR-003 scoring scope). Rows outside the scope stay pipeline data and never appear here.
 #:
-#: Column order is frozen (ADR-011 v3). Columns 1-14 are byte-identical in name, order and type to
-#: ``data/paysim_fixture.py: PAYSIM_FEATURE_TABLE_COLUMNS`` -- the shape Feast's `FileSource` binds
-#: to -- so the full-scale table is a superset of the fixture, never a different shape. See
-#: :data:`GOLD_FEAST_SOURCE_COLUMNS`.
+#: Column order is frozen (ADR-011 v3): the entity join key, the two ADR-006 derived timestamp
+#: columns, then the ten v3 model fields in contract order, then the identity/ordering columns.
 #:
-#: Columns 15-18 are identity/ordering columns the fixture drops. ``step`` and ``knowledge_step``
-#: are the *ordering authority*: the T4 temporal split is on step ranges (ADR-002 decision 7:
-#: 1-520/521-631/632-743) and the T6 replay order is ``(step, source_row_number)`` (ADR-002
-#: decision 2). ADR-006 decision 1.4 requires the ordering to stay on the integer columns, so the
-#: table training and replay read has to carry them. A consumer must still never join on them where
-#: Feast validates on the timestamps.
+#: The identity/ordering columns are ``source_row_number``, ``step``, ``knowledge_step`` and the
+#: partition. ``step`` and ``knowledge_step`` are the *ordering authority*: the T4 temporal split is
+#: on step ranges (ADR-002 decision 7: 1-520/521-631/632-743) and the T6 replay order is
+#: ``(step, source_row_number)`` (ADR-002 decision 2). ADR-006 decision 1.4 requires the ordering to
+#: stay on the integer columns, so the table training and replay read has to carry them; a consumer
+#: must still never join on them where the derived timestamps are the join key.
 PRE_DECISION_FEATURE_SCHEMA: Final[tuple[GoldColumn, ...]] = (
     GoldColumn(PAYSIM_ENTITY, "string", False),
     GoldColumn("event_timestamp", "timestamp[us, tz=UTC]", False),
@@ -201,18 +198,6 @@ PRE_DECISION_FEATURE_SCHEMA: Final[tuple[GoldColumn, ...]] = (
     GoldColumn("knowledge_step", "int64", False),
     GoldColumn("transaction_type", "string", False),
     GoldColumn(GOLD_PARTITION_COLUMN, "int32", False),
-)
-
-#: The projection a Feast `FileSource` reads, in exactly the order
-#: `feature_repo/definitions.py` already binds to via
-#: ``data/paysim_fixture.py: PAYSIM_FEATURE_TABLE_COLUMNS``. Selecting this tuple out of
-#: :data:`PRE_DECISION_FEATURE_SCHEMA` must reproduce the fixture table's schema exactly.
-GOLD_FEAST_SOURCE_COLUMNS: Final[tuple[str, ...]] = (
-    PAYSIM_ENTITY,
-    "event_timestamp",
-    "created_timestamp",
-    *PAYSIM_MODEL_FEATURE_ORDER,
-    "source_row_number",
 )
 
 # --------------------------------------------------------------------------------------------
@@ -331,17 +316,6 @@ def _assert_contract_alignment() -> None:
             "gold.pre_decision_features no longer carries the frozen v3 fields in contract "
             f"order: {declared[3 : 3 + field_count]} != {PAYSIM_MODEL_FEATURE_ORDER}"
         )
-    if GOLD_FEAST_SOURCE_COLUMNS[3 : 3 + field_count] != PAYSIM_MODEL_FEATURE_ORDER:
-        raise RuntimeError(
-            "the Feast source projection no longer carries the frozen v3 fields in contract "
-            f"order: {GOLD_FEAST_SOURCE_COLUMNS[3 : 3 + field_count]} != "
-            f"{PAYSIM_MODEL_FEATURE_ORDER}"
-        )
-    if set(GOLD_FEAST_SOURCE_COLUMNS) - set(declared):
-        raise RuntimeError(
-            "the Feast source projection asks for columns gold.pre_decision_features does not "
-            f"have: {sorted(set(GOLD_FEAST_SOURCE_COLUMNS) - set(declared))}"
-        )
     if tuple(POST_EVENT_TO_CONTRACT_FIELD) != POST_EVENT_STATE_FIELD_NAMES:
         raise RuntimeError(
             "the post-event -> contract field map no longer covers the eight post-event fields in "
@@ -450,10 +424,8 @@ class GoldScanEvidence:
 class SameStepTieProbe:
     """Whether the built range contains any same-``step`` pair, and where.
 
-    **This exists because of a hole T1 left open.** Guide s8.3 lists "at least one same-second tie
-    case" among G6's required checkpoints, and T1's Feast integration never touched one: the
-    committed fixture feature table has 11 rows carrying 11 distinct ``event_timestamp`` values, so
-    the tie path has never been exercised through Feast at all. When T2 builds Gold from full
+    **This exists because same-step ties are rare and must not be assumed.** Guide s8.3 lists "at
+    least one same-second tie case" among G6's required checkpoints. When Gold is built from full
     Silver the first thing it must do is *measure* whether an in-scope same-step pair exists.
 
     Do not assume one does. Under ADR-006 every row in a ``step`` maps to the same instant, so a
@@ -563,8 +535,7 @@ class ReferenceParityReport:
     mismatched_fields: int
     float_tolerance: float
     #: ``"<source_row_number>.<feature_name>: sql <value> != oracle <value>"``, every difference
-    #: collected before raising -- seeing all of them at once is what tells you which side is wrong
-    #: (``paysim_fixture._verify_feature_table`` sets this precedent).
+    #: collected before raising -- seeing all of them at once is what tells you which side is wrong.
     differences: tuple[str, ...]
 
 
@@ -1551,22 +1522,3 @@ def verify_shift_relation(
             )
         )
     return tuple(validations)
-
-
-def export_feast_source_parquet(
-    *,
-    build: OfflineFeatureBuildResult,
-    destination: Path,
-) -> Path:
-    """Project committed Gold down to :data:`GOLD_FEAST_SOURCE_COLUMNS` as Parquet for Feast.
-
-    **T1/T2 seam, flagged rather than assumed.** ``feature_repo/definitions.py`` declares a
-    ``FileSource`` over ``data/fixtures/paysim_feature_table.parquet``; Gold is a partitioned Delta
-    table, and a Feast ``FileSource`` does not read the Delta log. Guide s4.0 says T1 either waits
-    for T2 or generates its own small table with the same SQL engine -- it does not say how the
-    full-scale table reaches Feast. This function is the placeholder for that answer, and whoever
-    implements it should record the decision (export vs. a Feast DuckDB offline-store view vs.
-    keeping Feast on a fixture-sized source) rather than settle it in passing.
-    """
-
-    raise NotImplementedError("T2 round-0 skeleton")

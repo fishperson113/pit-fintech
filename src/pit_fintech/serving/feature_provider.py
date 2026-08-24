@@ -2,14 +2,13 @@
 
 Gate: **G7 Serving** -- "API tra prediction + lineage/freshness metadata" (guide s13).
 
-Guide s9: "Feature retrieval duoc tach qua ``FeatureProvider`` interface. Local Redis, Feast SDK va
-hosted Upstash la adapters; scoring layer chi nhan versioned feature vector."
+Guide s9: "Feature retrieval duoc tach qua ``FeatureProvider`` interface. Local Redis va hosted
+Upstash la adapters; scoring layer chi nhan versioned feature vector."
 
-AGENTS.md s11 raises the stakes on this interface: it is one of the four things a Feast fallback
-would still have to supply (a versioned ``FeatureSpec``, a ``FeatureProvider``, a Redis key/schema
-contract, a materialization manifest and parity gates). So it is a project-level contract, not a
-serving convenience -- which is why it is an ABC with a declared return type rather than a callable
-passed around.
+This interface is a project-level contract, not a serving convenience: it is one of the pieces the
+in-tree PIT platform supplies (ADR-012) -- a versioned ``FeatureSpec``, this ``FeatureProvider``, a
+Redis key/schema contract, a materialization manifest and parity gates. That is why it is an ABC
+with a declared return type rather than a callable passed around.
 
 **The interface returns the eight history fields, not ten (ADR-011 v3).** ``current_amount`` and
 ``transaction_type_transfer`` are request-time fields: they are derived from the request being
@@ -18,14 +17,7 @@ contract"). Assembling the ten-field model vector is
 :func:`~pit_fintech.serving.scoring.build_model_vector`'s job, and keeping the split explicit is
 what stops a provider from inventing a request-time value when the entity is cold.
 
-**A seam T1 left open, flagged rather than silently resolved.** ``feature_repo/definitions.py``
-declares all twelve fields as ordinary batch fields on the ``FeatureView``, and its docstring
-records that splitting the three request-time fields into an ``OnDemandFeatureView`` is T7 scope.
-So :class:`FeastFeatureProvider` will retrieve twelve where the interface wants nine. Whoever
-implements it decides -- project down to nine, or add the on-demand view -- and records the
-decision; it must not be settled by whichever call site is written first.
-
-Round-0 status: signatures only. Every body raises ``NotImplementedError``.
+Round-0 status: signatures only. Every non-Redis body raises ``NotImplementedError``.
 """
 
 from __future__ import annotations
@@ -38,8 +30,6 @@ from typing import TYPE_CHECKING, Literal
 from pit_fintech.materialization.records import FeatureStatus, OnlineReadResult
 
 if TYPE_CHECKING:  # pragma: no cover - annotations only
-    from pathlib import Path
-
     from pit_fintech.materialization.materializer import OnlineStoreConfig
 
 
@@ -280,43 +270,6 @@ class SqliteFeatureProvider(FeatureProvider):
         raise NotImplementedError("T7 round-0 skeleton")
 
 
-class FeastFeatureProvider(FeatureProvider):
-    """Feast SDK adapter -- retrieval through the registered ``paysim-fraud-scoring-v2`` service.
-
-    Resolves features by feature-service name so the served field set is whatever the registry says
-    it is, rather than a list re-typed here. Feast is an optional dependency group; import it
-    inside the methods.
-
-    Carries the twelve-vs-nine seam described in the module docstring: T1's ``FeatureView`` serves
-    all twelve fields from the batch source, while this interface is defined on nine.
-    """
-
-    name = "feast"
-
-    def __init__(
-        self,
-        *,
-        repo_path: Path,
-        feature_service_name: str,
-        expected_feature_service_version: str,
-    ) -> None:
-        raise NotImplementedError("T7 round-0 skeleton")
-
-    def get_online_features(self, *, entity_id: str, request_step: int) -> FeatureVectorResponse:
-        raise NotImplementedError("T7 round-0 skeleton")
-
-    def get_online_features_batch(
-        self, *, entity_ids: tuple[str, ...], request_step: int
-    ) -> tuple[FeatureVectorResponse, ...]:
-        raise NotImplementedError("T7 round-0 skeleton")
-
-    def health(self) -> ProviderHealth:
-        raise NotImplementedError("T7 round-0 skeleton")
-
-    def close(self) -> None:
-        raise NotImplementedError("T7 round-0 skeleton")
-
-
 class UpstashFeatureProvider(FeatureProvider):
     """Hosted Upstash Redis adapter -- **Sprint 3 only**, declared here so the seam exists.
 
@@ -348,10 +301,8 @@ class UpstashFeatureProvider(FeatureProvider):
 
 def build_feature_provider(
     *,
-    kind: Literal["redis", "sqlite", "feast", "upstash"],
+    kind: Literal["redis", "sqlite", "upstash"],
     store: OnlineStoreConfig | None = None,
-    repo_path: Path | None = None,
-    feature_service_name: str | None = None,
     expected_feature_service_version: str,
 ) -> FeatureProvider:
     """Construct the configured adapter.
@@ -376,10 +327,6 @@ def build_feature_provider(
     if kind == "sqlite":
         raise NotImplementedError(
             "SqliteFeatureProvider is not implemented in this pass; only kind='redis' is wired up"
-        )
-    if kind == "feast":
-        raise NotImplementedError(
-            "FeastFeatureProvider is not implemented in this pass; only kind='redis' is wired up"
         )
     if kind == "upstash":
         raise NotImplementedError(

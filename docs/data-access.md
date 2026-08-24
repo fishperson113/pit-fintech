@@ -12,9 +12,9 @@ manifest under `artifacts/sample/`. This path is sufficient for correctness and 
 2. Place the CSV at
    `data/raw/paysim/PS_20174392719_1491204439457_log.csv`, set `PAYSIM_CSV` in the shell, or set
    `PIT_PAYSIM_CSV` in `.env`.
-3. Run `make data-snapshot` or `.\make.ps1 data-snapshot`. This hashes the raw file, records its
+3. Run `uv run pit data snapshot --dataset paysim`. This hashes the raw file, records its
    row count/schema/step range and writes the immutable snapshot manifest.
-4. Run `make profile DATASET=paysim` or `.\make.ps1 profile -Dataset paysim`, then run the three
+4. Run `uv run pit data profile --dataset paysim`, then run the three
    notebooks to profile event ordering, origin/destination history, class
    imbalance, duplicates and leakage risk.
 5. Record the dataset/entity/time policy and the model-family decision in ADRs only after EDA.

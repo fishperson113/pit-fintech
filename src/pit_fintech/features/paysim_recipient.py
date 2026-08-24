@@ -228,7 +228,7 @@ PAYSIM_PRE_DECISION_SOURCE_COLUMNS: Final = (
     "destination_entity_kind",
 )
 # Identity columns the projection carries alongside the ten contract fields. `step` and
-# `knowledge_step` are the integer ordinals ADR-006 derives the Feast timestamps from in Python;
+# `knowledge_step` are the integer ordinals ADR-006 derives the timestamps from in Python;
 # they are emitted so the caller can derive them, never so SQL can.
 PAYSIM_PRE_DECISION_IDENTITY_COLUMNS: Final = (
     PAYSIM_ENTITY,
@@ -245,8 +245,9 @@ def paysim_pre_decision_feature_sql(relation: str) -> str:
     self-join means every history row must be present in it, so the caller is responsible for
     handing over a pool that already spans ``[cutoff_step - 168, cutoff_step]`` for every cutoff.
 
-    This exists because Feast computes no window aggregates (M030 Finding 1), so a `FeatureView`
-    has to read a table where the eight history fields are already materialized. Building it here,
+    This materializes the eight history fields into the offline Gold table so training and the
+    online-store materialization read precomputed windows rather than recomputing them at read time
+    (an anti-pattern, ADR-009). Building it here,
     from :func:`_prior_window_predicate` and :data:`PAYSIM_AMOUNT_DECIMAL_TYPE`, keeps that table
     on the shipped SQL engine: comparing it against ``features/paysim_reference.py`` is then two
     independent derivations, whereas a table built by the oracle and checked against the oracle

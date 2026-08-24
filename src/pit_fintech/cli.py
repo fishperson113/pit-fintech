@@ -23,7 +23,6 @@ from pit_fintech.data.paysim import (
     resolve_project_root,
     setup_instructions,
 )
-from pit_fintech.data.paysim_fixture import build_paysim_temporal_fixture
 from pit_fintech.data.paysim_lakehouse import (
     build_paysim_lakehouse,
     find_latest_paysim_lakehouse_manifest,
@@ -410,45 +409,6 @@ def data_lakehouse_history(
             str(commit.get("operation")),
             str(commit.get("timestamp")),
         )
-    console.print(table)
-
-
-@data_app.command("build-fixture")
-def data_build_fixture(
-    dataset: Annotated[
-        str, typer.Option(help="Application dataset to derive the temporal fixture from")
-    ] = "paysim",
-) -> None:
-    """Extract a small real-Silver PaySim fixture, score it with the oracle, write it to disk."""
-
-    if dataset != "paysim":
-        console.print("[red]Only the PaySim temporal fixture builder is implemented.[/]")
-        raise typer.Exit(code=2)
-
-    project_root = resolve_project_root(Path.cwd())
-    settings = get_settings()
-    artifact_root = settings.artifact_root
-    if not artifact_root.is_absolute():
-        artifact_root = project_root / artifact_root
-    if find_latest_paysim_lakehouse_manifest(artifact_root) is None:
-        console.print(
-            "[yellow]No PaySim application lakehouse manifest. "
-            "Run data build-lakehouse --dataset paysim first.[/]"
-        )
-        raise typer.Exit(code=2)
-
-    result = build_paysim_temporal_fixture(project_root=project_root, artifact_root=artifact_root)
-
-    table = Table(title="PaySim temporal fixture")
-    table.add_column("Field")
-    table.add_column("Value")
-    table.add_row("source rows", str(result["source_rows"]))
-    table.add_row("feature rows", str(result["feature_rows"]))
-    table.add_row("silver path", str(result["silver_path"]))
-    table.add_row("fixture path", str(result["fixture_path"]))
-    table.add_row("expected path", str(result["expected_path"]))
-    table.add_row("parquet path", str(result["parquet_path"]))
-    table.add_row("feature table path", str(result["feature_table_path"]))
     console.print(table)
 
 
@@ -1344,7 +1304,6 @@ def serving_up(
         "port": port,
         "provider_kind": "redis",
         "online_store_uri": "redis://127.0.0.1:6379/0",
-        "feast_repo_path": None,
         "mlflow_tracking_uri": (
             mlflow_tracking_uri
             if mlflow_tracking_uri is not None

@@ -35,8 +35,9 @@ architecture size.
    is a valid result. PR-AUC is the primary metric; never accuracy.
 6. **Never use label-derived, post-outcome, or the four PaySim balance columns as features.**
 7. **Scope guards (AGENTS.md §11):** no Spark/Kafka/K8s/Airflow/RabbitMQ/Redis-Streams/GPU/Ray
-   in the MVP. Feast is a thin registry/retrieval contract, not the correctness oracle. Cloud and
-   TypeScript serving start only after Python replay parity + Sprint 2 gates pass.
+   in the MVP. Feast was removed (ADR-012); the in-tree PIT platform is the feature contract and the
+   independent oracle is the correctness source of truth. Cloud and TypeScript serving start only
+   after Python replay parity + Sprint 2 gates pass.
 
 ## Environment & commands
 
@@ -83,7 +84,6 @@ src/pit_fintech/
                          paysim_specs.py, paysim_recipient.py (frozen v1 contract)
   models/                paysim_lightgbm.py (E1-E4 spike), paysim_training.py (locked E1/E4)
   platform/              doctor.py, lineage.py (component fingerprints), notebooks.py
-feature_repo/            frozen v1 specs; real Feast defs begin after Sprint 1 gates
 deploy/vps/              non-secret sample configs: OTel Collector + Tempo + Prometheus job +
                          Grafana dashboard (owner's VPS is the ops boundary; see deploy/vps/README.md)
 data/fixtures/           committed synthetic source + hand-calculated expected vectors
@@ -145,7 +145,7 @@ the user unless all three are in sync. Don't hand-edit evidence numbers that a c
   force a Silver rebuild. Implementation gates pass (unit 39/39, lakehouse 4/4, notebooks 5/5);
   the open item is post-commit `train` reusing legacy Silver without rebuild + emitting new
   fingerprint fields. **This is the current work in the git status.**
-- **Sprint 2: planned.** Thin Feast contract, CLI-built Gold, full/range/incremental backfill,
+- **Sprint 2: planned.** CLI-built Gold, full/range/incremental backfill,
   Redis materialization, gated promote/rollback, FastAPI scoring, one-producer ordered in-memory
   replay, offline/online parity, sample E2E. Next concrete step per AGENTS.md §2: add a
   probability-scoring wrapper before serving, starting from exact Silver v1.

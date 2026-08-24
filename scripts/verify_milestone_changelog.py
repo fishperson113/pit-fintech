@@ -24,7 +24,7 @@ IMPLEMENTATION_PREFIXES = (
     "docker/",
     "docs/adr/",
     "docs/reports/",
-    "feature_repo/",
+    "feature_store/",
     "notebooks/",
     "scripts/",
     "src/",

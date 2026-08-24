@@ -17,8 +17,7 @@ Constraints that are already decided and must not be reopened here:
 
 MLflow and LightGBM are optional dependency groups (``training``, ``tracking`` in
 ``pyproject.toml``). They are imported inside function bodies, never at module scope, so importing
-``pit_fintech.training`` cannot break ``test-unit``/``test-temporal`` resolution -- the same line
-``platform/feast_registry.py`` holds for Feast.
+``pit_fintech.training`` cannot break ``test-unit``/``test-temporal`` resolution.
 
 Round-0 status: signatures only. Every body raises ``NotImplementedError``.
 """

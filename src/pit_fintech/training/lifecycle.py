@@ -110,7 +110,6 @@ class DeploymentManifest:
     feature_definition_version: str
     feature_service_version: str
     feature_contract_checksum: str
-    feast_definitions_checksum: str | None
     training_dataset_checksum: str
 
     # code and environment

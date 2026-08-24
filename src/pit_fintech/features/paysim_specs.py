@@ -21,9 +21,10 @@ PAYSIM_LABEL_SOURCE: Final = "silver.paysim_labels"
 PAYSIM_ENTITY: Final = "destination_entity_id"
 PAYSIM_ENTITY_DEFINITION_VERSION: Final = "paysim-destination-customer-v1"
 
-# ADR-006 decision 1. Feast's `FileSource` requires real timestamp columns, but PaySim carries only
-# the `step`/`knowledge_step` hour ordinals (ADR-002 decision 1). This anchor presents them as UTC
-# timestamps for the Feast layer only. It is frozen: changing it changes every derived timestamp,
+# ADR-006 decision 1. The medallion tables (Gold `event_timestamp`/`created_timestamp`) and the
+# online store carry real UTC timestamps, but PaySim carries only the `step`/`knowledge_step` hour
+# ordinals (ADR-002 decision 1). This anchor presents those ordinals as UTC timestamps. It is
+# frozen: changing it changes every derived timestamp,
 # and therefore every registry artifact, Gold partition and online key derived from them, so it
 # requires a new ADR. It lives here because ADR-006 decision 1.7 requires exactly one
 # implementation of the mapping, expressed from the contract module and reused by every consumer.
@@ -37,7 +38,7 @@ PAYSIM_FEAST_EPOCH_0: Final = datetime(2020, 1, 1, tzinfo=UTC)
 
 
 def paysim_step_to_timestamp(step_ordinal: int) -> datetime:
-    """Map an hour ordinal to its ADR-006 derived UTC timestamp, for the Feast layer only.
+    """Map an hour ordinal to its ADR-006 derived UTC timestamp.
 
     `f(n) = PAYSIM_FEAST_EPOCH_0 + n hours` is strictly monotone on integers, so it is bijective
     and order-preserving over the frozen 1-743 range: it adds no information, removes none, and

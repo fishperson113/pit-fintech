@@ -1,12 +1,11 @@
 """T7 -- FastAPI scoring service and the versioned FeatureProvider boundary (guide s9; gate G7).
 
-Nothing here imports FastAPI, Uvicorn, Redis or Feast at module scope: they are optional dependency
+Nothing here imports FastAPI, Uvicorn or Redis at module scope: they are optional dependency
 groups, and the correctness lanes (``test-unit``, ``test-temporal``) must stay importable without
-them (ADR-006 consequences).
+them.
 """
 
 from pit_fintech.serving.feature_provider import (
-    FeastFeatureProvider,
     FeatureProvider,
     FeatureVectorResponse,
     ProviderHealth,
@@ -38,7 +37,6 @@ from pit_fintech.serving.scoring import (
 __all__ = [
     "ErrorResponse",
     "FailurePolicy",
-    "FeastFeatureProvider",
     "FeatureProvider",
     "FeatureStatusLiteral",
     "FeatureVectorResponse",

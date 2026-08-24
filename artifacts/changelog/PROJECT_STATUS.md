@@ -1,8 +1,15 @@
 # Project status
 
-Last updated: 2026-08-20 (M085 — modeling notebooks re-ordered to the correct DS/ML pipeline
-(CV/split before Optuna) + standardized MLflow logging; helper unit-verified, notebook execution
-owner-pending). Status words are strict:
+Last updated: 2026-08-24 (M087 — **Feast removed entirely** via ADR-012: `feature_store/`,
+`feast_registry.py`, the `paysim_fixture`/`build-fixture` apparatus, both Feast test lanes and the
+`feast` dependency group are gone; only `RedisFeatureProvider` was ever wired, and the in-tree PIT
+oracle owns correctness. Load-bearing `PAYSIM_FEAST_EPOCH_0`/`paysim_step_to_timestamp` kept.
+`uv.lock` already regenerated (feast gone, `uv lock --check` clean); owner runs the test lanes to
+verify. Prior in the same uncommitted batch:
+M086 — Compose slimmed to Redis + the `pit-online-worker` (MLflow/API/MinIO/JupyterLab off Compose,
+standalone otel Compose file removed) and `Makefile`/`make.ps1` trimmed from ~60 to a 29-target core
+set, every removed target still reachable via `uv run pit ...`. Gates `docker compose` up +
+`make help` owner-pending). Status words are strict:
 
 - **planned**: present in the six-week guide, with no claim that code exists;
 - **implemented**: code/artifact exists but the relevant gate may not have run;

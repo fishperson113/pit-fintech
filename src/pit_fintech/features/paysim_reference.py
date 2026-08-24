@@ -32,8 +32,9 @@ What it implements, verbatim from the frozen decisions:
 * exactly the ten fields of ``PAYSIM_MODEL_FEATURE_ORDER``, in that order.
 
 ``step`` and ``knowledge_step`` are hour ordinals (ADR-002 decision 1). The derived
-``event_timestamp``/``created_timestamp`` columns of ADR-006 exist for the Feast layer only and are
-deliberately absent here: ADR-006 decision 1.3 keeps the oracle on the integer columns.
+``event_timestamp``/``created_timestamp`` columns of ADR-006 exist for the medallion tables and
+online store and are deliberately absent here: ADR-006 decision 1.3 keeps the oracle on the integer
+columns.
 """
 
 from __future__ import annotations

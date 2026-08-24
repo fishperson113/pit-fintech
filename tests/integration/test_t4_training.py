@@ -22,9 +22,8 @@ from pit_fintech.training.pipeline import TrainingConfig, train_candidate
 def _require_training() -> None:
     """Skip loudly when the optional training dependency group is missing.
 
-    Mirrors `_require_feast()` in `tests/integration/test_feast_registry_g1.py`: training is an
-    optional dependency group kept out of the CI correctness path on purpose (pyproject.toml), so
-    the lane skips with an actionable message instead of failing.
+    Training is an optional dependency group kept out of the CI correctness path on purpose
+    (pyproject.toml), so the lane skips with an actionable message instead of failing.
 
     When `PIT_REQUIRE_TRAINING=1` is set (the CI "Delta sample snapshot and time travel" step),
     the skip is escalated to a hard failure: this guard is the latch against a fake-green CI. If

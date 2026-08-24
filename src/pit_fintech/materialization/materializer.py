@@ -3,19 +3,19 @@
 Gates: **G5 Materialization** and **G8 Recovery** (guide s13).
 
 Guide s7.1 in one sentence: consume ``gold.post_event_state_updates`` rows with
-``step <= watermark``, keep the latest per entity, and push it through Feast's ``PushSource`` /
-online write path -- never by reading the newest ``pre_decision_features`` row.
+``step <= watermark``, keep the latest per entity, and write it to the online store -- never by
+reading the newest ``pre_decision_features`` row.
 
 Guide s7.2's five safety rules are enforced by :func:`evaluate_write`, which is deliberately
 separate from the store adapters so all of them obey the same rules rather than each re-deriving
 them. Redis and SQLite are both supported paths and parity must pass on both (guide s7.3).
 
-``redis`` and ``feast`` are optional dependency groups; they are imported inside function bodies,
-never at module scope.
+``redis`` is an optional dependency group; it is imported inside function bodies, never at module
+scope.
 
 Round-1 status (T5): the Redis backend, key layout, JSON payloads and the write-safety rules are
-implemented. The SQLite backend, the G8 recovery lane (:func:`rematerialize_after_reset`) and the
-Feast ``PushSource`` path (:func:`push_to_feast_online_store`) remain out of scope today.
+implemented. The SQLite backend and the G8 recovery lane (:func:`rematerialize_after_reset`)
+remain out of scope today.
 """
 
 from __future__ import annotations
@@ -111,8 +111,7 @@ class OnlineStoreConfig:
     failure.
 
     ``host``/``port``/``db`` are the Redis endpoint; the defaults match the repo ``compose.yaml``
-    service (``127.0.0.1:6379``, database 0). ``uri`` is kept for the run result's ``store_uri``
-    and for the Feast online-store wiring later.
+    service (``127.0.0.1:6379``, database 0). ``uri`` is kept for the run result's ``store_uri``.
     """
 
     kind: OnlineStoreKind
@@ -919,27 +918,6 @@ def rematerialize_after_reset(
         feature_service_version_unchanged=service_version_unchanged,
         passed=passed,
     )
-
-
-def push_to_feast_online_store(
-    *,
-    store: OnlineStoreConfig,
-    records: tuple[OnlineFeatureRecord, ...],
-    feature_view_name: str,
-) -> int:
-    """Write records through Feast's ``PushSource`` / online write path (guide s3.2, s7.1).
-
-    ``feature_repo/definitions.py`` deliberately does not define a ``PushSource`` yet -- its
-    docstring records that as locked-out T1 scope, with the online write path left to T5. Adding it
-    is this task's work, and it must keep the same schema for batch and online paths (guide s3.2),
-    otherwise offline and online vectors stop being comparable and G6 has nothing to measure.
-
-    Feast is an optional dependency group; import it inside the body.
-    """
-
-    # T5 round-1: out of scope today -- the Redis backend is the materialization path; the Feast
-    # PushSource definition (feature_repo) and this adapter are the follow-up.
-    raise NotImplementedError("T5 round-1: Feast PushSource path is out of scope today")
 
 
 def post_event_row_to_record(
