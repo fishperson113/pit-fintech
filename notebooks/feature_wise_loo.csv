@@ -1,0 +1,11 @@
+dropped_feature,pr_auc,delta_vs_full
+transaction_type_transfer,0.025198,-0.028785
+current_amount,0.026301,-0.027682
+pit_distinct_senders_168h,0.0432,-0.010783
+pit_prior_amount_168h,0.044829,-0.009154
+pit_prior_amount_1h,0.049164,-0.004819
+pit_prior_count_1h,0.053103,-0.00088
+pit_distinct_senders_24h,0.053983,0.0
+pit_prior_count_24h,0.054095,0.000112
+pit_prior_amount_24h,0.054174,0.000191
+pit_steps_since_last_event,0.057925,0.003942

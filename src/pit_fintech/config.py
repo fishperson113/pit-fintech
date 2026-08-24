@@ -21,6 +21,25 @@ from pit_fintech.features.paysim_specs import (
     PAYSIM_FEATURE_SERVICE_VERSION,
 )
 
+# config.yaml lives at the repo root (this file is src/pit_fintech/config.py).
+_REPO_CONFIG_YAML = Path(__file__).resolve().parents[2] / "config.yaml"
+
+
+def _resolve_yaml_file() -> str:
+    """Pick the config.yaml to load, evaluated at Settings() construction (respects CWD).
+
+    A ``config.yaml`` in the current working directory wins (deployment/test override); otherwise
+    fall back to the repo-root copy. The repo-root fallback matters when the process CWD is not the
+    repo root -- notably a Jupyter kernel started inside ``notebooks/`` -- where a relative
+    "config.yaml" would be missed and settings would silently fall back to hardcoded defaults.
+    """
+    cwd_config = Path("config.yaml")
+    if cwd_config.exists():
+        return str(cwd_config)
+    if _REPO_CONFIG_YAML.exists():
+        return str(_REPO_CONFIG_YAML)
+    return "config.yaml"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -43,12 +62,13 @@ class Settings(BaseSettings):
 
         A dotenv file is deliberately not loaded. Deployment-specific values may still be supplied
         explicitly as ``PIT_*`` process environment variables, but ``config.yaml`` is the normal
-        local runtime source.
+        local runtime source. The YAML path is resolved CWD-first with a repo-root fallback so a
+        Jupyter kernel launched inside ``notebooks/`` still finds it.
         """
         return (
             init_settings,
             env_settings,
-            YamlConfigSettingsSource(settings_cls),
+            YamlConfigSettingsSource(settings_cls, yaml_file=_resolve_yaml_file()),
             file_secret_settings,
         )
 

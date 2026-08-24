@@ -1,0 +1,9 @@
+feature_set,n_features,pr_auc,roc_auc,deployable
+X · LEAKAGE control (balance),6,0.65487,0.991742,False
+2 · PIT drop 24h window,7,0.056264,0.800264,True
+1 · + PIT (the 10) = v3,10,0.053983,0.795493,True
+2 · PIT drop 1h window,8,0.049301,0.784195,True
+3 · PIT + all safe FE,18,0.046342,0.77146,True
+2 · PIT drop fan-in (senders),8,0.0432,0.760113,True
+2 · PIT drop 168h window,8,0.041992,0.744082,True
+0 · baseline (request-time),2,0.035548,0.685031,True

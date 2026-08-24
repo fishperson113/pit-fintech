@@ -1,8 +1,8 @@
 # Project status
 
-Last updated: 2026-08-19 (M084 — Prometheus histogram metrics and p50/p90/p95/p99 dashboard panels
-implemented and unit-verified; API scrape/runtime verification pending). Status
-words are strict:
+Last updated: 2026-08-20 (M085 — modeling notebooks re-ordered to the correct DS/ML pipeline
+(CV/split before Optuna) + standardized MLflow logging; helper unit-verified, notebook execution
+owner-pending). Status words are strict:
 
 - **planned**: present in the six-week guide, with no claim that code exists;
 - **implemented**: code/artifact exists but the relevant gate may not have run;
@@ -469,6 +469,26 @@ refreshed `uv.lock`, updated README/VPS/runner documentation, and added YAML-loa
 environment-precedence tests. Verification: `test_config` 2 passed, full `tests/unit` 112 passed,
 focused Ruff/format checks passed, and `uv lock` resolved 240 packages. Detail:
 [M077–M084 consolidated log](milestones/M077-M084-yaml-config-v3-serving-and-observability.md).
+
+**M085 — modeling notebooks re-ordered to the correct DS/ML pipeline + MLflow logging:
+implemented; helper unit-verified; notebook execution owner-pending.**
+Fixed the broken modeling-notebook order (walk-forward CV was after Optuna tuning and SHAP; Optuna's
+objective iterated a 3-way split dict instead of CV folds). Restructured 09-13 into four correctly
+ordered notebooks — `09_feature_engineering_selection` → `10_walkforward_cv_split` →
+`11_optuna_tuning` → `12_shap_final_evaluation` — so CV/split now precedes tuning, and Optuna
+optimizes mean PR-AUC over the same walk-forward folds notebook 10 reports. Deleted the misordered
+`13_walkforward_cv_validation` and merged model comparison into 10. Per owner directive the
+notebooks source from **Silver, not Gold**: `load_modeling_frame` runs the shipped
+`paysim_pre_decision_feature_sql` over Silver `paysim_transactions` (same strict pre-cutoff
+derivation as the Gold builder, no leakage), which also fixed the v3 field mismatch — nb09 was
+rewritten to the 10-field v3 contract and its `event_step` probe removed. Added shared
+`src/pit_fintech/models/notebook_lab.py` (loader, temporal split, walk-forward folds, MLflow lab
+config) so the four notebooks call into `src/` instead of copy-pasting setup, and standardized every
+modeling notebook to log to the hosted MLflow (`settings.mlflow_tracking_uri`) under experiment
+`paysim-notebook-modeling` with `stage=fe|cv|optuna|shap`. Verification: `test_notebook_lab` 5 passed
+in `.venv`, focused Ruff/format clean, every notebook is valid JSON with all code cells compiling and
+output-free. Live notebook execution + MLflow arrival remain owner-pending. Detail:
+[M085 log](milestones/M085-modeling-notebooks-reorder-mlflow.md).
 
 This table must be updated whenever an artifact crosses from planned to implemented or from
 implemented to verified.

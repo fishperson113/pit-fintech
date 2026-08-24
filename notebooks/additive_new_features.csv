@@ -1,0 +1,9 @@
+added_feature,pr_auc,delta_vs_pit
+senders_per_txn_24h,0.053983,0.0
+is_cold_recipient,0.053983,0.0
+amount_vs_avg_24h,0.053054,-0.000929
+avg_prior_amount_24h,0.049132,-0.004851
+burst_ratio_1h_24h,0.048903,-0.00508
+count_acceleration,0.047528,-0.006455
+avg_prior_amount_1h,0.047179,-0.006804
+amount_vs_recent_avg_1h,0.045865,-0.008118

@@ -13,7 +13,7 @@ feature_service_version: paysim-fraud-scoring-v3
 float_tolerance: 1.0e-6
 
 redis_url: redis://localhost:6379/0
-mlflow_tracking_uri: http://localhost:5000
+mlflow_tracking_uri: http://100.116.36.6:5000
 api_host: 0.0.0.0
 api_port: 8000
 jupyter_port: 8888

@@ -1,5 +1,54 @@
 # Project changelog
 
+## 2026-08-20 — M085: re-order modeling notebooks to the correct DS/ML pipeline + MLflow logging
+
+- Fixed the misordered modeling notebooks: walk-forward CV sat *after* Optuna tuning and SHAP, and
+  the Optuna objective iterated the 3-way split dict (`for tr_idx, va_idx in splits`) instead of CV
+  folds — a runtime bug. The pipeline now runs EDA → feature engineering/selection → walk-forward
+  CV/split → Optuna tuning → SHAP, with CV/split before tuning.
+- Restructured 09-13 into four correctly numbered notebooks: `09_feature_engineering_selection`,
+  `10_walkforward_cv_split` (merges the old model-comparison notebook with walk-forward CV + embargo
+  + warm/cold), `11_optuna_tuning` (Optuna now optimizes mean PR-AUC over the same walk-forward folds
+  notebook 10 defines), and `12_shap_final_evaluation`. Deleted the misordered
+  `13_walkforward_cv_validation`.
+- Added `src/pit_fintech/models/notebook_lab.py` (path resolver, frame loader, temporal split,
+  walk-forward fold generator, MLflow lab config) so the notebooks call into `src/` instead of
+  copy-pasting setup; added `tests/unit/test_notebook_lab.py`.
+- Per owner directive, the modeling notebooks now source from **Silver, not Gold**:
+  `load_modeling_frame` runs the shipped `paysim_pre_decision_feature_sql` over Silver
+  `paysim_transactions` (same strict pre-cutoff derivation as the Gold builder, no leakage) instead
+  of reading the materialized Gold table. This also fixed the v3 mismatch (`KeyError
+  'pit_prior_count_168h'`): nb09's feature engineering/ablation was rewritten to the 10-field v3
+  contract, its leakage-control arm reads the raw CSV, and the obsolete `event_step` probe was removed.
+- Standardized MLflow: every modeling notebook logs to the hosted server via
+  `settings.mlflow_tracking_uri`, experiment `paysim-notebook-modeling`, run tag `stage=fe|cv|optuna|shap`.
+- Fixed `config.yaml` resolution in `config.py`: the `yaml_file` was CWD-relative, so a Jupyter
+  kernel started inside `notebooks/` never found it and silently fell back to the default
+  `mlflow_tracking_uri` (`localhost:5000`) — the ConnectionRefused the owner hit after pointing the
+  URI at the VPS. Resolution is now CWD-first with a repo-root fallback (evaluated at construction,
+  so tests that `chdir` into a temp dir still override).
+- Sealed the Test split against selection/tuning (data-centric discipline, owner-flagged): the
+  ablation in nb09 evaluated feature-selection on the Test period (`step > 631`) and nb10 ran model
+  comparison / metrics / PR-ROC / budget on Test, and the walk-forward CV cuts (…,600,680) spilled
+  test windows into Test. Now nb09 ablation scores on **Val**, nb10 does every comparison on **Val**,
+  and `DEFAULT_CUTS` is `(360,420,480,540)` so every CV fold's window ends ≤595 (≤ `VAL_MAX_STEP`).
+  Test (`step ≥ 632`) is now read exactly once, in nb12. Added a unit test asserting the CV folds
+  never enter the sealed Test period.
+- Wired Step 2 → Step 3/4 feature-set handoff (was missing): nb09 now applies the leave-one-out
+  Δ≤0 rule on Val to emit `SELECTED_FEATURES` and persists it via
+  `notebook_lab.save_selected_features`; nb10/11/12 call `load_selected_features(DEPLOYABLE_CORE)`
+  instead of a hardcoded list, so CV, Optuna and the final Test all train on exactly the feature set
+  the ablation chose (previously they used a stale v2-era `DEPLOYABLE_CORE` that ignored the ablation
+  and the new v3 cold-start features). Added a save/load round-trip unit test.
+- nb12 now refits the final model on **Train+Val** (all development data) before the single Test
+  evaluation; the operating threshold is picked out-of-sample (a Train-only model scored on Val) so
+  adding Val to the final fit never makes it in-sample, and permutation importance moved from Val to
+  Test for consistency with the SHAP/gain analysis.
+- Verification: `test_notebook_lab` 5 passed in `.venv`; focused Ruff check/format clean; all four
+  notebooks are valid JSON with every code cell compiling and output-free. Live notebook execution
+  and MLflow run arrival remain owner-pending (need the built lakehouse/Gold + the running server).
+- Detail: [M085 log](milestones/M085-modeling-notebooks-reorder-mlflow.md).
+
 ## 2026-08-19 — M084: add Prometheus latency percentiles and improve dashboard panels
 
 - Current Prometheus queries were empty because the configured API scrape target refused the
