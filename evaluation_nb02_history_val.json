@@ -1,0 +1,34 @@
+{
+  "labels": [
+    0,
+    1
+  ],
+  "threshold": 0.5,
+  "matrix": [
+    [
+      201,
+      1
+    ],
+    [
+      34,
+      0
+    ]
+  ],
+  "metrics": {
+    "confusion_tn": 201.0,
+    "confusion_fp": 1.0,
+    "confusion_fn": 34.0,
+    "confusion_tp": 0.0,
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "accuracy": 0.8516949152542372,
+    "pr_auc": 0.13690477628097128,
+    "roc_auc": 0.47721316249271983
+  },
+  "feature_gain": {
+    "current_amount": 0.35547636723273957,
+    "pit_prior_amount_1h": 0.32275958436381996,
+    "transaction_type_transfer": 0.3217640484034406
+  }
+}

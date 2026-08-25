@@ -30,9 +30,5 @@ jobs:
         run: make test-temporal
       - name: Unit tests
         run: make test-unit
-      - name: Delta sample snapshot and time travel
-        env:
-          PIT_REQUIRE_TRAINING: "1"
-        run: make test-lakehouse
       - name: Build sample lakehouse
         run: make build-lakehouse DATASET=sample

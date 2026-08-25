@@ -14,6 +14,14 @@ float_tolerance: 1.0e-6
 
 redis_url: redis://localhost:6379/0
 mlflow_tracking_uri: http://100.116.36.6:5000
+# Serving keo dung model id nay tu registry chung o tren. Doi id de promote/rollback.
+# Vi du: models:/paysim-fraud-lightgbm/3  hoac  runs:/<run_id>/model. null = giu resolution cu
+# (champion alias / latest finished run). serving_model_local_fallback: null -> tu dung local sqlite.
+serving_model_uri: models:/paysim-fraud-lightgbm/2
+serving_model_local_fallback: null
+# Cache model da keo ve (kieu HuggingFace-hub), key theo run id -> restart khong tai lai.
+# null -> dung ~/.cache/pit-fintech/mlflow-models.
+serving_model_cache_dir: null
 api_host: 0.0.0.0
 api_port: 8000
 jupyter_port: 8888

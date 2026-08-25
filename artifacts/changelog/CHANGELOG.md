@@ -1,5 +1,90 @@
 # Project changelog
 
+## 2026-08-25 — M092: MLflow input/output signatures and input examples
+
+- Updated the shared self-contained notebooks 08–12 LightGBM logger to infer the model signature from a real named input DataFrame and native `model.predict` output, then pass both `signature` and `input_example` to `mlflow.lightgbm.log_model`.
+- Notebook 12 now passes `test[FEATURES]` to the final `register=True` call; notebooks 09–11 pass their matching validation frames. The helper rejects empty input or a column order that differs from fitted `model.feature_name_`.
+- Real isolated MLflow smoke logging persisted all 10 ordered input fields, an `int64[-1]` output, `input_example.json`, and `serving_input_example.json`; native reload remained `LGBMClassifier` with `predict_proba=True`.
+- Added static notebook contract tests; focused lane `2 passed`, all notebooks JSON/AST/signature checks passed, and the unit lane is `116 passed`. Existing shared registry version 1 was not changed; owner rerun/register is pending.
+- Cleared all 73 Ruff findings in notebooks 08–12 (legacy percent formatting, explicit `zip(strict=True)`, and one unused EDA local) without changing ML semantics. Direct repository lint and public `make.ps1 lint` now pass; Ruff reports `123 files already formatted`, and the post-cleanup unit lane remains `116 passed`.
+- Added `notebooks/_cache/` to `.gitignore` and removed its four regenerable files from the Git index while preserving them locally, preventing the 90 MB modeling-frame cache from failing `check-added-large-files`.
+- Detail: `artifacts/changelog/milestones/M092-mlflow-model-signature-input-example.md`.
+
+## 2026-08-25 — M091: flavor-aware MLflow serving for notebook LightGBM
+
+- Fixed the serving cache loader to inspect `MLmodel.flavors`: native notebook LightGBM models use `mlflow.lightgbm.load_model`, while legacy RF/sklearn models continue through `mlflow.sklearn.load_model`.
+- Split registry resolution/artifact caching from deserialization. Only resolve/download failures may use the configured tracking fallback; an incompatible or corrupt model now fails directly instead of being reported as “shared MLflow unreachable”.
+- Added two focused regressions. Focused lane: `2 passed`; full unit lane: `114 passed`; Ruff check/format-check: PASS.
+- Verified the actual registry model `paysim-fraud-lightgbm/1` (run `ef918e30a6f3459f9c524ec4c8fc1a7d`, threshold `0.937262`) loads as `LGBMClassifier`. The public `make.ps1 serve` reached HTTP 200 ready with that run and Redis watermark 743; the session-owned process was then stopped and port 8000 confirmed free.
+- Detail: `artifacts/changelog/milestones/M091-lightgbm-mlflow-serving-loader.md`.
+
+## 2026-08-24 — M090: notebooks 08–12 self-contained LightGBM + MLflow pipeline
+
+- Refactored notebooks 08–12 as self-contained Jupyter/Colab pipeline surfaces: no runtime import from `src`/`pit_fintech`; PIT feature construction, temporal evaluation, tuning and SHAP remain in notebook code.
+- Kept LightGBM throughout and removed stale RF naming/stage labels.
+- Standardized MLflow logging across the notebooks; fitted LightGBM models use the native `mlflow.lightgbm` flavor, notebook 12 can register the final model, and the default tracking URI matches the Colab server `http://100.116.36.6:5000` with no silent local fallback.
+- Static verification passed for JSON and all code cells; a real fitted-LightGBM MLflow smoke run passed (`c73d0a91f9054478b312155d8c8e3573`, PR-AUC `0.5`). Full PaySim execution remains owner-pending.
+- Detail: `artifacts/changelog/milestones/M090-notebooks-08-12-self-contained-lightgbm-mlflow.md`.
+
+## 2026-08-24 — M089: serving reads decision threshold from run param + local model cache
+
+- **Threshold (approach A).** `serving/app.py: _load_decision_threshold` now reads the MLflow run
+  param `threshold` first (the colab RF track logs it there via `log_rf_evaluation`), then
+  `confusion_and_cost_curves.json` (the src LightGBM track), then falls back to `0.5`. Fixes a
+  pulled colab RF being served at `0.5` instead of its validated threshold (nb05: `0.90491`). The
+  threshold is a serving input; model hyperparameters are baked into the fitted trees and are
+  lineage-only, so only the threshold gap changed serving behaviour.
+- **Model cache (HuggingFace-hub style).** New `_load_sklearn_model_cached` caches pulled model
+  artifacts under `serving_model_cache_dir/<run_id>` (default `~/.cache/pit-fintech/mlflow-models`);
+  a restart loads the model from local disk on a cache hit, only a miss downloads from the registry.
+  Cache key is the immutable backing run id; hit = an `MLmodel` file present. Wired into the
+  `serving_model_uri` and explicit-`mlflow_run_id` branches of `build_scoring_context`.
+- New `ServingSettings.serving_model_cache_dir` + `config.py` setting + `config.yaml` key; `pit
+  serving up` passes it through. `config.yaml: serving_model_uri` set to `models:/paysim-fraud-rf/1`.
+- **Skip doomed artifact probes.** New `_list_run_artifact_names` (one `list_artifacts` metadata
+  call) lets `_load_ordered_feature_names` / `_load_decision_threshold` download a contract artifact
+  only when it exists — the colab RF (which logs neither `ordered_feature_names.json` nor
+  `confusion_and_cost_curves.json`) no longer hangs for minutes retrying a missing file over a slow
+  link; it uses `PAYSIM_MODEL_FEATURE_ORDER` / the `threshold` param instead. LightGBM unaffected.
+- Gate: `ruff check` + `ruff format --check` + py syntax clean on the three changed src files.
+  Owner-pending — a live `pit serving up` confirming the served threshold + a cache-hit restart. Log:
+  `artifacts/changelog/milestones/M089-serve-threshold-param-and-model-cache.md`.
+
+## 2026-08-24 — M088: colab MLflow logging (Data-Centric) + serve-pull by model id
+
+### M088 amendment — simple Random Forest confusion-matrix logging
+
+- Reworked the five Colab notebooks' shared MLflow helper so the owner-facing RF metric contract is
+  one evaluation run with `confusion_tn`, `confusion_fp`, `confusion_fn`, `confusion_tp`, a
+  `confusion_matrix.json` artifact, and the sklearn model artifact. nb02 now logs the actual
+  history/PIT RF model rather than only feature-selection summary values; nb03/nb04 log validation
+  and nb05 logs the sealed temporal test. nb01 remains data-profile-only because it has no RF eval.
+- Static verification passed: all five notebooks parse as JSON, changed MLflow cells compile, and a
+  synthetic fake-MLflow probe verified the four-cell metric contract. Full Colab/shared-server runs
+  remain owner-pending.
+
+- Added a standard MLflow logging schema to the five self-contained colab notebooks
+  (`notebooks/colab/colab_01..05`, Random Forest track). One copy-paste schema cell + one
+  per-notebook logging cell, appended at the END of each notebook, output-free. Logs at the two
+  Data-Centric touchpoints: Step 1 training/eval per data version (nb03 CV, nb04 tuning) and Step 2
+  registration on validation pass (nb05 TEST + SHAP); nb01/nb02 log data-profile / feature runs.
+- Schema logs: data version (CSV sha8 + rows + step range + fraud rate), RF params, overall PR-AUC
+  **and sliced PR-AUC** (warm/cold cold-start, transfer/cash-out), plus artifacts — model,
+  `selected_features.json`/`tuning.json`/`final_report.json`, `error_samples.csv` (FN/FP for error
+  analysis). Experiment `paysim-fraud-rf-colab`; nb05 registers `paysim-fraud-rf`. Graceful: no
+  mlflow → notebook still runs; shared server (`http://100.116.36.6:5000`) unreachable → fallback
+  `file:./mlruns`.
+- Serving pulls one explicit model id from the shared registry: new `config.yaml: serving_model_uri`
+  (`models:/<name>/<version>` or `runs:/<run_id>/model`) + `serving_model_local_fallback`.
+  `build_scoring_context` gains a pull-by-id branch (`_resolve_run_id` + `_load_model_by_uri`,
+  shared → local fallback); `pit serving up` now defaults its tracking URI to the shared registry
+  (was local SQLite), with `--mlflow-tracking-uri` still overriding. Promote/rollback = edit one
+  config line.
+- Gate (owner-run): `lint` / `test-unit`, then run the notebooks + a live `serving_model_uri` load.
+  Static locally: `py_compile` + `ruff check`/`format --check` clean on the 3 changed src files; all
+  five notebooks' new cells compile and JSON is valid. Log:
+  [M088](milestones/M088-colab-mlflow-logging-and-serve-pull.md).
+
 ## 2026-08-24 — M087: remove Feast entirely (ADR-012)
 
 - Removed Feast from the repository after review concluded it was never load-bearing and could not

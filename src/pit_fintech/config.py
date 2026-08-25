@@ -83,6 +83,18 @@ class Settings(BaseSettings):
     float_tolerance: float = Field(default=1e-6, gt=0)
     redis_url: str = "redis://localhost:6379/0"
     mlflow_tracking_uri: str = "http://localhost:5000"
+    #: Explicit MLflow model id the serving process pulls from ``mlflow_tracking_uri`` (the shared
+    #: registry). A registry URI (``models:/paysim-fraud-lightgbm/3``) or a run URI
+    #: (``runs:/<run_id>/model``). When None, serving keeps its champion-alias / latest-run
+    #: resolution. Change this one value to promote or roll back the served model.
+    serving_model_uri: str | None = None
+    #: Local MLflow tracking URI to fall back to when the shared registry above is unreachable at
+    #: serving startup. When None, `pit serving up` fills it with the local SQLite backend.
+    serving_model_local_fallback: str | None = None
+    #: Directory where serving caches pulled model artifacts across restarts (HuggingFace-hub
+    #: style), keyed by the model's backing MLflow run id, so a restart loads the model from local
+    #: disk instead of re-downloading it. None -> ``~/.cache/pit-fintech/mlflow-models``.
+    serving_model_cache_dir: str | None = None
     api_host: str = "127.0.0.1"
     api_port: int = Field(default=8000, ge=1, le=65535)
     jupyter_port: int = Field(default=8888, ge=1, le=65535)

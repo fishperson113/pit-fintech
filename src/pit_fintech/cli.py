@@ -1299,15 +1299,19 @@ def serving_up(
     from pit_fintech.platform.logging_config import configure_logging
 
     _, _, artifact_root = _gold_roots()
+    _settings = get_settings()
+    local_tracking = default_tracking_uri(artifact_root)
     settings_kwargs: dict[str, object] = {
         "host": host,
         "port": port,
         "provider_kind": "redis",
         "online_store_uri": "redis://127.0.0.1:6379/0",
+        # Default to the shared MLflow registry (config.yaml: mlflow_tracking_uri) so serving pulls
+        # the promoted model by id; an explicit --mlflow-tracking-uri still overrides it.
         "mlflow_tracking_uri": (
             mlflow_tracking_uri
             if mlflow_tracking_uri is not None
-            else default_tracking_uri(artifact_root)
+            else _settings.mlflow_tracking_uri
         ),
         "registered_model_name": "paysim-fraud-lightgbm",
         "feature_service_version": PAYSIM_FEATURE_SERVICE_VERSION,
@@ -1319,6 +1323,15 @@ def serving_up(
     settings_fields = serving_runtime.ServingSettings.__dataclass_fields__
     if mlflow_run_id is not None and "mlflow_run_id" in settings_fields:
         settings_kwargs["mlflow_run_id"] = mlflow_run_id
+    if "serving_model_uri" in settings_fields:
+        settings_kwargs["serving_model_uri"] = _settings.serving_model_uri
+    if "serving_model_local_fallback" in settings_fields:
+        # Fall back to the local SQLite tracking store when the shared registry is unreachable.
+        settings_kwargs["serving_model_local_fallback"] = (
+            _settings.serving_model_local_fallback or local_tracking
+        )
+    if "serving_model_cache_dir" in settings_fields:
+        settings_kwargs["serving_model_cache_dir"] = _settings.serving_model_cache_dir
     settings = serving_runtime.ServingSettings(**settings_kwargs)
     configure_logging(level=get_settings().log_level, json=settings.log_json)
     serving_runtime.run(settings=settings)

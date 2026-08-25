@@ -1,0 +1,41 @@
+{
+  "labels": [
+    0,
+    1
+  ],
+  "threshold": 0.5,
+  "matrix": [
+    [
+      61348,
+      16173
+    ],
+    [
+      261,
+      919
+    ]
+  ],
+  "metrics": {
+    "confusion_tn": 61348.0,
+    "confusion_fp": 16173.0,
+    "confusion_fn": 261.0,
+    "confusion_tp": 919.0,
+    "precision": 0.053767844605663466,
+    "recall": 0.7788135593220339,
+    "f1": 0.10059106830122592,
+    "accuracy": 0.791184355980229,
+    "pr_auc": 0.28717790988171854,
+    "roc_auc": 0.8471333574128301
+  },
+  "feature_gain": {
+    "current_amount": 759.0,
+    "pit_prior_amount_168h": 618.0,
+    "pit_steps_since_last_event": 450.0,
+    "pit_prior_amount_24h": 440.0,
+    "pit_distinct_senders_168h": 213.0,
+    "pit_prior_amount_1h": 195.0,
+    "pit_prior_count_24h": 145.0,
+    "transaction_type_transfer": 127.0,
+    "pit_prior_count_1h": 36.0,
+    "pit_distinct_senders_24h": 17.0
+  }
+}

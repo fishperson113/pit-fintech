@@ -1,6 +1,16 @@
 # Project status
 
-Last updated: 2026-08-24 (M087 — **Feast removed entirely** via ADR-012: `feature_store/`,
+Last updated: 2026-08-25 (M092 — **MLflow model signatures and input examples implemented; owner registry rerun pending**: notebooks 08–12 now infer an ordered named input schema and native LightGBM `predict` output schema from up to five real evaluation rows, pass both `signature` and `input_example` to `mlflow.lightgbm.log_model`, and fail if the example columns differ from `model.feature_name_`. Notebook 12 passes `test[FEATURES]` when registering the final model; notebooks 09–11 use their matching validation frames. An isolated native-LightGBM smoke log stored all 10 ordered inputs, an `int64[-1]` output, `input_example.json`, and `serving_input_example.json`, then reloaded with `predict_proba=True`. All 73 Ruff findings in notebooks 08–12 were cleaned without changing ML semantics; direct repository lint and public `make.ps1 lint` now pass with `123 files already formatted`, and the post-cleanup unit lane is `116 passed`. Regenerable notebook handoff files under `notebooks/_cache/` are now ignored and removed from the Git index while retained locally, so the 90 MB modeling-frame cache no longer blocks pre-commit. Existing registry version 1 predates the change and is unchanged; the owner must rerun notebook 12 to create a schema-bearing version. Prior M091 — **native LightGBM MLflow serving loader verified**: flavor-aware LightGBM/sklearn loading, correct fallback boundary, and public serving readiness passed. Prior M090 — **notebooks 08–12 self-contained LightGBM + MLflow pipeline**: notebooks no longer import `src`/`pit_fintech`; MLflow uses the shared remote Colab server by default; full PaySim execution remains owner-pending. Prior M089 — **serving threshold param + run-id model cache**: serving reads the logged threshold and caches model bytes under `cache_root/<run_id>`. Prior:
+M088 amendment — **simple RF confusion-matrix MLflow logging**: the five colab
+notebooks (`colab_01..05`, RF track) now share a stable RF evaluation logger: nb02–nb05 log the
+trained/evaluated model, confusion-matrix cell metrics (`confusion_tn/fp/fn/tp`), and
+`confusion_matrix.json` to experiment
+`paysim-fraud-rf-colab` on `http://100.116.36.6:5000`, graceful-fallback to `file:./mlruns`; nb05
+registers `paysim-fraud-rf`. Serving pulls one model id from the shared registry via new
+`config.yaml: serving_model_uri` (+ `serving_model_local_fallback`), `pit serving up` now defaults
+tracking to the shared registry. Static clean locally; owner runs notebooks + a live load to
+verify. Prior:
+M087 — **Feast removed entirely** via ADR-012: `feature_store/`,
 `feast_registry.py`, the `paysim_fixture`/`build-fixture` apparatus, both Feast test lanes and the
 `feast` dependency group are gone; only `RedisFeatureProvider` was ever wired, and the in-tree PIT
 oracle owns correctness. Load-bearing `PAYSIM_FEAST_EPOCH_0`/`paysim_step_to_timestamp` kept.

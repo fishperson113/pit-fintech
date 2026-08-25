@@ -44,6 +44,7 @@ mlartifacts/
 
 # Notebook runtime files
 .ipynb_checkpoints/
+notebooks/_cache/
 
 # Colab scratch notebooks + local cache (not part of the tracked pipeline)
 notebooks/colab/
