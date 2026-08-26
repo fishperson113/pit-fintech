@@ -273,8 +273,8 @@ def apply_score_event(
     5. appends the Event History (offline path) and returns the result dict.
 
     The offline DuckDB engine is not run here -- parity is verified asynchronously by
-    :func:`reconcile_parity` (ADR-009). The result key is what :mod:`pit_fintech.serving.events`
-    ``wait_for_score_result`` polls.
+    :func:`reconcile_parity` (ADR-009). The result key is retained as a short-lived diagnostic
+    artifact; scoring no longer polls it.
     """
 
     import json as _json

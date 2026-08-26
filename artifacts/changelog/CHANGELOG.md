@@ -1,5 +1,261 @@
 # Project changelog
 
+## 2026-08-26 — M109: MLflow Registry handoff evidence
+
+- Added `docs/reports/pit-fintech-final-report-template-12-slides-compact-load-test-mlflow.pptx`
+  from the owner-designated compact-load-test deck; slides 1–10 and 12 remain unchanged.
+- Replaced the sparse conclusion slide 11 with the supplied MLflow Registry UI showing registered
+  model `paysim-fraud-lightgbm`, Version 2, source run, and the ten-input model signature.
+- Framed MLflow as the training-to-serving handoff: the serving app resolves the configured model,
+  pulls the versioned artifact into its local cache, validates schema, and scores with the logged
+  model/threshold.
+- Preserved slide 10's distinct Grafana load-test screenshot after avoiding a shared imported-image
+  asset alias between the duplicated slide frames.
+- Verification: 12-slide render complete; slide 11 and full montage inspected; `slides_test.py`
+  PASS; template fidelity PASS with zero issues; zero empty placeholders; 12/12 `[Sources]` notes;
+  source/final theme SHA-256 identical after theme restoration.
+- Detail: `artifacts/changelog/milestones/M109-mlflow-registry-slide.md`.
+
+## 2026-08-26 — M108: slide 7 as a five-decision ML workflow
+
+- Added `docs/reports/pit-fintech-final-report-template-12-slides-ml-workflow.pptx` as a
+  non-destructive revision of the verified notebook-graph deck; slides 1–6 and 8–12 are preserved.
+- Replaced the previous flat notebook inventory on slide 7 with an Andrew Ng-style progression:
+  diagnose data → design features → evaluate on temporal dev folds → tune parameters/threshold →
+  open the final test once.
+- Made every notebook answer a decision question and produce a handoff: profile/leakage map,
+  FeatureSpec, walk-forward report, best parameters/threshold, and final metrics/SHAP.
+- Corrected slide 7's footer marker from `08` to `07`.
+- Verification: 12-slide render complete; slide 7 inspected at full size; `slides_test.py` PASS;
+  template fidelity PASS with zero issues; zero empty structural placeholders; 12/12 `[Sources]`
+  notes; source/final theme SHA-256 identical.
+- Detail: `artifacts/changelog/milestones/M108-slide-7-ml-decision-flow.md`.
+
+## 2026-08-25 — M107: Redis client-pool reuse for scoring latency
+
+- Diagnosed the latest scoring p95 regression: `read_online_features` created a new Redis client/pool
+  for every request. Redis commands themselves were fast, but connection/pool setup amplified burst
+  concurrency; live API metrics showed 1,406 requests, 0 errors, average scoring 150.63 ms.
+- Added an LRU-cached Redis client keyed by endpoint/timeouts. A standalone 30-read probe with the new
+  code measured p50 1.52 ms and p95 1.80 ms after the first connection warm-up.
+- Verification: focused client-reuse test 1 passed, full unit lane 124 passed, Ruff PASS, `git diff --check` PASS.
+  Existing API/Locust processes were not interrupted; clean live load rerun remains pending after API restart.
+- Detail: `artifacts/changelog/milestones/M107-redis-client-pool-scoring-latency.md`.
+
+## 2026-08-25 — M106: async post-score online write path
+
+- Refactored `/score` from `publish → wait for worker → score` to `read feature state → score → publish`.
+- Worker lag no longer turns a completed prediction into `503 online_store_timeout`; responses now expose
+  `online_write_status` (`queued`/`failed`) and `online_write_event_id`.
+- Removed the obsolete 5-second worker-result polling path while retaining the worker's short-lived result
+  key for diagnostics and compatibility.
+- Verification: focused regression `1 passed`, full unit lane `123 passed`, Ruff PASS, `git diff --check` PASS.
+  Live host-Uvicorn restart and demo/load verification remain owner-pending.
+- Detail: `artifacts/changelog/milestones/M106-async-post-score-write-path.md`.
+
+## 2026-08-25 — M105: compact notebook slides and load-test result
+
+- Added `docs/reports/pit-fintech-final-report-template-12-slides-notebook-graphs-compact-load-test.pptx` as a non-destructive compact revision: slides 8–9 retain only the main notebook evidence, slide 10 states 1,080 completed / 0 errors / p95 32.42 ms / p99 49.30 ms, and slide 11 is a concise conclusion.
+- Updated `docs/reports/pit-fintech-final-report-10min-slides.html` to foreground the observed load result: p95 < 100 ms and no request-path errors, without the detailed resource cards on the timed slides.
+- Verification: PPTX ZIP/XML checks PASS; HTML browser check PASS with 12 unique slides, no overflow, and no console errors. Native PPTX validator/render remains blocked by missing `lxml` and LibreOffice in this environment.
+- Detail: `artifacts/changelog/milestones/M105-compact-notebook-slides-load-test.md`.
+
+## 2026-08-25 — M104: notebook evidence and graphs on slides 8–11
+
+- Added `docs/reports/pit-fintech-final-report-template-12-slides-notebook-graphs.pptx` as a
+  non-destructive revision of the owner's latest 12-slide VSF deck.
+- Rebuilt slide 8 from notebooks 09–10 with the saved validation PR/ROC graph and the measured
+  2-to-10 PIT-safe feature uplift: PR-AUC 0.2796→0.2872 and recall 0.7186→0.7788.
+- Rebuilt slide 9 from notebook 10 with the saved walk-forward graph, including fold PR-AUC
+  0.212–0.616, embargo means 0.3747/0.3686/0.3516, and warm-versus-cold evidence.
+- Rebuilt slide 10 from notebook 11 with the saved precision/recall/F1 threshold graph, Optuna
+  improvement, tuned configuration summary, and validation-selected threshold 0.93726.
+- Rebuilt slide 11 from notebook 12 with the saved SHAP importance graph and sealed-test metrics:
+  PR-AUC 0.3622, ROC-AUC 0.8210, precision 0.2159, recall 0.4848, and lift 10.99x.
+- Verification: 12-slide render complete; slides 8–11 inspected at full size and full-deck montage
+  reviewed; `slides_test.py` PASS; template fidelity PASS with zero issues; zero empty structural
+  placeholders; 12/12 `[Sources]` notes; source/final theme SHA-256 identical.
+- Detail: `artifacts/changelog/milestones/M104-notebook-graphs-slides-8-11.md`.
+
+## 2026-08-25 — M103: cutoff freezes an already-scored feature vector
+
+- Added `docs/reports/pit-fintech-final-report-template-13-slides-cutoff-impact.pptx` as a
+  non-destructive revision of the M102 deck; only slide 4 copy changed.
+- Made transaction B explicit at the 07:05 score cutoff. Delayed event A occurred at 07:00 but is
+  not known until 07:10, so it is excluded from B's online feature vector.
+- Added the operational impact of the cutoff: B's vector is frozen after scoring, and backfill or
+  recomputation must not insert A retroactively. Doing so would create an incorrect historical
+  vector and break offline–online parity.
+- Kept the future eligibility branch: transaction C at 07:12 may include A only when
+  `event_step(A) < event_step(C)` and `knowledge_step(A) <= cutoff(C)`.
+- Verification: 13-slide render complete; affected slide visually inspected at full size;
+  `slides_test.py` PASS; template fidelity PASS with zero issues; zero empty structural
+  placeholders; 13/13 `[Sources]` notes; source/final theme SHA-256 identical.
+- Detail: `artifacts/changelog/milestones/M103-cutoff-impact-scored-transaction.md`.
+
+## 2026-08-25 — M102: Notebook-08 dataset EDA and knowledge-time predicate slides
+
+- Added `docs/reports/pit-fintech-final-report-template-13-slides.pptx` as a non-destructive revision
+  of the verified VSF-template report. The extra requested predicate slide increases the deck from
+  12 to 13 slides while keeping the cover first and `THANK FOR LISTENING` last.
+- Rewrote slide 3 from saved `notebooks/08_paysim_eda.ipynb` evidence: 6,362,620 transactions,
+  8,213 frauds, 0.1291% prevalence (~1/775), temporal variation by simulated day, PR-AUC as the
+  primary metric, and temporal/walk-forward rather than random splitting.
+- Made the EDA feature boundary explicit: ten LightGBM training inputs are separated from
+  `step`, `knowledge_step`, `source_row_number`, and the entity key, which are domain/control
+  fields used for cutoff, eligibility, and tie-breaking rather than model inputs. Label, legacy
+  policy output, and four balance columns remain forbidden.
+- Inserted slide 4 using the inherited timeline frame: event at 07:00, score cutoff at 07:05,
+  delayed knowledge at 07:10, and a later score at 07:12. The slide shows the correct EXCLUDE /
+  INCLUDE branches and the joint predicate `prior.event_step < current.event_step` plus
+  `prior.knowledge_step <= cutoff`.
+- Verification: all 13 slides rendered and were individually inspected; `slides_test.py` found no
+  overflow; template fidelity passed with zero issues; final XML contains zero empty structural
+  placeholders; 13/13 notes contain `[Sources]`; theme SHA-256 remains identical to the source.
+- Detail: `artifacts/changelog/milestones/M102-dataset-eda-knowledge-time-slides.md`.
+
+## 2026-08-25 — M101: 12-slide PowerPoint report in VSF template
+
+- Added `docs/reports/pit-fintech-final-report-template-12-slides.pptx`, converting the current
+  full-project HTML narrative into an editable 12-slide PowerPoint deck based on the owner-supplied
+  `[VSF] Templet.pptx` master/layout system.
+- Preserved the requested structure: slide 1 is the cover; slides 2–11 cover the problem, invariants,
+  PaySim/leakage scope, architecture, temporal contract, medallion/backfill path, notebook experiment
+  sequence, sealed-test LightGBM evidence, SHAP/MLflow, serving/observability, and bounded load-test
+  conclusion; slide 12 is `THANK FOR LISTENING`.
+- Reused inherited template slides and edited their text/table/image elements in place. The project
+  architecture replaces the inherited image on slide 4, while the original template theme XML is
+  restored byte-for-byte after export.
+- Verification: 12/12 slides rendered and individually inspected; `slides_test.py` reported no
+  overflow; the template-fidelity checker passed with zero issues; final PPTX XML contains zero empty
+  structural placeholders; all 12 slides include `[Sources]` speaker-note blocks; source/final theme
+  checksum is identical.
+- Detail: `artifacts/changelog/milestones/M101-vsf-template-project-pptx.md`.
+
+## 2026-08-25 — M100: one-second local load-resource capture
+
+- Added `scripts/capture_load_resources.py`, a read-only one-second CSV sampler for local host
+  CPU/RAM/swap, FastAPI and Locust PID/CPU/RSS/threads, plus Redis and PIT-worker Docker
+  CPU/memory/limit/PID evidence. Rows flush immediately and existing outputs are never overwritten.
+- Added `tests/unit/test_capture_load_resources.py` through TDD. The parser handles Docker Desktop
+  ANSI/control refresh lines and normalizes container memory units to MiB.
+- Verification: focused `5 passed`, Ruff check/format PASS, full unit lane `122 passed`,
+  `git diff --check` PASS, and a five-second live smoke populated API, Locust, Redis, and worker
+  fields with no Docker error.
+- Started tracked background capture `proc_4636c596cfff`; raw evidence is growing at
+  `artifacts/reports/load-resource-20260825-120757.csv`. No application process, container, volume,
+  cache, or data was stopped, restarted, reset, or deleted.
+- Detail: `artifacts/changelog/milestones/M100-local-load-resource-capture.md`.
+
+## 2026-08-25 — M099: local serving-host topology and deck correction
+
+- Per owner clarification, verified read-only that serving is local while the VPS hosts monitoring
+  and MLflow registry. No process, container, volume, file, cache, port, or data was deleted,
+  stopped, restarted, or modified during discovery.
+- Local host: Acer Aspire A715-41G, Windows 11 Pro 25H2 build 26200, AMD Ryzen 7 3750H at 4 physical
+  cores / 8 logical processors, 2.30 GHz reported max, and 29.94 GiB physical RAM.
+- Live topology: FastAPI/Uvicorn is one host-native process on port 8000 (current RSS 80.9 MiB);
+  Redis and the PIT worker run in Docker Desktop on the same machine; Locust also runs locally and
+  targets `127.0.0.1:8000`. Docker reports a 14.61 GiB memory ceiling.
+- Current post-load Docker snapshots were worker 150.7 MiB and Redis 7.039 GiB. They are recorded
+  as inspection-time state, not load-window peaks. The supplied CPU 5.9% / RAM 43.6% screenshot is
+  explicitly attributed to the VPS monitoring node, not the serving host.
+- Updated slides 11–12 of the 10-minute deck with the verified topology and retained the remaining
+  capacity-evidence requirement: local resource/process sampling during a rerun, Redis backlog,
+  actual RPS/wall time, and repeated 5–15 minute soak lanes.
+- Browser re-verification found 12 slides, no overflow, and zero console errors.
+- Detail: `artifacts/changelog/milestones/M099-local-serving-host-topology.md`.
+
+## 2026-08-25 — M098: ten-minute, 12-slide project report
+
+- Added `docs/reports/pit-fintech-final-report-10min-slides.html` as a new self-contained 12-slide
+  revision, preserving the 24-slide full report. Each slide has an explicit speaking-time box and
+  the full sequence totals ten minutes.
+- Embedded the owner-supplied `docs/architecture/pipeline.png` and annotated its transitional state:
+  the crossed feature platform means Feast was removed by ADR-012, while `MODEL TBD` is now
+  LightGBM. The architecture, scoring, and resource PNGs are all embedded in the HTML.
+- Kept the problem → dataset → architecture → temporal/feature contract → medallion → notebook
+  experiments → final model → serving/observability → load result → conclusion flow. Current
+  notebook and Grafana metrics are retained without new claims.
+- Added an explicit capacity-evidence boundary: the current evidence is sufficient for the project
+  and functional load report, but a capacity claim still needs actual scoring-host hardware,
+  process CPU/RSS, service placement, worker count, network RTT, Redis backlog/memory, wall time/RPS,
+  and repeated sustained/soak runs.
+- Browser verification found exactly 12 slides, no overflow, three intact embedded images, working
+  hash/keyboard navigation, and zero console errors. Architecture, load/resource, and conclusion
+  slides passed visual inspection.
+- Detail: `artifacts/changelog/milestones/M098-ten-minute-project-report-deck.md`.
+
+## 2026-08-25 — M097: full-project HTML report deck
+
+- Added a self-contained 24-slide presentation at
+  `docs/reports/pit-fintech-final-report-slides.html` covering the problem, PaySim dataset,
+  temporal contract, as-built architecture, notebook 08–12 experiments, LightGBM results,
+  medallion ETL, feature/business boundaries, serving, observability, and current evidence limits.
+- Used saved notebook outputs for all modeling metrics and embedded both supplied load-test PNGs;
+  no dataset/model/load metric was invented. The current final notebook result is PR-AUC `0.3622`,
+  ROC-AUC `0.8210`, precision `0.2159`, and recall `0.4848` on 37,979 temporal test rows.
+- Recorded the supplied 100-user/10-user-per-second run as a one-shot 1,000-request workload:
+  1,000 successes, zero errors, average `12.10 ms`, p50 `8.75 ms`, p95 `37.28 ms`, and p99
+  `73.40 ms`. The resource screenshot is explicitly bounded to the monitored node rather than
+  being misattributed to the Windows scoring host.
+- Browser verification found 24 unique slides, no layout overflow, two intact embedded images,
+  responsive 16:9 scaling, working navigation, and no clipping on the inspected title,
+  architecture, modeling-result, and resource slides.
+- Detail: `artifacts/changelog/milestones/M097-full-project-html-report-deck.md`.
+
+## 2026-08-25 — M096: knowledge-time-aware Locust workload
+
+- Changed all ten write-path Locust calls to send explicit synthetic `knowledge_step` values rather
+  than relying on the API's `knowledge_step = step` fallback.
+- Knowledge time is monotonic in request-arrival order. The final four cases deliberately model
+  delayed knowledge: event/knowledge pairs 703/705, 701/706, 702/707 and 705/708.
+- Added a RED-first unit contract test enforcing ten explicit cutoffs, `knowledge_step >= step`,
+  monotonic knowledge time and at least three delayed events.
+- Live one-user smoke against `/score` passed all 10 requests with zero failures and printed
+  `LOCUST WRITE PATH PASS`; aggregate average/median/max were 78/50/273 ms. The run used a fresh
+  random destination entity and did not reset Redis.
+- Detail: `artifacts/changelog/milestones/M096-locust-knowledge-time-workload.md`.
+
+## 2026-08-25 — M095: quick Locust `/score` UI runner
+
+- Added `make locust` and `.\make.ps1 locust` to launch Locust's web UI at
+  `http://localhost:8089` with the safe fresh-entity write-path scenario.
+- Default target host is `http://127.0.0.1:8000`; override with
+  `make locust LOCUST_HOST=http://...` or `.\make.ps1 locust -LocustHost http://...`.
+- The runners use the frozen project environment and `scripts/locust_write_path.py`; they do not use
+  the namespace-resetting parity harness.
+- Verified Make dry-run, PowerShell syntax, Locust 2.46.3 user discovery, and the request contract:
+  JSON payloads are posted to `/score` with the required transaction fields plus optional
+  `knowledge_step`. No load test was started during runner verification.
+- Detail: `artifacts/changelog/milestones/M095-locust-score-ui-runner.md`.
+
+## 2026-08-25 — M094: operator-focused VPS Grafana scoring dashboard
+
+- Reworked dashboard v11 so the first screen shows API UP/DOWN status, total requests, successful
+  responses, error responses, success rate and error rate as readable stat panels.
+- Added p50, p95, p99 and average scoring latency stat panels, a rolling percentile chart, scoring
+  request/s-success/s-error/s traffic, and rolling error-rate history. Existing Loki lifecycle
+  panels remain below the metrics overview for drill-down.
+- Clarified that counters and cumulative latency stats reset with the API process, while rolling
+  charts use Grafana's rate interval. Added a 15-second dashboard refresh.
+- JSON validation passed with 27 unique panel IDs; VPS Compose config passed. All new PromQL queries
+  parsed against live Prometheus and returned current values (4 requests, 4 successes, 0 errors,
+  p50 4 ms, p95 45 ms, p99 49 ms, average 9.54025 ms).
+- Updated VPS README with the dashboard layout and Grafana-only recreate command. Owner SCP/recreate
+  and visual verification remain pending; no VPS containers were changed locally.
+- Detail: `artifacts/changelog/milestones/M094-vps-grafana-serving-dashboard.md`.
+
+## 2026-08-25 — M093: enable OTel by default for serving runners
+
+- Changed both public `serve` runners to invoke `pit serving up --otel`: `make serve` and
+  `.\make.ps1 serve` now activate the configured OTLP traces, metrics, and logs exporter by default.
+- Updated the runner help text to state the OTel behavior. The CLI still supports an explicit
+  `pit serving up --no-otel` escape hatch for direct invocations.
+- Verified the installed `mingw32-make` dry-run and both runner help/source surfaces resolve to the
+  expected `--otel` command; native `make` is unavailable on PATH. No live server was restarted.
+- Detail: `artifacts/changelog/milestones/M093-default-serve-otel.md`.
+
 ## 2026-08-25 — M092: MLflow input/output signatures and input examples
 
 - Updated the shared self-contained notebooks 08–12 LightGBM logger to infer the model signature from a real named input DataFrame and native `model.predict` output, then pass both `signature` and `input_example` to `mlflow.lightgbm.log_model`.

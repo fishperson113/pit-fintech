@@ -1,0 +1,319 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "graphTooltip": 0,
+  "links": [
+    {
+      "asDropdown": false,
+      "includeVars": false,
+      "keepTime": true,
+      "tags": ["pit-fintech"],
+      "title": "Open PIT lifecycle dashboards",
+      "type": "dashboards"
+    }
+  ],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "id": 20,
+      "panels": [],
+      "title": "Serving overview — counters since API restart",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Latest Prometheus scrape status for the Windows scoring API.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [
+            {"options": {"0": {"color": "red", "text": "DOWN"}, "1": {"color": "green", "text": "UP"}}, "type": "value"}
+          ],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 5, "w": 4, "x": 0, "y": 1},
+      "id": 21,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "max(up{job=\"pit_fintech_scoring\"})", "instant": true, "legendFormat": "API", "range": false, "refId": "A"}],
+      "title": "API status",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "All scoring requests that reached the /score handler since the current API process started. FastAPI validation 422 responses are not included.",
+      "fieldConfig": {"defaults": {"color": {"mode": "fixedColor", "fixedColor": "blue"}, "decimals": 0, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 5, "w": 4, "x": 4, "y": 1},
+      "id": 22,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "sum(pit_scoring_requests_total)", "instant": true, "legendFormat": "requests", "range": false, "refId": "A"}],
+      "title": "Total requests",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Successful scoring responses with observed latency since the current API process started.",
+      "fieldConfig": {"defaults": {"color": {"mode": "fixedColor", "fixedColor": "green"}, "decimals": 0, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 5, "w": 4, "x": 8, "y": 1},
+      "id": 23,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "sum(pit_scoring_latency_ms_count)", "instant": true, "legendFormat": "successful", "range": false, "refId": "A"}],
+      "title": "Successful responses",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Scoring-path error responses since the current API process started.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 5, "w": 4, "x": 12, "y": 1},
+      "id": 24,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "sum(pit_scoring_errors_total)", "instant": true, "legendFormat": "errors", "range": false, "refId": "A"}],
+      "title": "Error responses",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Successful responses divided by total scoring requests since the current API process started.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "decimals": 2, "max": 100, "min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 95}, {"color": "green", "value": 99}]}, "unit": "percent"}, "overrides": []},
+      "gridPos": {"h": 5, "w": 4, "x": 16, "y": 1},
+      "id": 25,
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "100 * sum(pit_scoring_latency_ms_count) / clamp_min(sum(pit_scoring_requests_total), 1)", "instant": true, "legendFormat": "success rate", "range": false, "refId": "A"}],
+      "title": "Success rate",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Scoring errors divided by total scoring requests since the current API process started.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "decimals": 2, "max": 100, "min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 5}]}, "unit": "percent"}, "overrides": []},
+      "gridPos": {"h": 5, "w": 4, "x": 20, "y": 1},
+      "id": 26,
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "100 * sum(pit_scoring_errors_total) / clamp_min(sum(pit_scoring_requests_total), 1)", "instant": true, "legendFormat": "error rate", "range": false, "refId": "A"}],
+      "title": "Error rate",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 6},
+      "id": 27,
+      "panels": [],
+      "title": "Latency — successful scoring responses",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Median scoring latency calculated from the cumulative histogram since API restart.",
+      "fieldConfig": {"defaults": {"color": {"mode": "fixedColor", "fixedColor": "green"}, "decimals": 2, "unit": "ms"}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 7},
+      "id": 28,
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "histogram_quantile(0.50, sum(pit_scoring_latency_ms_bucket) by (le))", "instant": true, "legendFormat": "p50", "range": false, "refId": "A"}],
+      "title": "Latency p50",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "95th-percentile scoring latency calculated from the cumulative histogram since API restart.",
+      "fieldConfig": {"defaults": {"color": {"mode": "fixedColor", "fixedColor": "yellow"}, "decimals": 2, "unit": "ms"}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 7},
+      "id": 29,
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "histogram_quantile(0.95, sum(pit_scoring_latency_ms_bucket) by (le))", "instant": true, "legendFormat": "p95", "range": false, "refId": "A"}],
+      "title": "Latency p95",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "99th-percentile scoring latency calculated from the cumulative histogram since API restart.",
+      "fieldConfig": {"defaults": {"color": {"mode": "fixedColor", "fixedColor": "red"}, "decimals": 2, "unit": "ms"}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 7},
+      "id": 30,
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "histogram_quantile(0.99, sum(pit_scoring_latency_ms_bucket) by (le))", "instant": true, "legendFormat": "p99", "range": false, "refId": "A"}],
+      "title": "Latency p99",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Mean scoring latency since API restart: cumulative latency divided by successful responses.",
+      "fieldConfig": {"defaults": {"color": {"mode": "fixedColor", "fixedColor": "blue"}, "decimals": 2, "unit": "ms"}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 7},
+      "id": 31,
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "sum(pit_scoring_latency_ms_sum) / clamp_min(sum(pit_scoring_latency_ms_count), 1)", "instant": true, "legendFormat": "average", "range": false, "refId": "A"}],
+      "title": "Average latency",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Rolling latency percentiles. Gaps mean there were no successful requests in the selected rate interval.",
+      "fieldConfig": {"defaults": {"unit": "ms", "custom": {"lineWidth": 2, "showPoints": "never", "spanNulls": true}}, "overrides": []},
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 12},
+      "id": 11,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "histogram_quantile(0.50, sum(rate(pit_scoring_latency_ms_bucket[$__rate_interval])) by (le))", "legendFormat": "p50", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "histogram_quantile(0.95, sum(rate(pit_scoring_latency_ms_bucket[$__rate_interval])) by (le))", "legendFormat": "p95", "refId": "B"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "histogram_quantile(0.99, sum(rate(pit_scoring_latency_ms_bucket[$__rate_interval])) by (le))", "legendFormat": "p99", "refId": "C"}
+      ],
+      "title": "Latency percentiles over time",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 21},
+      "id": 32,
+      "panels": [],
+      "title": "Traffic and errors",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Request, successful-response, and error throughput for the scoring path.",
+      "fieldConfig": {"defaults": {"decimals": 3, "unit": "reqps"}, "overrides": []},
+      "gridPos": {"h": 9, "w": 16, "x": 0, "y": 22},
+      "id": 12,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "sum(rate(pit_scoring_requests_total[$__rate_interval]))", "legendFormat": "requests/s", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "sum(rate(pit_scoring_latency_ms_count[$__rate_interval]))", "legendFormat": "successful responses/s", "refId": "B"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "sum(rate(pit_scoring_errors_total[$__rate_interval]))", "legendFormat": "errors/s", "refId": "C"}
+      ],
+      "title": "Scoring traffic",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Rolling scoring error percentage. The denominator is clamped only to prevent division by zero during idle periods.",
+      "fieldConfig": {"defaults": {"decimals": 2, "max": 100, "min": 0, "unit": "percent", "custom": {"lineWidth": 2, "showPoints": "never", "spanNulls": true}}, "overrides": []},
+      "gridPos": {"h": 9, "w": 8, "x": 16, "y": 22},
+      "id": 13,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "100 * sum(rate(pit_scoring_errors_total[$__rate_interval])) / clamp_min(sum(rate(pit_scoring_requests_total[$__rate_interval])), 0.000001)", "legendFormat": "error rate", "refId": "A"}],
+      "title": "Error rate over time",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 31},
+      "id": 33,
+      "panels": [],
+      "title": "Logs and lifecycle evidence",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "description": "All lifecycle evidence. Use the row menu or Open in Explore to expand a request's time range and filters.",
+      "gridPos": {"h": 13, "w": 24, "x": 0, "y": 32},
+      "id": 1,
+      "options": {"enableLogDetails": true, "prettifyLogMessage": true, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLines": true},
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "{service_name=~\".+\"}", "queryType": "range", "refId": "A"}],
+      "title": "All lifecycle evidence",
+      "type": "logs"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "description": "Online API scoring decisions. The log body contains transaction_id, entity_id, prediction, fraud_probability, feature_status and latency.",
+      "gridPos": {"h": 10, "w": 12, "x": 0, "y": 45},
+      "id": 2,
+      "options": {"enableLogDetails": true, "prettifyLogMessage": true, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLines": true},
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "{service_name=\"pit-fintech-serving\"} |~ \"scored\"", "queryType": "range", "refId": "A"}],
+      "title": "Online scoring",
+      "type": "logs"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "description": "Worker-side online write evidence. Search the event_id or transaction_id in a row to link it with the offline records.",
+      "gridPos": {"h": 10, "w": 12, "x": 12, "y": 45},
+      "id": 3,
+      "options": {"enableLogDetails": true, "prettifyLogMessage": true, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLines": true},
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "{service_name=\"pit-fintech-online-worker\"} |~ \"applied\"", "queryType": "range", "refId": "A"}],
+      "title": "Online worker write",
+      "type": "logs"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "description": "Event History to Bronze batch evidence: checkpoint, rows read/appended, duplicate count and first/last event identity.",
+      "gridPos": {"h": 10, "w": 12, "x": 0, "y": 55},
+      "id": 4,
+      "options": {"enableLogDetails": true, "prettifyLogMessage": true, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLines": true},
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "{service_name=\"pit-fintech-offline-ingest\"} |= \"offline.bronze\"", "queryType": "range", "refId": "A"}],
+      "title": "Offline Bronze ingest",
+      "type": "logs"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "description": "DuckDB Gold build/staging/promotion evidence: source Silver version, rows, checksums, future-read violations and Gold Delta versions.",
+      "gridPos": {"h": 10, "w": 12, "x": 12, "y": 55},
+      "id": 5,
+      "options": {"enableLogDetails": true, "prettifyLogMessage": true, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLines": true},
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "{service_name=\"pit-fintech-offline-gold\"} |= \"offline.gold\"", "queryType": "range", "refId": "A"}],
+      "title": "Offline Gold compute",
+      "type": "logs"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "description": "Automatic post-Bronze pipeline evidence: served-event Silver normalization and unpromoted Gold candidate output.",
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 75},
+      "id": 7,
+      "options": {"enableLogDetails": true, "prettifyLogMessage": true, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLines": true},
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "{service_name=\"pit-fintech-offline-ingest\"} |= \"offline.served_pipeline\"", "queryType": "range", "refId": "A"}],
+      "title": "Offline Silver + Gold candidate",
+      "type": "logs"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "description": "Materialization evidence: pinned Gold version, watermark and write/no-op/reject counts.",
+      "gridPos": {"h": 10, "w": 12, "x": 0, "y": 95},
+      "id": 8,
+      "options": {"enableLogDetails": true, "prettifyLogMessage": true, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLines": true},
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "{service_name=\"pit-fintech-materialization\"} |= \"offline.materialization\"", "queryType": "range", "refId": "A"}],
+      "title": "Offline materialization",
+      "type": "logs"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "description": "Redis reset/recovery evidence: before/after entities, identical records, watermark restoration and pass status.",
+      "gridPos": {"h": 10, "w": 12, "x": 12, "y": 95},
+      "id": 9,
+      "options": {"enableLogDetails": true, "prettifyLogMessage": true, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLines": true},
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "{service_name=\"pit-fintech-recovery\"} |= \"offline.recovery\"", "queryType": "range", "refId": "A"}],
+      "title": "Offline Redis recovery",
+      "type": "logs"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "description": "Backfill state-machine evidence: mode, range, idempotency key, source version and committed Gold versions.",
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 115},
+      "id": 10,
+      "options": {"enableLogDetails": true, "prettifyLogMessage": true, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLines": true},
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "{service_name=\"pit-fintech-backfill\"} |= \"offline.backfill\"", "queryType": "range", "refId": "A"}],
+      "title": "Offline backfill",
+      "type": "logs"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "description": "Final online/offline DuckDB parity evidence: checked entities, event identity range, mismatch count and pass status.",
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 125},
+      "id": 6,
+      "options": {"enableLogDetails": true, "prettifyLogMessage": true, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLines": true},
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "{service_name=~\"pit-fintech-(parity|online-worker)\"} |= \"offline.parity\"", "queryType": "range", "refId": "A"}],
+      "title": "Offline/online parity",
+      "type": "logs"
+    }
+  ],
+  "schemaVersion": 39,
+  "refresh": "15s",
+  "tags": ["pit-fintech", "observability", "prometheus", "loki", "tempo"],
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "PIT Fintech Observability",
+  "uid": "pit-fintech-observability",
+  "version": 11
+}

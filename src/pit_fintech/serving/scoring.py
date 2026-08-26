@@ -248,8 +248,9 @@ def score_transaction(
     entity_id = derive_entity_id(name_dest=request.name_dest)
     request_features = derive_request_features(request=request)
 
-    # Step 3: retrieve history features from the versioned online store. Under ADR-010 the caller
-    # passes the fresh pre-decision vector (from the worker result), so the provider is skipped.
+    # Step 3: retrieve history features from the versioned online store. The normal serving path
+    # reads the current materialized aggregate directly; callers may pass an already-read vector
+    # through ``prefetched`` when an integration path has one.
     retrieval_started = time.perf_counter()
     if prefetched is not None:
         features = prefetched

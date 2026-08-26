@@ -23,14 +23,11 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Final, Literal
 
-from pit_fintech.features.paysim_specs import PAYSIM_FEATURE_DEFINITION_VERSION
 from pit_fintech.platform.logging_config import bind_request_context, clear_request_context
-from pit_fintech.serving.events import publish_score_event, wait_for_score_result
-from pit_fintech.serving.feature_provider import FeatureVectorResponse
+from pit_fintech.serving.events import publish_score_event
 from pit_fintech.serving.schemas import ErrorResponse, HealthResponse, ScoreRequest
 from pit_fintech.serving.scoring import (
     FailurePolicy,
@@ -579,8 +576,6 @@ def create_app(*, settings: ServingSettings) -> FastAPI:
     Imports FastAPI inside the body -- it is the optional ``serving`` group.
     """
 
-    import time
-
     from fastapi import FastAPI
     from fastapi.responses import JSONResponse, PlainTextResponse
 
@@ -593,10 +588,9 @@ def create_app(*, settings: ServingSettings) -> FastAPI:
     context = build_scoring_context(settings=settings)
     metrics = _MetricsState()
 
-    # ADR-010: the serving process is a publisher, never a store mutator. This store is only used
-    # to publish score events and poll worker results; the pit-online-worker owns the online-store
-    # mutation. build_scoring_context has already rejected any provider_kind other than 'redis', so
-    # this store shares that endpoint/namespace.
+    # The serving process reads the materialized online aggregate for scoring and publishes the
+    # post-score event; the pit-online-worker owns online-store mutation. The API never waits for
+    # the worker to finish that write.
     online_store = OnlineStoreConfig(
         kind=OnlineStoreKind.REDIS,
         uri=settings.online_store_uri,
@@ -628,47 +622,13 @@ def create_app(*, settings: ServingSettings) -> FastAPI:
         )
         return JSONResponse(status_code=status_code, content=error.model_dump(mode="json"))
 
-    def _result_to_features(result: dict, *, entity_id: str) -> FeatureVectorResponse:
-        """Build a FeatureVectorResponse from the worker's pre-decision result (ADR-010)."""
-
-        from pit_fintech.materialization.records import FeatureStatus
-
-        feature_status = (
-            FeatureStatus.FRESH
-            if result.get("feature_status") == "fresh"
-            else FeatureStatus.MISSING
-        )
-        feature_timestamp = result.get("feature_timestamp")
-        return FeatureVectorResponse(
-            entity_id=entity_id,
-            entity=settings.feature_service_version,
-            values=result.get("feature_values", {}),
-            status=feature_status,
-            is_cold_start=feature_status is FeatureStatus.MISSING,
-            feature_service_version=settings.feature_service_version,
-            feature_definition_version=result.get(
-                "feature_definition_version", PAYSIM_FEATURE_DEFINITION_VERSION
-            ),
-            feature_contract_checksum=result.get("feature_contract_checksum", ""),
-            feature_step=result.get("feature_step"),
-            feature_timestamp=datetime.fromisoformat(feature_timestamp)
-            if feature_timestamp
-            else None,
-            materialization_watermark_step=result.get("materialization_watermark_step"),
-            materialization_watermark=None,
-            staleness_steps=result.get("staleness_steps"),
-            provider_name="pit-online-worker",
-            retrieval_latency_ms=0.0,
-        )
-
     def _score_request(*, request_id: str, payload: ScoreRequest) -> JSONResponse:
-        """Score one request: publish -> wait for worker -> score on the fresh pre-decision vector.
+        """Read, score, then enqueue the post-score online write.
 
-        ADR-010: `/score` is a publisher, never a store mutator. It publishes the event to the
-        Redis Stream and waits for the `pit-online-worker` to apply it (under the optimistic lock)
-        and return the **pre-decision** feature vector. The request then scores on that vector --
-        never a stale version, never a current-inclusive one. The whole body runs inside the
-        ``score`` span so every log line carries the active ``trace_id``/``span_id``.
+        Feature retrieval and model inference are the synchronous scoring path. Redis Stream
+        publish happens after scoring and is not followed by a worker-result wait: worker lag is
+        reported as write status/telemetry instead of becoming a false scoring failure. The worker
+        retains ordering, optimistic locking, idempotency and parity duties.
         """
         with telemetry.span(
             "score",
@@ -678,75 +638,7 @@ def create_app(*, settings: ServingSettings) -> FastAPI:
         ):
             try:
                 entity_id = derive_entity_id(name_dest=payload.name_dest)
-                publish_started = time.perf_counter()
-                with telemetry.span(
-                    "online_publish", entity_id=payload.name_dest, step=payload.step
-                ):
-                    publish_score_event(
-                        store=online_store,
-                        feature_service_version=settings.feature_service_version,
-                        request_id=request_id,
-                        transaction_id=payload.transaction_id,
-                        entity_id=entity_id,
-                        step=payload.step,
-                        knowledge_step=payload.knowledge_step,
-                        transaction_type=payload.transaction_type,
-                        amount=payload.amount,
-                        # ADR-011 fan-in: the sender (PaySim nameOrig). Empty when a client omits it
-                        # (e.g. a synthetic demo request) -- the winlog then records no sender for
-                        # this event, which under-counts a future cutoff's distinct senders rather
-                        # than fabricating one.
-                        origin_entity_id=payload.name_orig or "",
-                    )
-                publish_ms = (time.perf_counter() - publish_started) * 1000.0
-
-                with telemetry.span("online_wait", entity_id=payload.name_dest, step=payload.step):
-                    result = wait_for_score_result(
-                        store=online_store,
-                        feature_service_version=settings.feature_service_version,
-                        request_id=request_id,
-                    )
-                if result is None:
-                    metrics.record_error()
-                    logger.warning(
-                        "online write path timed out waiting for worker for transaction_id=%s "
-                        "entity=%s publish_ms=%.2f",
-                        payload.transaction_id,
-                        payload.name_dest,
-                        publish_ms,
-                    )
-                    return _error(
-                        status_code=503,
-                        code="online_store_timeout",
-                        message="worker did not apply the event within the timeout",
-                        request_id=request_id,
-                    )
-                if result.get("status") == "error":
-                    metrics.record_error()
-                    logger.warning(
-                        "worker reported an error for transaction_id=%s: %s",
-                        payload.transaction_id,
-                        result.get("error"),
-                    )
-                    return _error(
-                        status_code=503,
-                        code="online_store_timeout",
-                        message=result.get("error", "worker error"),
-                        request_id=request_id,
-                    )
-                if result.get("status") == "not_warm_started":
-                    logger.warning(
-                        "online write path refused (not warm-started) for transaction_id=%s "
-                        "entity=%s: %s",
-                        payload.transaction_id,
-                        payload.name_dest,
-                        result.get("detail"),
-                    )
-
-                prefetched = _result_to_features(result, entity_id=entity_id)
-                response = score_transaction(
-                    request=payload, context=context, prefetched=prefetched
-                )
+                response = score_transaction(request=payload, context=context)
             except VersionMismatchError as exc:
                 metrics.record_error()
                 logger.warning(
@@ -796,6 +688,41 @@ def create_app(*, settings: ServingSettings) -> FastAPI:
                     message=str(exc),
                     request_id=request_id,
                 )
+            write_status = "queued"
+            write_event_id: str | None = None
+            try:
+                with telemetry.span(
+                    "online_publish", entity_id=payload.name_dest, step=payload.step
+                ):
+                    write_event_id = publish_score_event(
+                        store=online_store,
+                        feature_service_version=settings.feature_service_version,
+                        request_id=request_id,
+                        transaction_id=payload.transaction_id,
+                        entity_id=entity_id,
+                        step=payload.step,
+                        knowledge_step=payload.knowledge_step,
+                        transaction_type=payload.transaction_type,
+                        amount=payload.amount,
+                        # ADR-011 fan-in: the sender (PaySim nameOrig). Empty when a client omits it
+                        # (e.g. a synthetic demo request) -- the winlog then records no sender for
+                        # this event, which under-counts a future cutoff's distinct senders rather
+                        # than fabricating one.
+                        origin_entity_id=payload.name_orig or "",
+                    )
+            except Exception as exc:  # scoring succeeded; expose enqueue failure separately.
+                write_status = "failed"
+                logger.exception(
+                    "online write enqueue failed after scoring for transaction_id=%s: %s",
+                    payload.transaction_id,
+                    exc,
+                )
+            response = response.model_copy(
+                update={
+                    "online_write_status": write_status,
+                    "online_write_event_id": write_event_id,
+                }
+            )
             telemetry.record_score(
                 prediction=response.prediction,
                 feature_status=response.feature_status,

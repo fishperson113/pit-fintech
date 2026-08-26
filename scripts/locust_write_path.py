@@ -6,8 +6,11 @@ indefinitely against an already-advanced entity::
     uv run locust -f scripts/locust_write_path.py --host http://127.0.0.1:8000 \
         --headless -u 1 -r 1 -t 30s --csv artifacts/reports/locust-write-path
 
-Each user gets a fresh entity. Use one user for deterministic retry assertions; use multiple users
-only when deliberately testing cross-entity concurrency.
+Each user gets a fresh entity. Every request carries an explicit synthetic knowledge step, modeling
+the trusted ingress time that a production wallet would stamp. The final four cases deliberately
+have ``knowledge_step > step`` to exercise delayed/out-of-order arrival semantics. Use one user for
+deterministic retry assertions; use multiple users only when deliberately testing cross-entity
+concurrency.
 """
 
 from __future__ import annotations
@@ -75,6 +78,7 @@ class WritePathUser(HttpUser):
             label="01 seed step 700",
             transaction_id="locust-700",
             step=700,
+            knowledge_step=700,
             amount="10.00",
             expected_feature_step=None,
             expected_staleness=None,
@@ -84,6 +88,7 @@ class WritePathUser(HttpUser):
             label="02 advance step 701",
             transaction_id="locust-701",
             step=701,
+            knowledge_step=701,
             amount="20.00",
             expected_feature_step=700,
             expected_staleness=1,
@@ -93,6 +98,7 @@ class WritePathUser(HttpUser):
             label="03 advance step 702",
             transaction_id="locust-702",
             step=702,
+            knowledge_step=702,
             amount="30.00",
             expected_feature_step=701,
             expected_staleness=1,
@@ -102,6 +108,7 @@ class WritePathUser(HttpUser):
             label="04 exact retry step 702",
             transaction_id="locust-702",
             step=702,
+            knowledge_step=702,
             amount="30.00",
             expected_feature_step=701,
             expected_staleness=1,
@@ -111,6 +118,7 @@ class WritePathUser(HttpUser):
             label="05 retry different transaction id",
             transaction_id="locust-702-retry",
             step=702,
+            knowledge_step=702,
             amount="30.00",
             expected_feature_step=701,
             expected_staleness=1,
@@ -140,43 +148,47 @@ class WritePathUser(HttpUser):
             label="06 advance gap step 704",
             transaction_id="locust-704",
             step=704,
+            knowledge_step=704,
             amount="40.00",
             expected_feature_step=702,
             expected_staleness=2,
             expected_status="fresh",
         )
         self._score(
-            label="07 out-of-order step 703",
+            label="07 delayed step 703 knowledge 705",
             transaction_id="locust-703-late",
             step=703,
+            knowledge_step=705,
             amount="35.00",
             expected_feature_step=702,
             expected_staleness=1,
             expected_status="fresh",
         )
         self._score(
-            label="08 late-arrival step 701 knowledge 704",
+            label="08 late-arrival step 701 knowledge 706",
             transaction_id="locust-701-late",
             step=701,
             amount="99.00",
-            knowledge_step=704,
+            knowledge_step=706,
             expected_feature_step=700,
             expected_staleness=1,
             expected_status="fresh",
         )
         self._score(
-            label="09 conflicting same-step retry",
+            label="09 delayed conflicting step 702 knowledge 707",
             transaction_id="locust-702-conflict",
             step=702,
+            knowledge_step=707,
             amount="999.00",
             expected_feature_step=701,
             expected_staleness=1,
             expected_status="fresh",
         )
         self._score(
-            label="10 resume step 705",
+            label="10 resume step 705 knowledge 708",
             transaction_id="locust-705",
             step=705,
+            knowledge_step=708,
             amount="50.00",
             expected_feature_step=704,
             expected_staleness=1,

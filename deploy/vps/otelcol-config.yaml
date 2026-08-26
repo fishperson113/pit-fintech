@@ -1,13 +1,13 @@
 # OpenTelemetry Collector config for the VPS observability stack.
 #
-# Role split (see deploy/vps/README.md):
-#   * Traces  -> OTLP/HTTP from the scoring API (PIT_OTEL_ENDPOINT) -> this collector -> Tempo
-#   * Metrics -> Prometheus scrapes the API's /metrics directly; the OTel metrics the API also
-#                sends are routed to `debug` (logged) so the export never fails loudly. Prometheus
-#                self-hosted does NOT accept remote-write by default, so do not try to push metrics
-#                into Prometheus here.
+# Pipelines:
+#   * Traces -> Tempo
+#   * Logs   -> Loki (JSON logs retain request_id/entity_id/step and trace_id/span_id)
+#   * Metrics -> debug; Prometheus scrapes the API's /metrics directly
 #
-# No secrets in this file (AGENTS.md s7: the app repo only holds non-secret sample config).
+# The current PIT API emits structured JSON to stdout. To populate the logs pipeline, the API/worker
+# must eventually export OTLP logs or a local Alloy/agent must forward those JSON lines to this
+# collector's OTLP receiver. Traces and metrics remain independent of log ingestion.
 
 receivers:
   otlp:
@@ -17,19 +17,34 @@ receivers:
       http:
         endpoint: 0.0.0.0:4318
 
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+
 exporters:
-  otlp/tempo:
+  otlp_grpc/tempo:
     endpoint: tempo:4317
     tls:
       insecure: true
+  otlp_http/loki:
+    endpoint: http://loki:3100/otlp
   debug:
+    verbosity: basic
+  debug/logs:
     verbosity: basic
 
 service:
   pipelines:
     traces:
       receivers: [otlp]
-      exporters: [otlp/tempo]
+      processors: [batch]
+      exporters: [otlp_grpc/tempo]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp_http/loki, debug/logs]
     metrics:
       receivers: [otlp]
+      processors: [batch]
       exporters: [debug]

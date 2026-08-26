@@ -1,31 +1,25 @@
-# Minimal Loki config for the VPS observability stack.
+# Loki single-node config for the local/VPS observability stack.
 #
-# Loki is the log store (Grafana's LogQL backend). The scoring API's structured JSON logs land here
-# via promtail (Windows) and are queryable in Grafana. Traces stay in Tempo, metrics stay in
-# Prometheus -- Loki is logs only.
-#
-# Keep the numbers plain (no underscores): Go's YAML parser rejects `1_000_000` (see tempo-config).
-# Schema may vary between Loki versions; if `loki` exits 1 on startup, check `docker logs loki`
-# and align the schema_config block with the image's documented config.
-#
-# No secrets in this file.
+# This is a small, persistent filesystem-backed deployment for one VPS. It is not a
+# horizontally-scaled Loki cluster. Keep the Loki HTTP port private to the Compose network;
+# Grafana and the OTel Collector use the internal service name.
 
 auth_enabled: false
 
 server:
   http_listen_port: 3100
+  grpc_listen_port: 9096
 
 common:
-  instance_addr: 127.0.0.1
   path_prefix: /loki
-  storage:
-    filesystem:
-      chunks_directory: /loki/chunks
-      rules_directory: /loki/rules
   replication_factor: 1
   ring:
     kvstore:
       store: inmemory
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
 
 schema_config:
   configs:
@@ -39,9 +33,19 @@ schema_config:
 
 limits_config:
   allow_structured_metadata: true
+  # Promote the low-cardinality OTel resource identity so Grafana dashboard selectors such as
+  # `{service_name="pit-fintech-serving"}` work. Request/entity/trace fields remain structured
+  # metadata and are filtered after the stream selector.
   otlp_config:
     resource_attributes:
       attributes_config:
         - action: index_label
           attributes:
             - service.name
+  volume_enabled: true
+  retention_period: 168h
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem

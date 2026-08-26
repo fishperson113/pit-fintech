@@ -1,164 +1,179 @@
-# VPS observability stack — sample config (no secrets)
+# Prometheus + Grafana + OTel Collector + Tempo + Loki
 
-This directory holds non-secret sample configs for the owner's self-hosted observability stack
-(AGENTS.md s7: the app repo only keeps instrumentation, metric contract, dashboard JSON and
-non-secret sample config; the VPS itself is the owner's deployment/ops boundary).
+This folder is the VPS-side observability stack for the PIT-Fintech scoring API.
+It contains no credentials. Copy `.env.example` to `.env` only when SMTP or a public Grafana URL is
+needed; never commit the real `.env`.
 
-## Architecture / role split
+## Architecture
 
-The scoring API (`pit serving up`) and `pit-online-worker` are the only processes this stack observes:
-
-```
-Windows (scoring API)
-  ├── /metrics  ──(Prometheus pull)──────────────▶ Prometheus  ──▶ Grafana
-  └── OTLP/HTTP ──(traces + logs, PIT_OTEL_ENDPOINT)▶ Collector ──▶ Tempo/Loki ──▶ Grafana
-                                                    ▲
-Windows (pit-online-worker) ── OTLP/HTTP ───────────┘
+```text
+Windows scoring API / worker
+  ├── /metrics --------------------> Prometheus ------> Grafana
+  ├── OTLP traces ------------------> OTel Collector -> Tempo ----> Grafana
+  └── OTLP logs / Alloy-forwarded --> OTel Collector -> Loki ----> Grafana
 ```
 
-* **Metrics**: Prometheus *pulls* `/metrics` on the API (`pit_scoring_requests_total`,
-  `pit_scoring_errors_total`, `pit_scoring_latency_ms_avg`). This works with no OTel at all.
-* **Traces and logs**: the API pushes OTLP/HTTP traces and structured OTLP logs when started with
-  `--otel` and `PIT_OTEL_ENDPOINT`; the worker uses the same endpoint and creates `online_write`
-  spans plus request-context JSON logs. The Collector forwards traces to Tempo and logs to Loki;
-  Grafana correlates `trace_id`/`span_id` between them. The API `score` span and worker write span
-  make the read-before-write path visible, while `pit_parity_mismatches_total` alerts on parity
-  drift.
+The app emits OTLP logs directly with request context (`request_id`, `transaction_id`, `entity_id`,
+`step`, `knowledge_step`, feature/model versions) and OTel `trace_id`/`span_id` when telemetry is
+enabled. The Collector forwards these logs to Loki. Loki promotes the low-cardinality
+`service.name` resource attribute to the `service_name` stream label; the remaining correlation
+fields stay structured metadata.
 
-**This stack is the serving-parity verification vehicle (ADR-009).** Online/offline parity is
-verified **asynchronously** by `pit parity reconcile` (never on the `/score` request path, which
-would block later requests). After traffic, reconcile compares each entity's online aggregate against
-the offline DuckDB engine over the served Event History, and exports `pit_parity_mismatches_total` /
-`pit_parity_checked_total` as OTel metrics to the collector (best-effort). Tempo shows the
-`score` → `online_write` ordering; the Grafana dashboard surfaces the scoring metrics. Because parity
-is a live-system property (request ordering, concurrency, state transitions), it is **observed, not
-unit-tested**.
+## Services
 
-> Parity counters reach Grafana through the OTel collector. The collector currently routes OTel
-> metrics to `debug` (Prometheus self-host does not accept remote-write by default); to plot them in
-> a Prometheus-backed Grafana panel you would wire the collector's Prometheus remote-write exporter
-> to a host that accepts it. The reconcile report (`pit parity reconcile`) is the authoritative
-> pass/fail.
+| Service | Purpose | Persistent volume |
+|---|---|---|
+| Prometheus | Pulls API `/metrics`, node-exporter and cAdvisor metrics | `prometheus-data` |
+| Grafana | Dashboards and Explore UI; datasources auto-provisioned | `grafana-data` |
+| OTel Collector | Receives OTLP traces/logs/metrics | none; stateless |
+| Tempo | Trace storage/query backend | `tempo-data` |
+| Loki | Structured log storage/query backend | `loki-data` |
+| node_exporter | VPS host metrics | none |
+| cAdvisor | Docker/container metrics | none |
 
-> Do **not** try to push OTel metrics into a self-hosted Prometheus: Prometheus does not accept
-> remote-write by default. The Collector routes the API's OTLP metrics to `debug` (logged), and
-> Prometheus keeps scraping `/metrics` directly.
-
-## Files
-
-| File | Purpose |
-|---|---|
-| `otelcol-config.yaml` | Collector pipeline: traces → Tempo, metrics → debug |
-| `tempo-config.yaml` | Minimal Tempo config (query frontend 3200, OTLP/gRPC ingest 4317, local storage) |
-| `prometheus-scrape-job.yml` | Prometheus scrape job for the scoring API |
-| `grafana-dashboard.json` | Importable Grafana dashboard for the `pit_scoring_*` metrics |
-
-## Setup on the VPS
-
-### 1. Collector + Tempo
-
-Add the `otel-collector` and `tempo` services to the `docker-compose.yml` on the VPS that already
-runs your Prometheus/Grafana, then copy the two config files next to it:
+## Deploy/update on the VPS
 
 ```bash
 cd ~/prometheus-grafana
-cp <repo>/deploy/vps/otelcol-config.yaml ./
-cp <repo>/deploy/vps/tempo-config.yaml ./
+cp .env.example .env                 # optional; defaults are safe for smoke use
+sudo docker compose config           # validate interpolation and YAML before starting
+sudo docker compose up -d
+sudo docker compose ps
 ```
 
-```yaml
-# add under services: in your existing docker-compose.yml
-  otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
-    container_name: otel-collector
-    command: ["--config=/etc/otelcol/config.yaml"]
-    ports:
-      - "4318:4318"   # OTLP/HTTP from the app (PIT_OTEL_ENDPOINT)
-      - "4317:4317"   # OTLP/gRPC from the app, optional
-    volumes:
-      - ./otelcol-config.yaml:/etc/otelcol/config.yaml:ro
-    restart: unless-stopped
-
-  tempo:
-    image: grafana/tempo:latest
-    container_name: tempo
-    command: ["-config.file=/etc/tempo.yaml"]
-    ports:
-      - "3200:3200"   # query frontend (Grafana Tempo data source)
-    volumes:
-      - ./tempo-config.yaml:/etc/tempo.yaml:ro
-    restart: unless-stopped
-```
-
-Then `docker compose up -d`.
-
-### 2. Prometheus scrape job
-
-Copy the `pit_fintech_scoring` job from `prometheus-scrape-job.yml` into the `scrape_configs:` list
-of the Prometheus config the running container actually mounts (if your compose mounts
-`- /etc/prometheus:/etc/prometheus`, that is `/etc/prometheus/prometheus.yml` on the host, not the
-file next to your compose). Replace `<windows-tailscale-ip>` with the Windows machine's Tailscale
-IPv4 (`tailscale ip -4`). Reload:
+After changing `prometheus.yml`, reload Prometheus:
 
 ```bash
-docker compose exec prometheus kill -HUP 1
+sudo docker compose exec prometheus kill -HUP 1
 ```
 
-### 3. Grafana data sources + dashboard
+After changing Collector, Tempo, Loki or Compose config:
 
-1. Prometheus: `http://prometheus:9090` (same compose network) or `http://<vps-ip>:9090`.
-2. Tempo: `http://tempo:3200`.
-3. Import `grafana-dashboard.json` (Dashboards → New → Import) and pick the Prometheus data source
-   when prompted.
-4. To inspect traces: Tempo data source → Explore → select a `score` trace; the child
-   `online_write` span shows the write happening after the read.
+```bash
+sudo docker compose up -d --force-recreate otel-collector tempo loki grafana prometheus
+sudo docker compose logs --tail=100 otel-collector tempo loki
+```
 
-## On the Windows machine (scoring API)
+Do not use `docker compose down -v` unless intentionally deleting monitoring history.
+
+## Endpoints
+
+- Grafana: `http://<vps>:3000`
+- Prometheus: `http://<vps>:9090`
+- Tempo query API: internal Compose endpoint `http://tempo:3200`
+- Loki query API: internal Compose endpoint `http://loki:3100`
+- OTel OTLP/gRPC ingest: `<vps>:4317`
+- OTel OTLP/HTTP ingest: `<vps>:4318`
+
+Only expose ports 4317/4318 to the Windows machine over the intended private network (for this
+project, Tailscale/firewall rules). Loki stays internal to the Compose network; do not publish 3100
+publicly unless a separate authenticated gateway is in front of it.
+
+## Grafana datasources
+
+`grafana/provisioning/datasources/datasources.yml` automatically provisions:
+
+- Prometheus as the default metrics datasource.
+- Tempo as the trace datasource.
+- Loki as the log datasource.
+- Tempo → Loki trace-to-logs and Loki `trace_id` → Tempo derived-field correlation.
+
+The provisioned `PIT Fintech Observability` dashboard is organized for an operator-first read:
+
+- API target status plus total requests, successful responses, error responses, success rate and
+  error rate (counters are since the current API process started).
+- p50, p95, p99 and average scoring latency as large stat panels, followed by rolling percentile
+  trends.
+- request/s, successful response/s and error/s traffic, plus rolling error rate.
+- detailed Loki lifecycle panels below the metrics overview for drill-down.
+
+After copying an updated dashboard file to the VPS, recreate only Grafana so file provisioning
+reloads the dashboard with the same UID:
+
+```bash
+sudo docker compose up -d --force-recreate grafana
+sudo docker compose logs --tail=50 grafana
+```
+
+This does not delete the `grafana-data`, Prometheus, Tempo or Loki named volumes.
+
+Useful Loki queries after log ingestion:
+
+```logql
+{service_name=~".+"}
+{service_name=~".+"} | entity_id="C1470998563"
+{service_name=~".+"} | outcome="rejected_older"
+{service_name=~".+"} | trace_id != ""
+```
+
+The application currently emits plain-text log bodies through OTLP while correlation fields such as
+`trace_id`, `span_id`, `entity_id`, and `service_name` arrive as structured metadata. Do not append
+`| json` unless the selected source is actually JSON text; otherwise Loki will show `JSONParserErr`.
+
+## Prometheus scrape target
+
+`prometheus.yml` scrapes:
+
+- Prometheus itself.
+- `node_exporter:9100`.
+- `cadvisor:8080`.
+- The Windows scoring API at `100.100.18.71:8000`.
+
+Replace the Windows Tailscale address if it changes. Confirm it at:
+
+```text
+http://<vps>:9090/targets
+```
+
+The Compose file mounts the repository's `prometheus.yml` directly, so no `/etc/prometheus` host copy
+is required. The OTel Collector's API metrics are intentionally routed to its debug exporter. Prometheus pulls
+`/metrics` directly; do not configure a Prometheus remote-write exporter unless the metrics topology
+is deliberately changed.
+
+## Windows scoring API settings
 
 ```env
-# .env or the deployment environment; config.yaml contains the local defaults
-PIT_API_HOST=0.0.0.0          # so Prometheus can scrape /metrics over Tailscale
+PIT_API_HOST=0.0.0.0
 PIT_API_PORT=8000
-PIT_OTEL_ENDPOINT=http://<vps-tailscale-ip>:4318   # OTLP/HTTP to the Collector
+PIT_OTEL_ENDPOINT=http://<vps-tailscale-ip>:4318
 ```
 
-Start with telemetry on:
+Start the API (the public `serve` runner enables OTel by default):
 
 ```powershell
-# first time / after `setup`, install the OTel packages (+ locust for load tests)
-uv pip install locust opentelemetry-sdk opentelemetry-exporter-otlp-proto-http `
-    opentelemetry-instrumentation-fastapi opentelemetry-instrumentation-logging
-uv run pit serving up --otel
+.\make.ps1 serve
 ```
 
-Allow inbound on port 8000 (and, only if you also let Grafana query Tempo from the browser, the
-VPS ports) through the Windows firewall on the Tailscale interface.
+This exports traces, metrics and structured OTLP logs when the PIT serving process is started with
+OTel enabled. The API and `pit-online-worker` both send OTLP/HTTP to the Collector; the worker keeps
+the request `traceparent`, so Loki log rows can be correlated with the `score` -> `online_write`
+Tempo trace. No Windows-side Alloy or local log shipper is required for the current application path.
 
-## Verification
-
-* `http://<vps-ip>:9090/targets` shows `pit_fintech_scoring` UP.
-* `docker compose logs -f otel-collector` shows spans being forwarded.
-* Grafana: a fresh `score` trace exists in Tempo Explore; the dashboard shows non-zero request
-  counters after traffic (e.g. `uv run locust -f scripts/locust_parity.py --host http://127.0.0.1:8000`).
-
-## Troubleshooting — crash-looping containers
-
-If a service keeps restarting, read its log first:
+## Verification checklist
 
 ```bash
-sudo docker logs <service> --tail 40
+sudo docker compose config
+sudo docker compose ps
+curl -fsS http://localhost:9090/-/ready
+curl -fsS http://localhost:3100/ready       # run on VPS; Loki is not published by Compose
+curl -fsS http://localhost:3200/ready       # run on VPS; Tempo image/config dependent
+curl -fsS http://localhost:13133/           # only if a Collector health extension is added
 ```
 
-Two known gotchas:
+Then verify:
 
-* **Prometheus (`Restarting (2)`):** your compose mounts a host directory
-  (`- /etc/prometheus:/etc/prometheus`), so Prometheus reads `/etc/prometheus/prometheus.yml` on
-  the host — **not** the `prometheus.yml` next to the compose file. If that host file is missing
-  or broken, Prometheus exits. Fix: mount the repo file instead —
-  `- ./prometheus.yml:/etc/prometheus/prometheus.yml:ro` — then `sudo docker compose up -d`.
-* **Tempo (`Restarting (1)`):** Go's YAML parser rejects underscores in numbers. If you edit
-  `tempo-config.yaml`, use plain integers (`1000000`, not `1_000_000`) or rely on the image
-  defaults. The checked-in file already does this.
+1. Prometheus target `pit_fintech_scoring` is `UP`.
+2. Grafana has Prometheus, Tempo and Loki datasources without manual URL entry.
+3. A fresh `score` trace appears in Tempo Explore.
+4. Once an OTLP log/Alloy path is active, the matching `trace_id` opens the Tempo trace from Loki.
+5. `pit parity reconcile` remains the authoritative parity pass/fail; parity counters are not yet
+   Prometheus-backed by this stack.
 
-Unrelated and harmless: `cadvisor` may exit 255 on newer kernels (`/dev/kmsg` permissions); it is
-not part of the PIT observability path — comment it out of the compose if it disturbs you.
+## Known operational boundaries
+
+- Loki is a single-node filesystem-backed deployment with seven-day retention; size/retention should
+  be revisited for long-running production traffic.
+- Tempo and Loki use named Docker volumes, so their local history survives container recreation; `docker compose down -v` still deletes it.
+- cAdvisor can exit on hosts where `/dev/kmsg` is unavailable; it is not required for API traces/logs.
+- The Collector logs pipeline is configured, but it is inactive until an OTLP log source or Alloy
+  forwarding path is connected.

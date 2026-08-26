@@ -18,6 +18,7 @@ param(
     [int]$Start = 1,
     [int]$End = 1,
     [string]$RunId = "",
+    [string]$LocustHost = "http://127.0.0.1:8000",
     [ValidateSet("full", "range", "incremental")]
     [string]$BackfillMode = "range",
     [int]$Watermark = 743
@@ -89,7 +90,7 @@ switch ($Target) {
             $ModelFixedFpr.ToString([System.Globalization.CultureInfo]::InvariantCulture)
         )
     }
-    "serve" { Invoke-Checked "uv" @("run", "pit", "serving", "up") }
+    "serve" { Invoke-Checked "uv" @("run", "pit", "serving", "up", "--otel") }
     "worker" { Invoke-Checked "uv" @("run", "pit", "serving", "worker") }
     "materialize" {
         Invoke-Checked "uv" @("run", "pit", "materialize", "run", "--watermark", "$Watermark")
@@ -108,6 +109,13 @@ switch ($Target) {
         )
     }
     "demo-score" { Invoke-Checked "uv" @("run", "python", "scripts/demo_score.py") }
+    "locust" {
+        $env:UV_PROJECT_ENVIRONMENT = ".venv"
+        Invoke-Checked "uv" @(
+            "run", "--frozen", "--all-groups", "locust",
+            "-f", "scripts/locust_write_path.py", "--host", $LocustHost
+        )
+    }
     "up-core" { Invoke-Checked "docker" @("compose", "up", "-d", "redis", "pit-online-worker") }
     "status" { Invoke-Checked "docker" @("compose", "ps") }
     "logs" { Invoke-Checked "docker" @("compose", "logs", "--tail=200", "-f", "redis", "pit-online-worker") }
@@ -160,12 +168,13 @@ switch ($Target) {
             @("gold", "build Gold tables into staging for -Start/-End"),
             @("promote-gold", "promote a staged Gold run from -RunId"),
             @("train", "train locked E1/E4 models from exact Silver versions"),
-            @("serve", "start the FastAPI scoring service against the local Redis online store"),
+            @("serve", "start FastAPI with OTLP traces, metrics, and logs enabled"),
             @("worker", "run the pit-online-worker (consume score events, maintain the online store, ADR-010)"),
             @("materialize", "materialize Gold post-event state into the online store up to -Watermark"),
             @("backfill", "run atomic/idempotent Gold backfill with -BackfillMode/-Start/-End"),
             @("mlflow-ui", "run the MLflow server on the Windows HOST (Artifacts tab works)"),
             @("demo-score", "score one normal and one suspicious transaction against a running API"),
+            @("locust", "start the /score write-path load-test UI at http://localhost:8089"),
             @("up-core", "start Redis and the pit-online-worker"),
             @("status", "show local service state"),
             @("logs", "follow local service logs"),

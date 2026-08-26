@@ -3,9 +3,9 @@
 Runs in its own container (`pit-online-worker` in compose.yaml), in its own process. It reads the
 Redis Stream in insertion order (one consumer in the `pit-online-worker` group => global order =>
 per-entity order), applies each event to the online store under the optimistic lock
-(`online_state.apply_score_event`), and publishes the pre-decision result the waiting request polls.
-The FastAPI `/score` is therefore a pure publisher + scorer -- it never mutates the online store and
-never blocks on the offline engine.
+(`online_state.apply_score_event`), and publishes a short-lived write result for diagnostics and
+backward-compatible consumers. FastAPI `/score` reads and scores first, then publishes without
+waiting for this worker result.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ def run_worker(
     telemetry: Any | None = None,
     artifact_root: Path | None = None,
 ) -> None:
-    """Consume score events in order, apply each, publish the result. Runs forever."""
+    """Consume score events in order, apply each, publish a diagnostic result. Runs forever."""
 
     import redis as redis_py
 

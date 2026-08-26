@@ -26,6 +26,7 @@ import logging
 import time
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Final
 
@@ -132,8 +133,31 @@ class OnlineStoreConfig:
 # --------------------------------------------------------------------------------------------
 
 
+@lru_cache(maxsize=16)
+def _cached_redis_client(
+    *,
+    host: str,
+    port: int,
+    db: int,
+    connect_timeout_seconds: float,
+    operation_timeout_seconds: float,
+):
+    """Build one thread-safe redis-py client/connection pool per endpoint configuration."""
+
+    import redis as redis_py
+
+    return redis_py.Redis(
+        host=host,
+        port=port,
+        db=db,
+        decode_responses=True,
+        socket_connect_timeout=connect_timeout_seconds,
+        socket_timeout=operation_timeout_seconds,
+    )
+
+
 def _redis_client(store: OnlineStoreConfig):
-    """Build the redis-py client for ``store``.
+    """Return the cached redis-py client for ``store``.
 
     The SQLite backend is deliberately not implemented yet; the T5 round-1 lane is Redis only
     (guide s7.3 parity on SQLite is a later task). ``redis`` is an optional dependency group, so it
@@ -144,15 +168,12 @@ def _redis_client(store: OnlineStoreConfig):
         raise NotImplementedError(
             f"T5 round-1: only the REDIS backend is implemented (got {store.kind.value!r})"
         )
-    import redis as redis_py
-
-    return redis_py.Redis(
+    return _cached_redis_client(
         host=store.host,
         port=store.port,
         db=store.db,
-        decode_responses=True,
-        socket_connect_timeout=store.connect_timeout_seconds,
-        socket_timeout=store.operation_timeout_seconds,
+        connect_timeout_seconds=store.connect_timeout_seconds,
+        operation_timeout_seconds=store.operation_timeout_seconds,
     )
 
 

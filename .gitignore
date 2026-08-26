@@ -22,6 +22,10 @@ kaggle.json
 .DS_Store
 Thumbs.db
 
+# Local agent/editor scratch files
+.codex-tmp/
+~$*
+
 # Raw and derived data. Synthetic fixtures remain versioned.
 data/raw/**
 !data/raw/.gitkeep

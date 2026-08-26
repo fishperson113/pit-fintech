@@ -118,6 +118,9 @@ class ScoreResponse(BaseModel):
     materialization_watermark_step: int | None = None
     staleness_steps: int | None = None
     feature_provider: str
+    #: Post-score online state maintenance is reported separately from the prediction result.
+    online_write_status: Literal["queued", "failed"] = "queued"
+    online_write_event_id: str | None = None
 
 
 class ErrorResponse(BaseModel):

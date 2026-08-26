@@ -10,6 +10,7 @@ WATERMARK ?= 743
 BACKFILL_MODE ?= range
 BACKFILL_START ?= 1
 BACKFILL_END ?= 743
+LOCUST_HOST ?= http://127.0.0.1:8000
 
 help: ## Show implemented targets and their purpose
 	@awk 'BEGIN {FS = ":.*?## "}; /^[a-zA-Z0-9_.-]+:.*?## / {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -58,8 +59,8 @@ train: ## Train locked E1/E4 baselines from exact PaySim Silver Delta versions
 
 # --- Serving / online store ---
 
-serve: ## Start the FastAPI scoring service against the local Redis online store
-	uv run pit serving up
+serve: ## Start FastAPI with OTLP traces, metrics, and logs enabled
+	uv run pit serving up --otel
 
 worker: ## Run the pit-online-worker: consume score events and maintain the online store (ADR-010)
 	uv run pit serving worker
@@ -75,6 +76,10 @@ mlflow-ui: ## Run the MLflow server on the Windows HOST (Artifacts tab works)
 
 demo-score: ## Score one normal and one suspicious transaction against a running API
 	uv run python scripts/demo_score.py
+
+locust: ## Start the Locust write-path UI at http://localhost:8089
+	UV_PROJECT_ENVIRONMENT=.venv uv run --frozen --all-groups locust \
+		-f scripts/locust_write_path.py --host $(LOCUST_HOST)
 
 # --- Compose ops (Redis + pit-online-worker) ---
 
@@ -114,4 +119,4 @@ check: lint test ## Run the local CI fast lane
 changelog-check: ## Verify staged implementation changes include milestone audit logs
 	uv run python scripts/verify_milestone_changelog.py
 
-.PHONY: help bootstrap setup doctor lock lab lab-training data-sample build-lakehouse gold promote-gold train serve worker materialize backfill mlflow-ui demo-score up-core status logs down test-temporal test-unit test lint format check changelog-check
+.PHONY: help bootstrap setup doctor lock lab lab-training data-sample build-lakehouse gold promote-gold train serve worker materialize backfill mlflow-ui demo-score locust up-core status logs down test-temporal test-unit test lint format check changelog-check

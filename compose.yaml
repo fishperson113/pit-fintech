@@ -17,8 +17,8 @@ services:
   # ADR-010 -- the event-based write path. Consumes score events from the Redis Stream and
   # maintains the online store under the optimistic lock, so the scoring API never mutates the
   # store or blocks on the offline engine. The API runs directly on the host (uvicorn) and
-  # produces the events this worker consumes; a stopped worker makes `/score` time out
-  # (`503 online_store_timeout`).
+  # produces the events this worker consumes; a stopped worker increases online-write lag but does
+  # not block an already-computed `/score` response.
   pit-online-worker:
     build:
       context: .

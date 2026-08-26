@@ -1,0 +1,56 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "graphTooltip": 0,
+  "panels": [
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "description": "Delta/version lineage evidence emitted by backfill, materialization and recovery runs.",
+      "gridPos": {"h": 14, "w": 24, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"enableLogDetails": true, "prettifyLogMessage": true, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLines": true},
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "{service_name=~\"pit-fintech-(backfill|materialization|recovery)\"} |~ \"version|checksum|watermark\"", "queryType": "range", "refId": "A"}],
+      "title": "Version and checksum lineage",
+      "type": "logs"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "description": "Backfill idempotency and committed Delta version evidence.",
+      "gridPos": {"h": 12, "w": 12, "x": 0, "y": 14},
+      "id": 2,
+      "options": {"enableLogDetails": true, "prettifyLogMessage": true, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLines": true},
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "{service_name=\"pit-fintech-backfill\"} |= \"offline.backfill\"", "queryType": "range", "refId": "A"}],
+      "title": "Backfill versions and idempotency",
+      "type": "logs"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "description": "Materialization pinned Gold version, watermark and source checksum.",
+      "gridPos": {"h": 12, "w": 12, "x": 12, "y": 14},
+      "id": 3,
+      "options": {"enableLogDetails": true, "prettifyLogMessage": true, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLines": true},
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "{service_name=\"pit-fintech-materialization\"} |= \"offline.materialization\"", "queryType": "range", "refId": "A"}],
+      "title": "Materialization pinned snapshot",
+      "type": "logs"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "description": "Redis recovery comparison against the pre-reset snapshot.",
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 26},
+      "id": 4,
+      "options": {"enableLogDetails": true, "prettifyLogMessage": true, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLines": true},
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "{service_name=\"pit-fintech-recovery\"} |= \"offline.recovery\"", "queryType": "range", "refId": "A"}],
+      "title": "Recovery and time-travel restore",
+      "type": "logs"
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["pit-fintech", "time-travel", "delta", "lineage", "loki"],
+  "templating": {"list": []},
+  "time": {"from": "now-24h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "PIT Fintech Time Travel & Snapshot Lineage",
+  "uid": "pit-fintech-time-travel",
+  "version": 1
+}
